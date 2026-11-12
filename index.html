@@ -155,6 +155,12 @@ type: "text/html"
 
   /* Fahrtverlauf (Lupe) */
   .trip { margin-top: 10px; }
+  .sechead { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 6px 8px;
+    background: #16233c; border: 1px solid #1e3a5f; border-radius: 8px; cursor: pointer;
+    font-weight: 600; font-size: 0.95rem; color: #cbd5e1; }
+  .sechead:hover { background: #1b2b4a; }
+  .sechead .sarr { width: 1em; color: #38bdf8; }
+  .sechead .sfrozen { margin-left: auto; font-size: 0.7rem; font-weight: 400; color: #64748b; }
   .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   .trip .tlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: 0.7rem;
     color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -181,6 +187,7 @@ type: "text/html"
   .trip .tdelay.up { color: #f87171; }
   .trip .tdelay.down { color: #7dd3fc; }
   .trip .tdelay.ok { color: #4ade80; }
+  .trip .tq { flex-shrink: 0; min-width: 38px; font-weight: 700; color: #fbbf24; }
   .trip .tarr { flex-shrink: 0; font-size: 0.65rem; color: #7dd3fc; align-self: flex-start; }
   .trip .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
     font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; margin-left: auto; }
@@ -961,7 +968,7 @@ function selectStop(shortName) {
 }
 
 function selectBus(sn, tripId) {
-  currentBus = { sn, tripId };
+  currentBus = { sn, tripId, openSection: "station" };
   if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
   const stop = stops.find(s => s.shortName === sn);
   if (stop) currentStop = stop;
@@ -1020,6 +1027,12 @@ function renderStationPanel() {
   }
 }
 
+// Kopf eines umschaltbaren Blocks (Stationsansicht / Fahrtverlauf)
+function secHead(sec, isOpen, label) {
+  return '<div class="sechead" data-sec="' + sec + '"><span class="sarr">' +
+    (isOpen ? "▾" : "▸") + "</span>" + label +
+    (isOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') + "</div>";
+}
 function renderBusPanel() {
   if (!currentBus) { busPanel.hidden = true; busPanel.innerHTML = ""; return; }
   const stop = stops.find(s => s.shortName === currentBus.sn);
@@ -1041,6 +1054,39 @@ function renderBusPanel() {
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
     '<button class="rowref" data-ref="' + escapeHtml(currentBus.sn) +
       '" title="Diese Haltestelle neu abfragen">↻</button></div>';
+  // Genau einer der beiden Blöcke ist aufgekloppt; der zugeklappte wird
+  // nicht neu generiert (eingefrorener Stand, spart Daten und Ruhe)
+  const open = currentBus.openSection || "trip";
+  let stationHTML;
+  if (open === "station") {
+    stationHTML = stationSectionHTML();
+    currentBus.cachedStation = stationHTML;
+  } else {
+    stationHTML = currentBus.cachedStation || "";
+  }
+  let tripHTML;
+  if (open === "trip") {
+    tripHTML = tripSectionHTML();
+    if (currentTrip && currentTrip.tripId === currentBus.tripId)
+      currentBus.cachedTrip = { id: currentBus.tripId, html: tripHTML };
+  } else {
+    tripHTML = (currentBus.cachedTrip && currentBus.cachedTrip.id === currentBus.tripId)
+      ? currentBus.cachedTrip.html : "";
+  }
+  inner += secHead("station", open === "station", "Stationsansicht") + stationHTML;
+  inner += secHead("trip", open === "trip", "Fahrtverlauf") + tripHTML;
+  if (busPanel.dataset.last !== inner) {
+    busPanel.dataset.last = inner;
+    busPanel.innerHTML = inner;
+    marqueeify(busPanel);
+  }
+  busPanel.hidden = false;
+}
+
+// Detailblock der angeklickten Abfahrt (in der Stationsansicht)
+function stationSectionHTML() {
+  if (!currentBus) return "";
+  const v = stopViews.get(currentBus.sn);
   if (v && v.fetched) {
     const ageSec = (Date.now() - v.fetchTs) / 1000;
     const dep = v.deps.find(d => d.tripId === currentBus.tripId);
@@ -1060,7 +1106,7 @@ function renderBusPanel() {
         const t = new Date(now.getTime() + rel * 1000);
         return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
       })();
-      inner += '<div class="busdetail"><span class="dl">' + escapeHtml(dep.line) +
+      return '<div class="busdetail"><span class="dl">' + escapeHtml(dep.line) +
         '</span> <span class="big">→ ' + escapeHtml(dep.direction) + "</span><br>" +
         (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
         "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
@@ -1071,18 +1117,11 @@ function renderBusPanel() {
         '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
         "los in " + losMin + " min</span></div>";
     } else {
-      inner += '<small class="rowinfo dim">Abfahrt nicht mehr in den Daten – ↻ für neue Abfrage.</small>';
+      return '<small class="rowinfo dim">Abfahrt nicht mehr in den Daten – ↻ für neue Abfrage.</small>';
     }
   } else {
-    inner += '<small class="rowinfo dim">Daten werden geladen …</small>';
+    return '<small class="rowinfo dim">Daten werden geladen …</small>';
   }
-  inner += tripSectionHTML();
-  if (busPanel.dataset.last !== inner) {
-    busPanel.dataset.last = inner;
-    busPanel.innerHTML = inner;
-    marqueeify(busPanel);
-  }
-  busPanel.hidden = false;
 }
 
 // ---------- Fahrtverlauf (Lupe) ----------
@@ -1095,7 +1134,8 @@ async function selectTrip(sn, tripId, force) {
     renderBusPanel();
     return;
   }
-  currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, progressIdx: -1, loading: true };
+  currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, missing: {}, progressIdx: -1, loading: true };
+  if (currentBus) currentBus.openSection = "trip";
   if (force) {
     for (const k of [...tripDelayCache.keys()]) {
       if (k.endsWith("|" + tripId)) tripDelayCache.delete(k);
@@ -1119,14 +1159,16 @@ async function selectTrip(sn, tripId, force) {
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
-    // bereits befahrene Haltestellen (old, DEPARTED) vor die restliche Fahrt hängen
-    currentTrip.stops = (data.old || []).map(p => ({
+    // bereits befahrene Haltestellen (old, DEPARTED) vor die restliche Fahrt hängen.
+    // Wichtig: die Zeiten aus tripPassages sind PLAN-Zeiten (keine Fahrzeug-Echtzeit),
+    // sie stehen daher in der Spalte "Gep."; "Aktuell" füllt sich erst über die Lupe.
+    const mapKvgStop = p => ({
       shortName: p.stop.shortName, name: p.stop.name,
-      time: p.actualTime, status: p.status, seq: Number(p.stop_seq_num) || 0
-    })).concat((data.actual || []).map(p => ({
-      shortName: p.stop.shortName, name: p.stop.name,
-      time: p.actualTime, status: p.status, seq: Number(p.stop_seq_num) || 0
-    })));
+      plannedTime: p.actualTime, time: "",
+      status: p.status, seq: Number(p.stop_seq_num) || 0
+    });
+    currentTrip.stops = (data.old || []).map(mapKvgStop)
+      .concat((data.actual || []).map(mapKvgStop));
     currentTrip.route = data.routeName || "";
     currentTrip.direction = data.directionText || "";
     // Soll/Ist der Starthaltestelle aus der Abfahrtstafel übernehmen (keine Zusatzabfrage);
@@ -1193,17 +1235,21 @@ function tripSectionHTML() {
     const dl = currentTrip.delay[key];
     const planned = (dl && dl.plannedTime) || s.plannedTime || "";
     const actual = s.time || (dl && dl.actualTime) || "";
-    let delayTxt = "", delayCls = "";
-    if (dl && dl.delayMin != null) {
-      delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
-      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "0m";
+    let delayHtml = "";
+    if (currentTrip.missing && currentTrip.missing[key]) {
+      // Lupe hat die Fahrt an dieser Station nicht gefunden -> "?" zwischen den Spalten
+      delayHtml = '<span class="tq" title="keine Daten zu dieser Fahrt an dieser Station">?</span>';
+    } else if (dl && dl.delayMin != null) {
+      const delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
+      const delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "0m";
+      delayHtml = '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>";
     }
     const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
       (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
       '<span class="takt">' + escapeHtml(actual || "–") + "</span>" +
-      (delayTxt ? '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>" : "") +
+      delayHtml +
       '<span class="tname">' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
       (dbTripMode
         ? '<button class="lupe" data-tripstop="DBREF" title="Fahrt und Verspätungen neu prüfen">🔍</button>'
@@ -1237,6 +1283,16 @@ stationPanel.addEventListener("click", e => {
 busPanel.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const sec = e.target.closest("[data-sec]");
+  if (sec) {
+    // Umschalten Stationsansicht <-> Fahrtverlauf: immer genau einer offen,
+    // der zugeklappte Block bleibt eingefroren (keine Aktualisierung)
+    if (currentBus && currentBus.openSection !== sec.dataset.sec) {
+      currentBus.openSection = sec.dataset.sec;
+      renderBusPanel();
+    }
+    return;
+  }
   const tripstop = e.target.closest("[data-tripstop]");
   if (tripstop) {
     if (tripstop.dataset.tripstop === "DBREF") {
@@ -1278,6 +1334,9 @@ async function checkTripStop(sn, tripId) {
         };
         tripDelayCache.set(key, info);
         currentTrip.delay[key] = info;
+        delete currentTrip.missing[key];
+      } else {
+        currentTrip.missing[key] = true;   // Lupe hat die Fahrt hier nicht gefunden
       }
     }
   } catch (e) {}

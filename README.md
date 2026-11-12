@@ -5,6 +5,14 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0** – Von Timo vergebene Versionsbasis. Stationsansicht und Fahrtverlauf
+im Detail-Panel sind jetzt umschaltbare Blöcke: immer genau einer aufgeklappt,
+der zugeklappte bleibt eingefroren (keine Aktualisierung, spart Daten).
+Kieler Busse: Zeiten aus der Fahrt-Anzeige sind PLAN-Zeiten und stehen in der
+Spalte "Gep."; "Aktuell" füllt sich erst durch die Lupe (Ist-Zeit + farbiges
++Xm rot / 0m grün / −Xm blau), bei Nicht-Fund erscheint ein "?" zwischen den
+Spalten.
+
 **v0.2.1** – Bugfix Zug-Zeiten: die relative Zeit der DB-Züge wurde in Minuten
 statt Sekunden weitergerechnet, dadurch waren angezeigte Abfahrtszeiten
 fast identisch; jetzt korrekt. Bahnhof Kiel Suchsdorf ergänzt. Farbcodierung
