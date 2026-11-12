@@ -840,8 +840,20 @@ addrFavCount.textContent = addrFavs.length;
 const search = document.getElementById("stopSearch");
 const sugBox = document.getElementById("suggestions");
 
-search.addEventListener("input", updateSuggestions);
-search.addEventListener("focus", updateSuggestions);
+// Handy: beim ersten Antippen des Suchfelds die Bildschirm-Tastatur unten lassen
+// (Fokus sofort wieder abgeben, Liste öffnet trotzdem); erst der zweite Tipp ins
+// Feld öffnet die Tastatur. Gilt auch fürs programmatische Öffnen (z.B. Adresse).
+let searchFocusArmed = false;
+search.addEventListener("focus", () => {
+  updateSuggestions();
+  if (!searchFocusArmed) {
+    searchFocusArmed = true;
+    setTimeout(() => { if (!search.value) search.blur(); }, 60);
+  }
+});
+search.addEventListener("blur", () => {
+  if (sugBox.hidden) searchFocusArmed = false;   // Liste zu: beim nächsten Öffnen wieder ohne Tastatur
+});
 document.getElementById("ddBtn").addEventListener("click", () => {
   if (!sugBox.hidden) { sugBox.hidden = true; return; }
   search.focus();
@@ -1210,6 +1222,7 @@ function tripSectionHTML() {
   const pos = getPos();
   const tstops = currentTrip.stops;
   // Fortschritt: GPS näher als 75 m an einer Station der Fahrt -> alle bis dahin ausgrauen
+  let gpsKey = null;   // Station im 75-m-Radius: dort live Ist-Abfahrt füllen
   if (pos) {
     for (let i = 0; i < tstops.length; i++) {
       const s = tstops[i];
@@ -1217,6 +1230,7 @@ function tripSectionHTML() {
       if (!stop) continue;
       if (dist(pos, stop) < 75) {
         currentTrip.progressIdx = Math.max(currentTrip.progressIdx, i);
+        gpsKey = s.key || (s.shortName + "|" + currentTrip.tripId);
         break;
       }
     }
@@ -1234,7 +1248,7 @@ function tripSectionHTML() {
     const key = s.key || (s.shortName + "|" + currentTrip.tripId);
     const dl = currentTrip.delay[key];
     const planned = (dl && dl.plannedTime) || s.plannedTime || "";
-    const actual = s.time || (dl && dl.actualTime) || "";
+    let actual = s.time || (dl && dl.actualTime) || "";
     let delayHtml = "";
     if (currentTrip.missing && currentTrip.missing[key]) {
       // Lupe hat die Fahrt an dieser Station nicht gefunden -> "?" zwischen den Spalten
@@ -1243,6 +1257,25 @@ function tripSectionHTML() {
       const delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
       const delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "0m";
       delayHtml = '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>";
+    }
+    // GPS-Live: eigene Position an dieser Station -> laufend die aktuelle Uhrzeit als
+    // Ist-Abfahrt eintragen (+/- Indikator), solange bis die Station wieder verlassen
+    // wird; danach bleibt der letzte Stand eingefroren (es sind Abfahrtszeiten)
+    if (gpsKey && key === gpsKey) {
+      const [ph, pm] = (planned || "").split(":").map(Number);
+      const nowD = new Date();
+      if (isFinite(ph) && isFinite(pm)) {
+        const clock = String(nowD.getHours()).padStart(2, "0") + ":" +
+          String(nowD.getMinutes()).padStart(2, "0");
+        const dMin = (nowD.getHours() * 60 + nowD.getMinutes()) - (ph * 60 + pm);
+        if (Math.abs(dMin) < 720) {   // Soll-Zit gehört zum heutigen Lauf
+          actual = clock;
+          delayHtml = '<span class="tdelay ' + (dMin > 0 ? "up" : dMin < 0 ? "down" : "ok") + '">' +
+            (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
+          currentTrip.delay[key] = { plannedTime: planned, actualTime: clock,
+            delayMin: dMin, ts: Date.now() };
+        }
+      }
     }
     const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
       (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");

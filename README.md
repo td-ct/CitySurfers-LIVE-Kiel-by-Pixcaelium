@@ -5,6 +5,13 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.1** – GPS-Live im Fahrtverlauf: Erreicht das eigene GPS eine Station der
+angezeigten Fahrt (75-m-Radius), wird dort laufend die aktuelle Uhrzeit als
+Ist-Abfahrt eingetragen inklusive +/- Indikator; läuft weiter, bis die Station
+verlassen wird (danach bleibt der letzte Stand eingefroren). Handy: Beim
+ersten Antippen des Stations-Suchfelds bleibt die Bildschirm-Tastatur unten,
+erst der zweite Tipp öffnet sie (auch beim Öffnen über eine Adresse).
+
 **v1.0** – Von Timo vergebene Versionsbasis. Stationsansicht und Fahrtverlauf
 im Detail-Panel sind jetzt umschaltbare Blöcke: immer genau einer aufgeklappt,
 der zugeklappte bleibt eingefroren (keine Aktualisierung, spart Daten).
