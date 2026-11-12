@@ -5,6 +5,16 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.3** – Native Android-Mini-App: `android/` enthält ein minimales
+WebView-Projekt, das die index.html als Asset einbettet und über die
+JS-Brücke `window.KvgNative` nativen Zugriff auf Vibration und
+AlarmManager-Wecker bietet. Zeit-Wecker (X min vor Abfahrt) werden an die App
+übergeben und klingeln auch bei ausgeschaltetem Display (Weckton-Channel +
+Vibration); Ausschalten meldet die Seite der App. Im Browser läuft die Seite
+unverändert weiter (Brücke optional). GitHub-Actions-Workflow
+`.github/workflows/build-apk.yml` baut per Knopfdruck den APK und stellt ihn
+als Release `android-latest` bereit (stabil herunterladbarer Link).
+
 **v1.0.2** – Großumbau der Bedienung: Die "Aktuell"-Spalte im Fahrtverlauf
 füllt sich bei Bussen sofort beim Öffnen (prognostizierte Ist-Zeiten aus der
 Fahrt-Anfrage); die "Gep."-Soll-Zeiten liefert der globale ↻-Knopf des

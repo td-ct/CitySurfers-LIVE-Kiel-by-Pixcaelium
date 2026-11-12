@@ -1409,11 +1409,44 @@ function alarmBeep() {
 }
 function fireAlarm(aKey, a) {
   alarms.delete(aKey);
+  nativeCall("cancelAlarm", aKey);   // nativen Wecker mitauslösen (falls in App gestellt)
   firedAlarms.add(aKey);
-  if (a.vib && navigator.vibrate) { try { navigator.vibrate([400, 200, 400, 200, 800]); } catch (e) {} }
+  if (a.vib) {
+    const pat = [400, 200, 400, 200, 800];
+    if (navigator.vibrate) { try { navigator.vibrate(pat); } catch (e) {} }
+    else nativeVibrate(pat);   // Android-App ohne navigator.vibrate (WebView)
+  }
   if (a.tone) alarmBeep();
   setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!");
   if (currentBus) renderBusPanel();
+}
+
+// ---------- Native Brücke (Android-Mini-App) ----------
+// window.KvgNative wird nur von der App eingespritzt; im Browser bleibt es
+// undefiniert und alle Aufrufe sind wirkungslos (Seite läuft unverändert weiter).
+function nativeCall(fn, ...args) {
+  try { if (typeof window !== "undefined" && window.KvgNative) window.KvgNative[fn](...args); }
+  catch (e) {}
+}
+function nativeVibrate(pat) { nativeCall("vibrate", JSON.stringify(pat)); }
+// Weckzeit (Epoch-ms) = geplante/aktuelle Abfahrt minus Vorlauf, inkl. Tagesumbruch
+function nativeAlarmEpoch(aKey, leadMin) {
+  if (!currentTrip) return null;
+  const i = aKey.indexOf("|");
+  const sn = aKey.slice(i + 1);
+  const s = (currentTrip.stops || []).find(x => x.shortName === sn);
+  if (!s) return null;
+  const key = s.key || (sn + "|" + currentTrip.tripId);
+  const dl = currentTrip.delay[key] || {};
+  const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+  const [h, m] = t.split(":").map(Number);
+  if (!isFinite(h) || !isFinite(m)) return null;
+  const now = new Date();
+  let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
+  if (depMs < Date.now() - 60000) depMs += 86400000;   // nachts: gehört zum nächsten Tag
+  // Weckzeit kann knapp in der Vergangenheit liegen (Abfahrt schon nah):
+  // AlarmManager löst dann sofort aus, was genau richtig ist.
+  return depMs - leadMin * 60000;
 }
 
 // Abfahrtszeit (Minuten des Tages) der Wecker-Station aus dem aktuellen Fahrtverlauf
@@ -1538,6 +1571,12 @@ function openAlarmDialog(aKey) {
         dist: selDist, leadMin: selLead,
         vib: wrap.querySelector(".avib").checked,
         tone: wrap.querySelector(".atone").checked, lastPoll: 0 });
+      // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
+      // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
+      if (selLead) {
+        const ms = nativeAlarmEpoch(aKey, selLead);
+        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name, String(selLead));
+      }
       wrap.remove();
       setLocNote("🔔 Wecker gestellt: " + a.name +
         (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
@@ -1593,6 +1632,7 @@ busPanel.addEventListener("click", e => {
     const aKey = al.dataset.alarm;
     if (alarms.has(aKey)) {           // aktiv -> ausschalten
       alarms.delete(aKey);
+      nativeCall("cancelAlarm", aKey);
       setLocNote("🔕 Wecker ausgeschaltet.");
       renderBusPanel();
     } else if (!firedAlarms.has(aKey)) {
