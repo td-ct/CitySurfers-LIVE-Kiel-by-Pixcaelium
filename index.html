@@ -175,6 +175,18 @@ type: "text/html"
   /* API-Indikatoren (rechte obere Ecke) */
   #apiInd { position: fixed; top: 8px; right: 12px; z-index: 45; display: flex; gap: 5px;
     pointer-events: none; }
+  #apiInd .ind { pointer-events: auto; cursor: pointer; }
+  #apiStats { position: fixed; top: 38px; right: 12px; z-index: 56; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
+    min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
+  #apiStats .ashdr { font-weight: 700; color: #e2e8f0; margin-bottom: 5px; }
+  #apiStats .asrow { display: flex; align-items: center; gap: 7px; padding: 3px 0; }
+  #apiStats .asdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  #apiStats .asname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #apiStats .asval { color: #cbd5e1; white-space: nowrap; }
+  #apiStats .astot { border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px;
+    color: #e2e8f0; font-weight: 600; }
+  #apiStats .asdim { color: #64748b; margin-top: 6px; }
   #apiInd .ind { display: inline-flex; align-items: center; gap: 4px; font-size: 0.62rem;
     font-weight: 700; color: #94a3b8; background: #0f172ae6; border: 1px solid #334155;
     border-radius: 999px; padding: 2px 7px 2px 6px; opacity: 0.45; transition: opacity 0.3s; }
@@ -199,6 +211,7 @@ type: "text/html"
   <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
   <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
 </div>
+<div id="apiStats" hidden></div>
 <div class="wrap">
   <header>
     <h1>CitySurfers <span class="live">● LIVE</span><span class="kiel">@ Kiel</span> <span class="by">by Pixcaelium</span></h1>
@@ -585,8 +598,7 @@ async function searchAddress(q) {
   addrResults = [];
   // primär: Nominatim (Photon derzeit oft nicht erreichbar, nur Fallback)
   try {
-    flashAPI("nom");
-    const res = await fetch(NOMINATIM + "?q=" + encodeURIComponent(q) +
+    const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
       "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
     if (res.ok) {
       const list = await res.json();
@@ -599,9 +611,8 @@ async function searchAddress(q) {
   } catch (e) {}
   if (!addrResults.length) {
     try {
-      flashAPI("nom");
       const url = PHOTON + "?q=" + encodeURIComponent(q) + "&limit=5&lang=de&lat=54.32&lon=10.13";
-      const res = await fetch(url);
+      const res = await apiFetch("nom", url);
       if (res.ok) {
         const data = await res.json();
         const seen = new Set();
@@ -787,7 +798,7 @@ addrFavCount.textContent = addrFavs.length;
 // ---------- Haltestellenliste im Hintergrund aktuell halten ----------
 (async function refreshStops() {
   try {
-    const res = await fetch(STOPS_URL);
+    const res = await apiFetch("kvg", STOPS_URL);
     if (!res.ok) return;
     const data = await res.json();
     if (Array.isArray(data.stops) && data.stops.length) {
@@ -1080,9 +1091,8 @@ async function selectTrip(sn, tripId, force) {
     if (currentBus && currentBus.tripId === tripId) renderBusPanel();
     return;
   }
-  flashAPI("kvg");
   try {
-    const res = await fetch(TRIP_URL, {
+    const res = await apiFetch("kvg", TRIP_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "tripId=" + encodeURIComponent(tripId)
@@ -1112,8 +1122,7 @@ async function loadTripDelays() {
     const c = tripDelayCache.get(key);
     if (c && Date.now() - c.ts < 120000) { currentTrip.delay[key] = c; return; }
     try {
-      flashAPI("kvg");
-      const res = await fetch(DEPART_URL, {
+      const res = await apiFetch("kvg", DEPART_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "stop=" + encodeURIComponent(s.shortName)
@@ -1235,8 +1244,7 @@ async function checkTripStop(sn, tripId) {
   const key = sn + "|" + tripId;
   tripDelayCache.delete(key);
   try {
-    flashAPI("kvg");
-    const res = await fetch(DEPART_URL, {
+    const res = await apiFetch("kvg", DEPART_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "stop=" + encodeURIComponent(sn)
@@ -1350,9 +1358,8 @@ async function walkMeters(stop) {
   }
   const air = dist(pos, stop);
   try {
-    flashAPI("osrm");
     const url = FOOT_ROUTER + "/" + pos.lon + "," + pos.lat + ";" + stop.lon + "," + stop.lat + "?overview=false";
-    const res = await fetch(url);
+    const res = await apiFetch("osrm", url);
     if (res.ok) {
       const data = await res.json();
       if (data.routes && data.routes[0]) {
@@ -1381,7 +1388,7 @@ function saveSteige() {
 async function getSteige() {
   if (steige) return;
   try {
-    const res = await fetch(PLATFORMS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    const res = await apiFetch("kvg", PLATFORMS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
     if (!res.ok) return;
     const data = await res.json();
     steige = {};
@@ -1403,8 +1410,7 @@ async function loadPlatforms(sn) {
   const map = {}; // tripId -> label
   await Promise.all(list.map(async p => {
     try {
-      flashAPI("kvg");
-      const res = await fetch(DEPART_URL, {
+      const res = await apiFetch("kvg", DEPART_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "stopPoint=" + encodeURIComponent(p.id)
@@ -1427,9 +1433,87 @@ function flashAPI(kind) {
   void el.offsetWidth;   // Animation neu starten
   el.classList.add("ping");
 }
+
+// ---------- API-Statistik (Anzahl + Datenmenge je Anbieter) ----------
+const API_KINDS = {
+  db:   { label: "Deutsche Bahn / NAH.SH", color: "#EC0016" },
+  kvg:  { label: "KVG (Bus)",              color: "#00519E" },
+  nom:  { label: "Nominatim / OSM",         color: "#7EBC6F" },
+  osrm: { label: "OSRM (Fußweg)",          color: "#FF7F2A" }
+};
+let apiStats;
+try {
+  const s = JSON.parse(localStorage.getItem("kvg-apistats") || "null");
+  apiStats = (s && s.kinds) ? s : null;
+} catch (e) { apiStats = null; }
+if (!apiStats) {
+  apiStats = { since: Date.now(), kinds: {} };
+  for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+}
+function saveApiStats() {
+  try { localStorage.setItem("kvg-apistats", JSON.stringify(apiStats)); } catch (e) {}
+}
+const apiEnc = new TextEncoder();
+async function apiFetch(kind, url, opts) {
+  flashAPI(kind);
+  const res = await fetch(url, opts);
+  if (res.ok) {
+    try {
+      const c = res.clone();
+      const txt = await c.text();
+      apiStats.kinds[kind].n++;
+      apiStats.kinds[kind].b += apiEnc.encode(txt).length;
+      saveApiStats();
+      renderApiStats();
+    } catch (e) {}
+  }
+  return res;
+}
+function fmtBytes(b) {
+  return b < 1024 ? b + " B"
+       : b < 1048576 ? (b / 1024).toFixed(1) + " KB"
+       : (b / 1048576).toFixed(1) + " MB";
+}
+function renderApiStats() {
+  const el = document.getElementById("apiStats");
+  if (!el) return;
+  let totN = 0, totB = 0;
+  let html = '<div class="ashdr">Übertragene Live-Daten</div>';
+  for (const k in API_KINDS) {
+    const st = apiStats.kinds[k] || { n: 0, b: 0 };
+    totN += st.n; totB += st.b;
+    html += '<div class="asrow"><span class="asdot" style="background:' + API_KINDS[k].color +
+      '"></span><span class="asname">' + API_KINDS[k].label + '</span><span class="asval">' +
+      st.n + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
+  }
+  html += '<div class="asrow astot"><span class="asname">insgesamt</span><span class="asval">' +
+    totN + " Anfr. · " + fmtBytes(totB) + "</span></div>";
+  html += '<div class="asdim">Statistik seit ' + new Date(apiStats.since).toLocaleString("de-DE") + "</div>";
+  html += '<button class="afbtn" id="apiStatsReset" style="width:100%;margin-top:8px;">Zähler zurücksetzen</button>';
+  el.innerHTML = html;
+}
+document.getElementById("apiInd").addEventListener("click", e => {
+  const ind = e.target.closest(".ind");
+  if (!ind) return;
+  const el = document.getElementById("apiStats");
+  if (!el.hidden) { el.hidden = true; return; }
+  renderApiStats();
+  el.hidden = false;
+});
+document.addEventListener("click", e => {
+  const el = document.getElementById("apiStats");
+  if (el && !el.hidden && !e.target.closest("#apiInd") && !e.target.closest("#apiStats")) el.hidden = true;
+});
+document.getElementById("apiStats").addEventListener("click", e => {
+  if (e.target.closest("#apiStatsReset")) {
+    apiStats = { since: Date.now(), kinds: {} };
+    for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+    saveApiStats();
+    renderApiStats();
+  }
+});
 async function dbFetch(svcReqL) {
-  flashAPI("db");
-  const res = await fetch(DB_GATE, {
+  const res = await apiFetch("db", DB_GATE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1541,9 +1625,8 @@ async function getDepartures(sn) {
       return r.deps;
     } catch (e) { return null; }
   }
-  flashAPI("kvg");
   try {
-    const res = await fetch(DEPART_URL, {
+    const res = await apiFetch("kvg", DEPART_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "stop=" + encodeURIComponent(sn)
