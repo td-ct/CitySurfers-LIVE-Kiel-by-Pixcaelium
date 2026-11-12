@@ -1,3 +1,6 @@
+type: "text/html"
+---
+
 <!doctype html>
 <html lang="de">
 <head>
@@ -801,7 +804,7 @@ function updateSuggestions() {
     hits = hits.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
   }
   sugBox.innerHTML = hits.map(s => {
-    const air = dist(pos, s) * 1.3;
+    const air = pos ? dist(pos, s) * 1.3 : 0;
     const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
     return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
       '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
@@ -1082,11 +1085,11 @@ function tripSectionHTML() {
     return html;
   }
   const pos = getPos();
-  const stops = currentTrip.stops;
+  const tstops = currentTrip.stops;
   // Fortschritt: GPS näher als 75 m an einer Station der Fahrt -> alle bis dahin ausgrauen
   if (pos) {
-    for (let i = 0; i < stops.length; i++) {
-      const s = stops[i];
+    for (let i = 0; i < tstops.length; i++) {
+      const s = tstops[i];
       const stop = stops.find(x => x.shortName === s.shortName);
       if (!stop) continue;
       if (dist(pos, stop) < 75) {
@@ -1100,8 +1103,8 @@ function tripSectionHTML() {
     '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
       '" title="Fahrtverlauf und Verspätungen neu abfragen">↻</button></div>';
   const done = currentTrip.progressIdx;
-  for (let i = 0; i < stops.length; i++) {
-    const s = stops[i];
+  for (let i = 0; i < tstops.length; i++) {
+    const s = tstops[i];
     const key = s.shortName + "|" + currentTrip.tripId;
     const dl = currentTrip.delay[key];
     let delayTxt = "", delayCls = "";
