@@ -156,19 +156,34 @@ type: "text/html"
   /* Fahrtverlauf (Lupe) */
   .trip { margin-top: 10px; }
   .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-  .trip .trow { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px;
-    border-bottom: 1px solid #0b1222; font-size: 1rem; }
-  .trip .trow.done { color: #475569; }
-  .trip .ttime { flex-shrink: 0; font-weight: 600; min-width: 48px; }
-  .trip .trow.done .ttime { text-decoration: line-through; }
-  .trip .ttime.late { color: #f87171; }
-  .trip .ttime.early { color: #4ade80; }
-  .trip .tdelay { flex-shrink: 0; font-size: 0.8rem; font-weight: 600; min-width: 40px; }
+  .trip .tlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: 0.7rem;
+    color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+  .trip .tlegend .lgep { min-width: 44px; }
+  .trip .tlegend .lakt { min-width: 48px; font-weight: 600; }
+  .trip .trow { position: relative; display: flex; align-items: center; gap: 8px;
+    padding: 5px 2px 5px 30px; font-size: 1rem; }
+  .trip .trow::before { content: ""; position: absolute; left: 10px; top: 0; bottom: 0;
+    width: 3px; border-radius: 2px; background: #1e3a5f; }
+  .trip .trow.frow::before { top: 50%; }
+  .trip .trow.lrow::before { bottom: 50%; }
+  .trip .trow.done::before { background: #334155; }
+  .trip .trow::after { content: ""; position: absolute; left: 6.5px; top: 50%;
+    margin-top: -5.5px; width: 10px; height: 10px; border-radius: 50%;
+    background: #0b1222; border: 2px solid #38bdf8; box-sizing: border-box; }
+  .trip .trow.done::after { border-color: #475569; }
+  .trip .trow.here::after { background: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, .25); }
+  .trip .trow.done { color: #64748b; }
+  .trip .tgep { flex-shrink: 0; min-width: 44px; font-size: 0.85rem; color: #94a3b8; }
+  .trip .trow.done .tgep { text-decoration: line-through; }
+  .trip .takt { flex-shrink: 0; min-width: 48px; font-weight: 700; }
+  .trip .trow.done .takt { text-decoration: line-through; }
+  .trip .tdelay { flex-shrink: 0; font-size: 0.75rem; font-weight: 600; min-width: 38px; }
   .trip .tdelay.up { color: #f87171; }
   .trip .tdelay.down { color: #4ade80; }
   .trip .tdelay.ok { color: #64748b; }
+  .trip .tarr { flex-shrink: 0; font-size: 0.65rem; color: #7dd3fc; align-self: flex-start; }
   .trip .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
-    font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; }
+    font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; margin-left: auto; }
   .trip .lupe:hover { transform: scale(1.2); }
   .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
@@ -1103,14 +1118,31 @@ async function selectTrip(sn, tripId, force) {
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
-    currentTrip.stops = (data.actual || []).map(p => ({
+    // bereits befahrene Haltestellen (old, DEPARTED) vor die restliche Fahrt hängen
+    currentTrip.stops = (data.old || []).map(p => ({
       shortName: p.stop.shortName, name: p.stop.name,
       time: p.actualTime, status: p.status, seq: Number(p.stop_seq_num) || 0
-    }));
+    })).concat((data.actual || []).map(p => ({
+      shortName: p.stop.shortName, name: p.stop.name,
+      time: p.actualTime, status: p.status, seq: Number(p.stop_seq_num) || 0
+    })));
     currentTrip.route = data.routeName || "";
     currentTrip.direction = data.directionText || "";
+    // Soll/Ist der Starthaltestelle aus der Abfahrtstafel übernehmen (keine Zusatzabfrage);
+    // weitere Stationen nur auf Anforderung über die Lupe je Zeile (checkTripStop),
+    // da Soll-Zeiten nur einzeln pro Haltestelle abfragbar sind
+    const dep0 = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    if (dep0 && dep0.plannedTime) {
+      const [ph, pm] = dep0.plannedTime.split(":").map(Number);
+      const [ah, am] = (dep0.actualTime || dep0.plannedTime).split(":").map(Number);
+      currentTrip.delay[sn + "|" + tripId] = {
+        plannedTime: dep0.plannedTime, actualTime: dep0.actualTime,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+    }
     currentTrip.loading = false;
-    await loadTripDelays();
   } catch (e) {
     currentTrip.loading = false;
     currentTrip.error = true;
@@ -1118,36 +1150,8 @@ async function selectTrip(sn, tripId, force) {
   if (currentBus && currentBus.tripId === tripId) renderBusPanel();
 }
 
-// Verspätung pro Station über die LIVE-Auskunft an der jeweiligen Station (Soll/Ist derselben Fahrt)
-async function loadTripDelays() {
-  const tripId = currentTrip.tripId;
-  await Promise.all((currentTrip.stops || []).map(async s => {
-    const key = s.shortName + "|" + tripId;
-    const c = tripDelayCache.get(key);
-    if (c && Date.now() - c.ts < 120000) { currentTrip.delay[key] = c; return; }
-    try {
-      const res = await apiFetch("kvg", DEPART_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "stop=" + encodeURIComponent(s.shortName)
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === tripId);
-      if (!d) return;    // Fahrt wird an dieser Station (noch) nicht angezeigt
-      const [ph, pm] = (d.plannedTime || "").split(":").map(Number);
-      const [ah, am] = (d.actualTime || d.plannedTime || "").split(":").map(Number);
-      const info = {
-        plannedTime: d.plannedTime, actualTime: d.actualTime,
-        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
-          ? (ah * 60 + am) - (ph * 60 + pm) : null,
-        ts: Date.now()
-      };
-      tripDelayCache.set(key, info);
-      currentTrip.delay[key] = info;
-    } catch (e) {}
-  }));
-}
+// (Soll/Ist je Station der Kieler Busse ist nur einzeln abfragbar -> erfolgt
+//  auf Anforderung über die Lupe je Zeile, s. checkTripStop)
 
 function tripSectionHTML() {
   if (!currentTrip || !currentBus || currentTrip.tripId !== currentBus.tripId) return "";
@@ -1177,28 +1181,34 @@ function tripSectionHTML() {
   html += '<div class="thead"><span class="pname">Fahrtverlauf Linie ' +
     escapeHtml(currentTrip.route) + " → " + escapeHtml(currentTrip.direction) + "</span>" +
     '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
-      '" title="Fahrtverlauf und Verspätungen neu abfragen">↻</button></div>';
+      '" title="Fahrtverlauf und Verspätungen neu abfragen">↻</button></div>' +
+    '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   const done = currentTrip.progressIdx;
   const dbTripMode = isDB(currentTrip.sn);
+  const last = tstops.length - 1;
   for (let i = 0; i < tstops.length; i++) {
     const s = tstops[i];
     const key = s.key || (s.shortName + "|" + currentTrip.tripId);
     const dl = currentTrip.delay[key];
-    let timeCls = "", delayTxt = "", delayCls = "";
+    const planned = (dl && dl.plannedTime) || s.plannedTime || "";
+    const actual = s.time || (dl && dl.actualTime) || "";
+    let delayTxt = "", delayCls = "";
     if (dl && dl.delayMin != null) {
-      // Zeit bleibt unverändert, wird aber gefärbt: rot = später als Plan, grün = früher/pünktlich
-      timeCls = dl.delayMin > 0 ? " late" : " early";
       delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
       delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "pünktlich";
     }
-    html += '<div class="trow' + (i <= done ? " done" : "") + '">' +
-      '<span class="ttime' + timeCls + '">' + escapeHtml(s.time || "") + "</span>" +
+    const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
+      (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
+    html += '<div class="trow' + rowCls + '">' +
+      '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
+      '<span class="takt">' + escapeHtml(actual || "–") + "</span>" +
       (delayTxt ? '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>" : "") +
+      '<span class="tname">' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
       (dbTripMode
         ? '<button class="lupe" data-tripstop="DBREF" title="Fahrt und Verspätungen neu prüfen">🔍</button>'
         : '<button class="lupe" data-tripstop="' + escapeHtml(s.shortName) + "|" + escapeHtml(currentTrip.tripId) +
-          '" title="Abfahrt dieser Station neu prüfen">🔍</button>') +
-      '<span class="tname">' + (i === 0 ? "▶ " : "") + escapeHtml(s.name) + "</span></div>";
+          '" title="Soll/Ist dieser Station neu prüfen">🔍</button>') +
+      "</div>";
   }
   html += "</div>";
   return html;
@@ -1651,7 +1661,10 @@ async function dbTrip(tripId, depTime) {
       const idx = start + k;
       const loc = locL[p.locX] || {};
       const key = tripId + "#" + idx;
-      const planned = dbHHMM(p.dTimeS), actual = dbHHMM(p.dTimeR || p.dTimeS);
+      // Endstation hat keine Abfahrtszeit -> Ankunftszeit (aTimeS/aTimeR) anzeigen
+      const isArr = !p.dTimeS && !!p.aTimeS;
+      const planned = dbHHMM(p.dTimeS || p.aTimeS);
+      const actual = dbHHMM(p.dTimeR || p.dTimeS || p.aTimeR || p.aTimeS);
       const [ph, pm] = (planned || "").split(":").map(Number);
       const [ah, am] = (actual || "").split(":").map(Number);
       currentTrip.delay[key] = {
@@ -1662,8 +1675,8 @@ async function dbTrip(tripId, depTime) {
       };
       return {
         shortName: loc.extId ? "DB:" + loc.extId : "DB:x" + idx,
-        name: loc.name || "?", time: actual,
-        status: p.dTimeR ? "PREDICTED" : "PLANNED",
+        name: loc.name || "?", time: actual, isArr,
+        status: (p.dTimeR || p.aTimeR) ? "PREDICTED" : "PLANNED",
         seq: idx, key
       };
     });
@@ -1746,6 +1759,8 @@ async function refetchStop(sn, manual) {
   if (!v) return;
   const now = Date.now();
   if (v.reloading) return;
+  // Auto-Aktualisierung mit Cooldown, damit Soll/Ist laufend frisch bleiben
+  if (!manual && now - (v.lastAuto || 0) < 40000) return;
   v.lastAuto = now;
   v.reloading = true;
   renderViews();
@@ -1817,6 +1832,8 @@ function renderView(sn, el) {
         return;
       }
       const newHTML = lines.map(l => l.html).join("");
+      // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
+      if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
       if (info.dataset.last !== newHTML) {
         info.dataset.last = newHTML;
         info.className = "rowinfo";

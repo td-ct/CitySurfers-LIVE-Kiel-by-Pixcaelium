@@ -5,6 +5,16 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v0.2.0** – Fahrtverlauf im DB-Navigator-Stil: vertikale Route mit
+Haltepunkten, Spalten "Gep." (Soll) und "Aktuell" (Ist) je Haltestelle,
+Verspätungs-Badge (+Xm/−Xm/pünktlich), aktuelle Position hervorgehoben,
+befahrene Haltestellen ausgegraut. Züge zeigen Soll/Ist komplett aus einer
+Anfrage (HAFAS JourneyDetails), Endstationen mit Ankunftszeit statt Lücke.
+Kieler Busse: kompletter Lauf inkl. bereits befahrener Haltestellen aus einer
+Anfrage (tripPassages mit old); Soll/Ist weiterer Haltestellen nur auf
+Anforderung per Lupe (eine Abfrage je Station, bewusst nicht automatisch).
+Abfahrtstafeln aktualisieren sich jetzt spätestens alle 45 s automatisch.
+
 **v0.1.9** – Doppelte Zug-Einträge entfernt: dieselbe Fahrt kam teils als zwei
 Produkte mit verschiedenen IDs (z.B. "RB73" und SEV-Ersatz "de:NAHSH") mit
 identischer Zeit und Ziel ins Board; jetzt wird nach Ziel+Sollzeit dedupliziert
