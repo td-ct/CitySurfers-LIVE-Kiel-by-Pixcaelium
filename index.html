@@ -1087,7 +1087,11 @@ async function selectTrip(sn, tripId, force) {
   }
   renderBusPanel();
   if (isDB(sn)) {
-    await dbTrip(tripId);
+    // geplante Abfahrtszeit der angeklickten Fahrt mitgeben: bei Zügen kann dieselbe
+    // Fahrt-ID (jid) mehrfach an einer Haltestelle verkehren (SEV-Schleifen) —
+    // nur mit der Zeit ist der Fahrtverlauf eindeutig der richtigen Abfahrt zugeordnet.
+    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    await dbTrip(tripId, dep ? dep.plannedTime : null);
     if (currentBus && currentBus.tripId === tripId) renderBusPanel();
     return;
   }
@@ -1552,15 +1556,25 @@ async function dbDepartures(sn) {
   if (!out || !out.jnyL) return null;
   const prodL = (out.common && out.common.prodL) || [];
   const deps = [], platforms = {};
+  const seenJid = new Set();
   for (const j of out.jnyL) {
     const prod = prodL[j.prodX] || {};
     if ((prod.cls || 0) >= 32) continue;   // nur Schienenverkehr (Zug/Schienenersatz)
+    // Doppelung vermeiden: gleiche Fahrt (jid) wird nur einmal gelistet.
+    // SEV-Busse durchlaufen dieselbe Haltestelle teils mehrfach pro Tageslauf,
+    // dann stand derselbe Zug mehrfach mit verschiedenen Zeiten in der Liste.
+    if (seenJid.has(j.jid)) continue;
+    seenJid.add(j.jid);
     const st = j.stbStop || {};
     const t = st.dTimeR || st.dTimeS;
     if (!t) continue;
+    const rawName = String(prod.name || "").trim();
+    // "de:NAHSH" o.ä. ist ein Datenpseudonym, kein Linienname -> besserer Fallback
+    const line = (rawName && rawName.indexOf("de:") !== 0) ? rawName
+      : String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim();
     deps.push({
       tripId: j.jid,
-      line: (prod.name || prod.addId || "DB").trim(),
+      line: line || "DB",
       direction: j.dirTxt || "",
       plannedTime: dbHHMM(st.dTimeS),
       actualTime: dbHHMM(st.dTimeR || st.dTimeS),
@@ -1575,7 +1589,7 @@ async function dbDepartures(sn) {
   return { deps, platforms };
 }
 // Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
-async function dbTrip(tripId) {
+async function dbTrip(tripId, depTime) {
   try {
     const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: tripId } }]);
     const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
@@ -1586,7 +1600,36 @@ async function dbTrip(tripId) {
     const prod = prodL[j.prodX] || {};
     currentTrip.route = (prod.name || "DB").trim();
     currentTrip.direction = j.dirTxt || "";
-    currentTrip.stops = j.stopL.map((p, idx) => {
+    // Startindex bestimmen: die zur angeklickten Abfahrt passende Station+durchgang.
+    // JourneyDetails liefert den GANZEN Tageslauf der Fahrt; bei SEV-Schleifen
+    // steht dieselbe Haltestelle mehrfach darin. Gesucht ist der Durchgang, dessen
+    // geplante Zeit der Abfahrtszeit aus der Liste entspricht.
+    // Achtung: die extId in JourneyDetails (z.B. 4940199) weicht von unserer
+    // Stations-ID (z.B. DB:9049079) ab -> zusätzlich per Name vergleichen.
+    const stExt = String(currentTrip.sn || "").slice(3); // "DB:<extId>" -> extId
+    const stStop = stops.find(s => s.shortName === currentTrip.sn);
+    const stName = stStop ? String(stStop.name || "").replace(/\s*\(DB\)\s*$/, "").trim() : "";
+    const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+    const stN = norm(stName);
+    const isSt = p => {
+      const loc = locL[p.locX] || {};
+      if (String(loc.extId || "") === stExt) return true;
+      if (!stN || stN.length < 6) return false;
+      const n = norm(loc.name);
+      return (n && (n.indexOf(stN) === 0 || stN.indexOf(n) === 0)) ||
+             (n.length >= 6 && (n.indexOf(stN) >= 0 || stN.indexOf(n) >= 0));
+    };
+    const wantHHMM = depTime ? depTime.replace(":", "") : null; // "HHMM"
+    let start = -1, firstHit = -1;
+    for (let i = 0; i < j.stopL.length; i++) {
+      const p = j.stopL[i];
+      if (!isSt(p)) continue;
+      if (firstHit < 0) firstHit = i;
+      if (wantHHMM && String(p.dTimeS || "").slice(0, 4) === wantHHMM) { start = i; break; }
+    }
+    if (start < 0) start = (firstHit < 0) ? 0 : firstHit;
+    currentTrip.stops = j.stopL.slice(start).map((p, k) => {
+      const idx = start + k;
       const loc = locL[p.locX] || {};
       const key = tripId + "#" + idx;
       const planned = dbHHMM(p.dTimeS), actual = dbHHMM(p.dTimeR || p.dTimeS);
