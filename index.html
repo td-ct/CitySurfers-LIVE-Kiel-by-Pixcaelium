@@ -851,6 +851,7 @@ sugBox.addEventListener("click", e => {
     const [tSn, tId] = trip.dataset.trip.split("|");
     selectBus(tSn, tId);
     selectTrip(tSn, tId);
+    sugBox.hidden = true;   // Auswahl schließen
     return;
   }
   const ref = e.target.closest("[data-ref]");
@@ -859,6 +860,7 @@ sugBox.addEventListener("click", e => {
   if (bus) {
     const [sn, tripId] = bus.dataset.bus.split("|");
     selectBus(sn, tripId);
+    sugBox.hidden = true;   // Auswahl schließen
     return;
   }
   const div = e.target.closest("div[data-sn]");
@@ -1576,14 +1578,15 @@ function marqueeify(container) {
 // ---------- Schriftgrößen-Regler ----------
 const fontSlider = document.getElementById("fontSlider");
 fontSlider.addEventListener("input", () => {
-  document.body.style.fontSize = (100 * Number(fontSlider.value)) + "%";
+  // zoom skaliert die gesamte App einheitlich (auch px-Größen), nicht nur einzelne Texte
+  document.body.style.zoom = String(Number(fontSlider.value));
   try { localStorage.setItem("kvg-font", fontSlider.value); } catch (e) {}
 });
 try {
   const saved = localStorage.getItem("kvg-font");
   if (saved) {
     fontSlider.value = saved;
-    document.body.style.fontSize = (100 * Number(saved)) + "%";
+    document.body.style.zoom = String(Number(saved));
   }
 } catch (e) {}
 
