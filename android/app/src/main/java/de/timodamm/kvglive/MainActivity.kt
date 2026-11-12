@@ -1,6 +1,5 @@
 package de.timodamm.kvglive
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
@@ -11,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
+import android.view.inputmethod.EditorInfo
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -21,6 +21,7 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.Toast
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -64,8 +65,8 @@ class MainActivity : Activity() {
         web.webChromeClient = object : WebChromeClient() {
             override fun onGeolocationPermissionsShowPrompt(
                 origin: String, callback: GeolocationPermissions.Callback) {
-                if (hasPerm(Manifest.permission.ACCESS_FINE_LOCATION) ||
-                    hasPerm(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                if (hasPerm(android.Manifest.permission.ACCESS_FINE_LOCATION) ||
+                    hasPerm(android.Manifest.permission.ACCESS_COARSE_LOCATION)) {
                     callback.invoke(origin, true, false)
                 } else {
                     geoCallback = callback
@@ -126,17 +127,14 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun prefsUrl(): String =
-        getSharedPreferences("kvglive", MODE_PRIVATE).getString("url", null) ?: ""
-
     private fun hasPerm(p: String) =
         checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun requestPerms() {
         val want = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= 33) want.add(Manifest.permission.POST_NOTIFICATIONS)
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 33) want.add(android.Manifest.permission.POST_NOTIFICATIONS)
         val missing = want.filter { !hasPerm(it) }
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQ_PERMS)
     }
@@ -160,44 +158,68 @@ class MainActivity : Activity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(Menu.NONE, 1, Menu.NONE, "Web-Version übernehmen …")
-        menu.add(Menu.NONE, 2, Menu.NONE, "Gebündelte Version laden")
-        menu.add(Menu.NONE, 3, Menu.NONE, "Seiten-URL ändern")
+        menu.add(Menu.NONE, 1, Menu.NONE, "Zustand importieren …")
+        menu.add(Menu.NONE, 2, Menu.NONE, "Web-Version übernehmen …")
+        menu.add(Menu.NONE, 3, Menu.NONE, "Gebündelte Version laden")
+        menu.add(Menu.NONE, 4, Menu.NONE, "Seiten-URL ändern")
         return true
+    }
+
+    private fun pasteDialog(title: String, hint: String, action: (String) -> Unit) {
+        val input = EditText(this)
+        input.hint = hint
+        input.setSingleLine(false)
+        input.imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
+        input.minLines = 3
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(input)
+            .setPositiveButton("OK") { _, _ -> action(input.text.toString()) }
+            .setNegativeButton("Abbrechen", null).show()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            // aktuellen Seiten-Stand direkt in die App übertragen
-            1 -> {
-                val input = EditText(this)
-                input.hint = "https://…/index.html"
-                input.setText(getSharedPreferences("kvglive", MODE_PRIVATE)
-                    .getString("webUrl", DEFAULT_WEB_URL))
-                AlertDialog.Builder(this)
-                    .setTitle("Web-Version übernehmen")
-                    .setMessage("Lädt die index.html von dieser URL, speichert sie in der App und lädt sie sofort.")
-                    .setView(input)
-                    .setPositiveButton("Übernehmen") { _, _ ->
-                        val u = input.text.toString().trim()
-                        if (u.isNotEmpty()) {
-                            getSharedPreferences("kvglive", MODE_PRIVATE)
-                                .edit().putString("url", "").apply()   // Override-URL zurücksetzen
-                            adoptWebVersion(if (u.startsWith("http")) u else "https://$u")
+            // Zustand (Favoriten, Adresse, Einstellungen) aus der Browser-Sitzung
+            // übernehmen: Code aus "⇅ Zustand" auf der Seite einfügen
+            1 -> pasteDialog(
+                "Zustand importieren",
+                "Zustand-Code einfügen (auf der Seite unter ⇅ Zustand exportieren)",
+            ) { code ->
+                if (code.isNotBlank()) {
+                    // JSONObject.quote macht den String JS-String-sicher
+                    web.evaluateJavascript(
+                        "window.kvgImportState(${JSONObject.quote(code.trim())});") { res ->
+                        if (res.contains("ok")) {
+                            Toast.makeText(this, "Zustand übernommen.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this, "Code ungültig.", Toast.LENGTH_LONG).show()
                         }
                     }
-                    .setNegativeButton("Abbrechen", null).show()
+                }
             }
-            2 -> {
+            // aktuellen Seiten-Stand direkt in die App übertragen
+            2 -> pasteDialog(
+                "Web-Version übernehmen",
+                "https://…/index.html",
+            ) { u ->
+                if (u.isNotBlank()) {
+                    getSharedPreferences("kvglive", MODE_PRIVATE)
+                        .edit().putString("url", "").apply()   // Override-URL zurücksetzen
+                    adoptWebVersion(if (u.startsWith("http")) u.trim() else "https://" + u.trim())
+                }
+            }
+            3 -> {
                 webFile().delete()
                 getSharedPreferences("kvglive", MODE_PRIVATE)
                     .edit().putString("url", "").putString("webUrl", "").apply()
                 web.loadUrl(DEFAULT_URL)
             }
-            3 -> {
+            4 -> {
                 val input = EditText(this)
                 input.hint = "https://… oder file:///android_asset/index.html"
-                input.setText(prefsUrl())
+                input.setText(getSharedPreferences("kvglive", MODE_PRIVATE)
+                    .getString("url", ""))
                 AlertDialog.Builder(this)
                     .setTitle("Seiten-URL")
                     .setView(input)

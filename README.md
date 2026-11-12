@@ -5,6 +5,15 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.5** – Zustandsübertragung: Die gewählte Startadresse wird jetzt
+gesichert (localStorage) und beim Start wiederhergestellt. Neuer Knopf
+"⇅ Zustand" exportiert Favoriten (Haltestellen + Adressen), Startadresse,
+letzten Standort und Einstellungen als kompakten Code bzw. spielt einen Code
+wieder ein. Damit lässt sich der komplette Nutzerzustand von einer
+Browser-Sitzung (z. B. vom eigenen Server) in die Android-App übertragen –
+dort per App-Menü "Zustand importieren" (Code einfügen, gilt für den
+WebView-Speicher der App).
+
 **v1.0.4** – Zwei APKs im Release `android-latest`: `cslk.apk` (Release-Build)
 und `cslkd.apk` (Debug-Build, eigene Paket-ID, parallel installierbar). Der
 Wecker-Dialog zeigt im Browser (ohne native Brücke) einen Hinweis, dass

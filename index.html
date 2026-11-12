@@ -191,6 +191,9 @@ type: "text/html"
     background: rgba(245,158,11,.08); border: 1px dashed rgba(245,158,11,.5);
     border-radius: 8px; color: #cbd5e1; }
   .apkdl a { color: #f59e0b; text-decoration: underline; cursor: pointer; }
+  .stata { width: 100%; box-sizing: border-box; height: 60px; margin: 4px 0 6px;
+    background: #0f1a30; color: #cbd5e1; border: 1px solid #1e3a5f; border-radius: 8px;
+    font-size: .65rem; font-family: monospace; padding: 6px; resize: vertical; }
   .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   .trip .tlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: 0.7rem;
     color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -274,6 +277,7 @@ type: "text/html"
       A
     </span>
     <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
+    <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
   </header>
 
   <div id="addrFavPanel" hidden></div>
@@ -724,6 +728,7 @@ function selectAddr(i) {
   const r = addrResults[i];
   if (!r) return;
   addrPos = { lat: Number(r.lat), lon: Number(r.lon), label: r.label };
+  try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
   addrSug.hidden = true;
   addrSearch.value = "";
   renderAddrChip();
@@ -735,6 +740,7 @@ function selectAddr(i) {
 
 function clearAddr() {
   addrPos = null;
+  try { localStorage.removeItem("kvg-addr"); } catch (e) {}
   renderAddrChip();
   gpsCtl.classList.remove("disabled");
   positionReset();
@@ -836,6 +842,7 @@ addrFavPanel.addEventListener("click", e => {
     const f = addrFavs[Number(row.dataset.afi)];
     if (!f) return;
     addrPos = { lat: f.lat, lon: f.lon, label: f.name };
+    try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
     addrSug.hidden = true;
     addrSearch.value = f.name;   // über das Adressfeld wieder aufgerufen
     renderAddrChip();
@@ -1601,6 +1608,70 @@ function openAlarmDialog(aKey) {
   sync();
 }
 
+// ---------- Zustand übertragen (Export/Import, z. B. für die Android-App) ----------
+// localStorage hängt am Origin: Seite vom Server geladen und Seite in der App
+// (file://) sind verschiedene Origins mit getrennten Speichern. Der Zustand
+// (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
+// Einstellungen) wird deshalb als kompakter Code exportiert und in der App
+// (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font"];
+function kvgExportState() {
+  const o = {};
+  for (const k of STATE_KEYS) {
+    const v = localStorage.getItem(k);
+    if (v != null) o[k] = v;
+  }
+  return btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+}
+window.kvgImportState = function (code) {
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(String(code).trim()))));
+    let n = 0;
+    for (const k of STATE_KEYS) if (k in o) { try { localStorage.setItem(k, o[k]); } catch (e) {} n++; }
+    if (!n) throw new Error("leer");
+    setLocNote("Zustand übernommen (" + n + " Einträge) – lade neu …");
+    setTimeout(() => location.reload(), 600);
+    return "ok";
+  } catch (e) {
+    setLocNote("Zustand-Code ungültig.");
+    return "err";
+  }
+};
+function openStateDialog() {
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  wrap.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dtitle">Zustand übertragen</div>' +
+    '<div class="dlabel">Exportieren (Favoriten, Startadresse, Einstellungen)</div>' +
+    '<textarea class="stata" readonly>' + kvgExportState() + "</textarea>" +
+    '<button class="chip stcopy">Code kopieren</button>' +
+    '<div class="dlabel">Importieren: Code hier einfügen</div>' +
+    '<textarea class="stata stimp" placeholder="Zustand-Code einfügen …"></textarea>' +
+    '<button class="chip stimp-go">Übernehmen</button>' +
+    '<div class="dbtns"><button class="acancel">Schließen</button></div>' +
+    "</div>";
+  document.body.appendChild(wrap);
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".stcopy")) {
+      const ta = wrap.querySelector(".stata");
+      try {
+        if (ta && ta.select) ta.select();
+        if (document.execCommand) document.execCommand("copy");
+        setLocNote("Zustand-Code kopiert.");
+      } catch (err) { setLocNote("Code markiert – bitte selbst kopieren."); }
+      return;
+    }
+    if (e.target.closest(".stimp-go")) {
+      const ta = wrap.querySelector(".stimp");
+      if (ta && ta.value) kvgImportState(ta.value);
+      return;
+    }
+    if (e.target.closest(".acancel")) wrap.remove();
+  });
+}
+document.getElementById("stateBtn").addEventListener("click", openStateDialog);
+
 // Panels-Klicks (↻ und Buslinien)
 stationPanel.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
@@ -2313,6 +2384,17 @@ try {
   if (saved) {
     fontSlider.value = saved;
     document.body.style.zoom = String(Number(saved));
+  }
+} catch (e) {}
+
+// Gesicherte Startadresse wiederherstellen (wurde mit selectAddr gesichert;
+// auch Grundlage für den Zustands-Export in die Android-App)
+try {
+  const ad = JSON.parse(localStorage.getItem("kvg-addr") || "null");
+  if (ad && isFinite(ad.lat) && isFinite(ad.lon) && ad.label) {
+    addrPos = { lat: ad.lat, lon: ad.lon, label: ad.label };
+    renderAddrChip();
+    gpsCtl.classList.add("disabled");
   }
 } catch (e) {}
 
