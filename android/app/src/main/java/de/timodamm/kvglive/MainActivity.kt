@@ -21,11 +21,17 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.Toast
 import org.json.JSONArray
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_URL = "file:///android_asset/index.html"
+        const val DEFAULT_WEB_URL =
+            "https://raw.githubusercontent.com/td-ct/CitySurvers-LIVE-Kiel-by-Pixcaelium/main/index.html"
         private const val REQ_PERMS = 41
     }
 
@@ -70,11 +76,58 @@ class MainActivity : Activity() {
         }
         web.addJavascriptInterface(NativeBridge(this), "KvgNative")
         requestPerms()
-        web.loadUrl(prefsUrl())
+        // Start: übernommene Web-Version (falls vorhanden), sonst gebündelte Seite
+        web.loadUrl(currentTarget())
+    }
+
+    // ---------- Seiten-Stand: gebündelt vs. übernommene Web-Version ----------
+
+    private fun webFile(): File = File(File(filesDir, "web"), "index.html")
+
+    private fun currentTarget(): String {
+        val f = webFile()
+        return if (f.exists()) Uri.fromFile(f).toString() else DEFAULT_URL
+    }
+
+    /** Aktuelle index.html von einer URL laden und dauerhaft in die App übernehmen. */
+    private fun adoptWebVersion(url: String) {
+        Toast.makeText(this, "Lade aktuelle Web-Version …", Toast.LENGTH_SHORT).show()
+        thread {
+            var ok = false
+            var msg = ""
+            try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.setRequestProperty("Cache-Control", "no-cache")
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    if (body.contains("<script>") && body.length > 10000) {
+                        val dir = File(filesDir, "web")
+                        dir.mkdirs()
+                        val tmp = File(dir, "index.html.tmp")
+                        tmp.writeText(body)
+                        val f = webFile()
+                        if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+                        getSharedPreferences("kvglive", MODE_PRIVATE)
+                            .edit().putString("webUrl", url).apply()
+                        ok = true
+                    } else msg = "Geladene Datei sieht nicht wie die Seite aus."
+                } else msg = "HTTP ${conn.responseCode}"
+            } catch (e: Exception) { msg = e.message ?: e.toString() }
+            runOnUiThread {
+                if (ok) {
+                    Toast.makeText(this, "Web-Version übernommen.", Toast.LENGTH_SHORT).show()
+                    web.loadUrl(currentTarget())
+                } else {
+                    Toast.makeText(this, "Übernahme fehlgeschlagen: $msg", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun prefsUrl(): String =
-        getSharedPreferences("kvglive", MODE_PRIVATE).getString("url", DEFAULT_URL) ?: DEFAULT_URL
+        getSharedPreferences("kvglive", MODE_PRIVATE).getString("url", null) ?: ""
 
     private fun hasPerm(p: String) =
         checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
@@ -107,14 +160,41 @@ class MainActivity : Activity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(Menu.NONE, 1, Menu.NONE, "Seiten-URL ändern")
+        menu.add(Menu.NONE, 1, Menu.NONE, "Web-Version übernehmen …")
         menu.add(Menu.NONE, 2, Menu.NONE, "Gebündelte Version laden")
+        menu.add(Menu.NONE, 3, Menu.NONE, "Seiten-URL ändern")
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            // aktuellen Seiten-Stand direkt in die App übertragen
             1 -> {
+                val input = EditText(this)
+                input.hint = "https://…/index.html"
+                input.setText(getSharedPreferences("kvglive", MODE_PRIVATE)
+                    .getString("webUrl", DEFAULT_WEB_URL))
+                AlertDialog.Builder(this)
+                    .setTitle("Web-Version übernehmen")
+                    .setMessage("Lädt die index.html von dieser URL, speichert sie in der App und lädt sie sofort.")
+                    .setView(input)
+                    .setPositiveButton("Übernehmen") { _, _ ->
+                        val u = input.text.toString().trim()
+                        if (u.isNotEmpty()) {
+                            getSharedPreferences("kvglive", MODE_PRIVATE)
+                                .edit().putString("url", "").apply()   // Override-URL zurücksetzen
+                            adoptWebVersion(if (u.startsWith("http")) u else "https://$u")
+                        }
+                    }
+                    .setNegativeButton("Abbrechen", null).show()
+            }
+            2 -> {
+                webFile().delete()
+                getSharedPreferences("kvglive", MODE_PRIVATE)
+                    .edit().putString("url", "").putString("webUrl", "").apply()
+                web.loadUrl(DEFAULT_URL)
+            }
+            3 -> {
                 val input = EditText(this)
                 input.hint = "https://… oder file:///android_asset/index.html"
                 input.setText(prefsUrl())
@@ -131,11 +211,6 @@ class MainActivity : Activity() {
                         }
                     }
                     .setNegativeButton("Abbrechen", null).show()
-            }
-            2 -> {
-                getSharedPreferences("kvglive", MODE_PRIVATE)
-                    .edit().putString("url", DEFAULT_URL).apply()
-                web.loadUrl(DEFAULT_URL)
             }
         }
         return true

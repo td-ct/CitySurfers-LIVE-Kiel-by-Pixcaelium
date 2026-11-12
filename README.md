@@ -5,6 +5,14 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.4** – Zwei APKs im Release `android-latest`: `cslk.apk` (Release-Build)
+und `cslkd.apk` (Debug-Build, eigene Paket-ID, parallel installierbar). Der
+Wecker-Dialog zeigt im Browser (ohne native Brücke) einen Hinweis, dass
+Vibration/Weckton im Hintergrund nicht funktionieren, mit relativem
+Download-Link `cslk.apk` (funktioniert überall, wo APK und index.html im
+selben Verzeichnis liegen). App neu: Menü „Web-Version übernehmen" lädt die
+aktuelle index.html von einer URL und speichert sie direkt in der App.
+
 **v1.0.3** – Native Android-Mini-App: `android/` enthält ein minimales
 WebView-Projekt, das die index.html als Asset einbettet und über die
 JS-Brücke `window.KvgNative` nativen Zugriff auf Vibration und

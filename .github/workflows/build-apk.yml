@@ -30,23 +30,31 @@ jobs:
           mkdir -p android/app/src/main/assets
           cp index.html android/app/src/main/assets/index.html
 
-      - name: APK bauen
-        run: gradle -p android assembleDebug --no-daemon
+      - name: APKs bauen (Release + Debug)
+        run: gradle -p android assembleRelease assembleDebug --no-daemon
+
+      - name: APKs umbenennen
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk cslk.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk cslkd.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: CitySurfers-LIVE-Android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            cslk.apk
+            cslkd.apk
 
       - name: Als Release bereitstellen (stabil android-latest)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
           TAG=android-latest
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          gh release create "$TAG" "$APK" \
+          gh release create "$TAG" cslk.apk cslkd.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "CitySurfers LIVE Kiel – Android APK" \
-            --notes "Mini-App: WebView (gebündelte index.html) + native Wecker (AlarmManager) und Vibration. Debug-Build." \
-            || gh release upload "$TAG" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
+            --title "CitySurfers LIVE Kiel – Android App" \
+            --notes "Mini-App: WebView + native Wecker (AlarmManager) und Vibration.
+          cslk.apk = Release-Build, cslkd.apk = Debug-Build (parallele Installation möglich).
+          Beide mit CI-Debug-Key signiert: Updates durch Deinstallieren + Neuinstallieren." \
+            || gh release upload "$TAG" cslk.apk cslkd.apk --clobber --repo "$GITHUB_REPOSITORY"

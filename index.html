@@ -187,6 +187,10 @@ type: "text/html"
     padding: 6px 12px; cursor: pointer; color: #cbd5e1; font-size: .85rem; }
   .dbtns .aok { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
   .dbtns .aok:disabled { opacity: .35; cursor: not-allowed; }
+  .apkdl { margin-top: 10px; padding: 8px; font-size: .72rem; line-height: 1.4;
+    background: rgba(245,158,11,.08); border: 1px dashed rgba(245,158,11,.5);
+    border-radius: 8px; color: #cbd5e1; }
+  .apkdl a { color: #f59e0b; text-decoration: underline; cursor: pointer; }
   .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   .trip .tlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: 0.7rem;
     color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1545,6 +1549,15 @@ function openAlarmDialog(aKey) {
     "</div>" +
     '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
     '<button class="aok" disabled>Wecker stellen</button></div>' +
+    // Im Browser (ohne native Brücke): Hinweis, dass Vibration/Weckton im
+    // Hintergrund nicht funktionieren, plus Download-Link zur APK im selben
+    // Verzeichnis wie diese Seite (relativ, funktioniert überall, wo beide
+    // Dateien zusammen liegen)
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser klingelt oder vibriert der Wecker nicht, ' +
+      'während die Seite im Hintergrund ist oder das Display aus ist. ' +
+      'Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a> ' +
+      '(Download im selben Verzeichnis wie diese Seite).</div>') +
     "</div>";
   document.body.appendChild(wrap);
   const okBtn = wrap.querySelector(".aok");

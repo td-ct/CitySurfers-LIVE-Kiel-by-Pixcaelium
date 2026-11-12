@@ -8,13 +8,22 @@ android {
         applicationId 'de.timodamm.kvglive'
         minSdk 24
         targetSdk 34
-        versionCode 3
-        versionName '1.0.3'
+        versionCode 4
+        manifestPlaceholders = [appLabel: "@string/app_name"]
+        versionName '1.0.4'
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            manifestPlaceholders = [appLabel: "@string/app_name_debug"]
+        }
         release {
             minifyEnabled false
+            // Release-APK mit Debug-Key signieren: direkt installierbar.
+            // (Ohne feste Signierung erzeugt jeder CI-Lauf einen neuen Key,
+            // App-Updates also per Deinstallieren+Neuinstallieren.)
+            signingConfig signingConfigs.debug
         }
     }
 
