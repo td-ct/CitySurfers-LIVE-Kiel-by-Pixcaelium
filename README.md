@@ -5,6 +5,13 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v0.1.9** – Doppelte Zug-Einträge entfernt: dieselbe Fahrt kam teils als zwei
+Produkte mit verschiedenen IDs (z.B. "RB73" und SEV-Ersatz "de:NAHSH") mit
+identischer Zeit und Ziel ins Board; jetzt wird nach Ziel+Sollzeit dedupliziert
+und der konkrete Liniennamen bevorzugt. Abfragefenster der Bahnhöfe vergrößert
+(100 statt 40 Abfahrten), damit auch weiter entfernte Bahnhöfe wie Kiel Hbf
+vorausschauende Züge zeigen. Nachtmittags-Zeiten mit Tagesoffset korrekt geparst.
+
 **v0.1.8** – Züge: Doppelte Zug-Einträge entfernt (SEV-Fahrten durchlaufen eine
 Haltestelle teils mehrfach mit derselben Fahrt-ID), Fahrtverlauf zeigt jetzt den
 zur angeklickten Abfahrtszeit passierenden Durchgang (Zuordnung über Fahrt-ID

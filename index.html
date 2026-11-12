@@ -1530,14 +1530,18 @@ async function dbFetch(svcReqL) {
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
-function dbHHMM(t) { return t ? t.slice(0, 2) + ":" + t.slice(2, 4) : ""; }
+// HAFAS-Zeitformat: "HHMMSS"; nach Mitternacht teils mit Tagesoffset-Prefix ("01HHMMSS")
+function dbHHMM(t) { if (!t) return ""; const h = t.length > 6 ? t.slice(-6) : t;
+  return h.slice(0, 2) + ":" + h.slice(2, 4); }
 function dbRelMin(t) {   // "HHMMSS" -> Minuten ab jetzt (negativ = bereits abgefahren)
-  const h = Number(t.slice(0, 2)), m = Number(t.slice(2, 4));
+  const s6 = t.length > 6 ? t.slice(-6) : t;
+  const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
+  const h = Number(s6.slice(0, 2)), m = Number(s6.slice(2, 4));
   if (!isFinite(h) || !isFinite(m)) return 0;
   const now = new Date();
-  let s = h * 3600 + m * 60 + (Number(t.slice(4, 6)) || 0)
+  let s = day * 86400 + h * 3600 + m * 60 + (Number(s6.slice(4, 6)) || 0)
         - (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds());
-  if (s < -43200) s += 86400;   // nach Mitternacht
+  if (s < -43200) s += 86400 * (day ? 0 : 1);   // nach Mitternacht
   return s / 60;
 }
 function dbNow() {
@@ -1551,37 +1555,51 @@ async function dbDepartures(sn) {
   if (!d) return null;
   const { date, time } = dbNow();
   const res = await dbFetch([{ meth: "StationBoard",
-    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time, maxJny: 40 } }]);
+    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time, maxJny: 100 } }]);
   const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
   if (!out || !out.jnyL) return null;
   const prodL = (out.common && out.common.prodL) || [];
   const deps = [], platforms = {};
   const seenJid = new Set();
+  const seenDep = new Map(); // "Ziel|Sollzeit" -> Index in deps
   for (const j of out.jnyL) {
     const prod = prodL[j.prodX] || {};
     if ((prod.cls || 0) >= 32) continue;   // nur Schienenverkehr (Zug/Schienenersatz)
-    // Doppelung vermeiden: gleiche Fahrt (jid) wird nur einmal gelistet.
-    // SEV-Busse durchlaufen dieselbe Haltestelle teils mehrfach pro Tageslauf,
-    // dann stand derselbe Zug mehrfach mit verschiedenen Zeiten in der Liste.
-    if (seenJid.has(j.jid)) continue;
-    seenJid.add(j.jid);
     const st = j.stbStop || {};
     const t = st.dTimeR || st.dTimeS;
     if (!t) continue;
     const rawName = String(prod.name || "").trim();
     // "de:NAHSH" o.ä. ist ein Datenpseudonym, kein Linienname -> besserer Fallback
-    const line = (rawName && rawName.indexOf("de:") !== 0) ? rawName
-      : String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim();
-    deps.push({
+    const isPseudo = !rawName || rawName.indexOf("de:") === 0;
+    const line = isPseudo
+      ? String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim()
+      : rawName;
+    // Doppelungen vermeiden:
+    // a) gleiche Fahrt-ID (jid) nur einmal (SEV-Schleifen: mehrfache Durchgänge pro Tageslauf)
+    // b) gleiche Fahrt kommt teils als ZWEI Produkte mit verschiedenen jids
+    //    (z.B. "RB73" und SEV-Ersatz "de:NAHSH") mit identischer Zeit+Ziel ->
+    //    nur den Eintrag mit dem konkreten Liniennamen behalten.
+    const dkey = (j.dirTxt || "") + "|" + (st.dTimeS || "");
+    const prev = seenDep.get(dkey);
+    if (seenJid.has(j.jid)) continue;
+    const entry = {
       tripId: j.jid,
       line: line || "DB",
       direction: j.dirTxt || "",
+      isPseudo,
       plannedTime: dbHHMM(st.dTimeS),
       actualTime: dbHHMM(st.dTimeR || st.dTimeS),
       actualRelativeTime: dbRelMin(t),
       status: st.dTimeR ? "PREDICTED" : "PLANNED",
       alerts: []
-    });
+    };
+    if (prev !== undefined) {
+      if (deps[prev].isPseudo && !isPseudo) deps[prev] = entry;
+      continue;
+    }
+    seenJid.add(j.jid);
+    seenDep.set(dkey, deps.length);
+    deps.push(entry);
     const plat = st.dPlatF || st.dPlatR;
     if (plat) platforms[j.jid] = plat;
   }
@@ -1625,7 +1643,8 @@ async function dbTrip(tripId, depTime) {
       const p = j.stopL[i];
       if (!isSt(p)) continue;
       if (firstHit < 0) firstHit = i;
-      if (wantHHMM && String(p.dTimeS || "").slice(0, 4) === wantHHMM) { start = i; break; }
+      const tS = p.dTimeS ? (String(p.dTimeS).length > 6 ? String(p.dTimeS).slice(-6) : String(p.dTimeS)) : "";
+      if (wantHHMM && tS.slice(0, 4) === wantHHMM) { start = i; break; }
     }
     if (start < 0) start = (firstHit < 0) ? 0 : firstHit;
     currentTrip.stops = j.stopL.slice(start).map((p, k) => {
