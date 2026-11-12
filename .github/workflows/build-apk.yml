@@ -16,12 +16,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
+      # ubuntu-latest bringt das Android SDK vorinstalliert mit;
+      # nur Lizenzen akzeptieren, fehlende Plattforms/Build-Tools zieht AGP selbst.
       - name: SDK-Lizenzen akzeptieren
         run: yes | sdkmanager --licenses > /dev/null || true
 
