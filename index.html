@@ -901,3 +901,443 @@ function renderBusPanel() {
       const now = new Date();
       const depClock = (() => {
         const t = new Date(now.getTime() + rel * 1000);
+        return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+      })();
+      inner += '<div class="busdetail"><span class="dl">' + escapeHtml(dep.patternText) +
+        '</span> <span class="big">→ ' + escapeHtml(dep.direction) + "</span><br>" +
+        (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
+        "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
+        (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")<br>" +
+        'Fußweg <b>' + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min</b> · " +
+        '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
+        "los in " + losMin + " min</span></div>";
+    } else {
+      inner += '<small class="rowinfo dim">Abfahrt nicht mehr in den Daten – ↻ für neue Abfrage.</small>';
+    }
+  } else {
+    inner += '<small class="rowinfo dim">Daten werden geladen …</small>';
+  }
+  if (busPanel.dataset.last !== inner) {
+    busPanel.dataset.last = inner;
+    busPanel.innerHTML = inner;
+    marqueeify(busPanel);
+  }
+  busPanel.hidden = false;
+}
+
+// Panels-Klicks (↻ und Buslinien)
+stationPanel.addEventListener("click", e => {
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) { refetchStop(ref.dataset.ref, true); return; }
+  const bus = e.target.closest("[data-bus]");
+  if (bus) {
+    const [sn, tripId] = bus.dataset.bus.split("|");
+    selectBus(sn, tripId);
+  }
+});
+busPanel.addEventListener("click", e => {
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) refetchStop(ref.dataset.ref, true);
+});
+
+// ---------- Favoriten ----------
+function renderFavs() {
+  const box = document.getElementById("favorites");
+  if (!favs.length) { box.innerHTML = ""; renderAddFav(); return; }
+  const names = favs.map(sn => {
+    const s = stops.find(x => x.shortName === sn);
+    return s ? s.name : null;
+  });
+  box.innerHTML = favs.map((sn, i) =>
+    '<span class="chip' + (currentStop && currentStop.shortName === sn ? " sel" : "") +
+    '" data-sn="' + escapeHtml(sn) + '">' + escapeHtml(names[i] || sn) + " ✕</span>").join("");
+  renderAddFav();
+}
+
+document.getElementById("favorites").addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (!chip || chip.id === "addFav") return;
+  const sn = chip.dataset.sn;
+  const remove = e.offsetX > chip.offsetWidth - 24;
+  if (remove) {
+    favs = favs.filter(f => f !== sn);
+    localStorage.setItem("kvg-favs", JSON.stringify(favs));
+    renderFavs();
+  } else if (stops.length) {
+    selectStop(sn);
+  }
+});
+
+function toggleFavSn(sn) {
+  if (favs.includes(sn)) favs = favs.filter(f => f !== sn);
+  else { favs.unshift(sn); favs = favs.slice(0, 8); }
+  localStorage.setItem("kvg-favs", JSON.stringify(favs));
+  renderFavs();
+  // alle Sterne dieser Station überall aktualisieren
+  document.querySelectorAll("[data-star]").forEach(b => {
+    b.classList.toggle("off", !favs.includes(b.dataset.star));
+  });
+}
+function starHTML(sn) {
+  return '<button class="star' + (favs.includes(sn) ? "" : " off") +
+    '" data-star="' + escapeHtml(sn) + '" title="Favorit">★</button>';
+}
+function toggleFav() {
+  if (!currentStop) return;
+  toggleFavSn(currentStop.shortName);
+  renderPanels();
+}
+
+function renderAddFav() {
+  const box = document.getElementById("favorites");
+  const add = currentStop && !favs.includes(currentStop.shortName);
+  let btn = document.getElementById("addFav");
+  if (!btn) {
+    btn = document.createElement("span");
+    btn.id = "addFav";
+    btn.className = "chip";
+    btn.textContent = "☆ Merken";
+    btn.addEventListener("click", toggleFav);
+    box.appendChild(btn);
+  }
+  btn.style.display = add ? "" : "none";
+}
+
+// ---------- Entfernung & Fußweg-Routing ----------
+const walkCache = JSON.parse(localStorage.getItem("kvg-walk2") || "{}"); // sn -> {m,lat,lon,ts}
+function dist(pos, stop) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (stop.lat - pos.lat) * rad, dLon = (stop.lon - pos.lon) * rad;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(pos.lat * rad) * Math.cos(stop.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function formatDist(m) {
+  return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km";
+}
+function saveWalkCache() {
+  try { localStorage.setItem("kvg-walk2", JSON.stringify(walkCache)); } catch (e) {}
+}
+async function walkMeters(stop) {
+  const pos = getPos();
+  if (!pos) return null;
+  const c = walkCache[stop.shortName];
+  // echte Wegdaten: 24 h gültig; Schätzung (~, Luftlinie × 1,3): nur 10 min, dann Router neu versuchen
+  if (c && Math.abs(c.lat - pos.lat) < 0.0002 && Math.abs(c.lon - pos.lon) < 0.0002 &&
+      Date.now() - c.ts < (c.est ? 6e5 : 864e5)) {
+    return c.m;
+  }
+  const air = dist(pos, stop);
+  try {
+    const url = FOOT_ROUTER + "/" + pos.lon + "," + pos.lat + ";" + stop.lon + "," + stop.lat + "?overview=false";
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.routes && data.routes[0]) {
+        walkCache[stop.shortName] = { m: data.routes[0].distance, est: false, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+        saveWalkCache();
+        return data.routes[0].distance;
+      }
+    }
+  } catch (e) {}
+  const est = air * 1.3; // Schätzung (Router nicht erreichbar): Luftlinie × 1,3
+  walkCache[stop.shortName] = { m: est, est: true, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+  saveWalkCache();
+  return est;
+}
+function isEst(sn) {
+  const c = walkCache[sn];
+  return !!(c && c.est);
+}
+
+// ---------- Bussteige (A1, B3 ...) ----------
+let steige = null; // shortName -> [{label, id}]
+try { steige = JSON.parse(localStorage.getItem("kvg-steige") || "null"); } catch (e) {}
+function saveSteige() {
+  try { localStorage.setItem("kvg-steige", JSON.stringify(steige)); } catch (e) {}
+}
+async function getSteige() {
+  if (steige) return;
+  try {
+    const res = await fetch(PLATFORMS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    if (!res.ok) return;
+    const data = await res.json();
+    steige = {};
+    for (const p of (data.stopPoints || [])) {
+      const sn = String(p.stopShortName || "");
+      if (!sn) continue;
+      (steige[sn] = steige[sn] || []).push({ label: p.label || "", id: p.id });
+    }
+    saveSteige();
+  } catch (e) {}
+}
+async function loadPlatforms(sn) {
+  await getSteige();
+  const list = steige && steige[sn];
+  if (!list || !list.length) return {};
+  const byId = {};
+  for (const p of list) byId[p.id] = p.label;
+  const map = {}; // tripId -> label
+  await Promise.all(list.map(async p => {
+    try {
+      const res = await fetch(DEPART_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "stopPoint=" + encodeURIComponent(p.id)
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const all = [...(data.actual || []), ...(data.oldActual || [])];
+      for (const d of all) if (d.tripId && byId[p.id]) map[d.tripId] = byId[p.id];
+    } catch (e) {}
+  }));
+  return map;
+}
+
+// ---------- Abfahrtsdaten ----------
+const depCache = new Map(); // sn -> deps (bis globaler Reset)
+async function getDepartures(sn) {
+  if (depCache.has(sn)) return depCache.get(sn);
+  try {
+    const res = await fetch(DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(sn)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const deps = (data.actual || []).map(d => ({
+      tripId: d.tripId, line: d.patternText, direction: d.direction,
+      plannedTime: d.plannedTime, actualTime: d.actualTime,
+      actualRelativeTime: d.actualRelativeTime, status: d.status,
+      alerts: d.generalAlerts || []
+    }));
+    depCache.set(sn, deps);
+    return deps;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---------- Sichtbarkeits-Steuerung ----------
+const stopViews = new Map(); // sn -> {stop, meters, fetchTs, deps, platforms, fetched, reloading}
+function viewOf(sn) {
+  if (!stopViews.has(sn)) {
+    const stop = stops.find(s => s.shortName === sn);
+    if (!stop) return null;
+    stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false });
+  }
+  return stopViews.get(sn);
+}
+async function enrichRow(stop, force) {
+  const v = viewOf(stop.shortName);
+  if (!v) return;
+  if (!v.meters || force) {
+    const m = await walkMeters(stop);
+    if (m != null && (!v.meters || Math.abs(v.meters - m) / Math.max(v.meters, 1) > 0.15)) v.meters = m;
+    else if (m != null && !v.meters) v.meters = m;
+  }
+  if (!v.fetched) {
+    v.reloading = true;
+    const [deps, platforms] = await Promise.all([getDepartures(stop.shortName), loadPlatforms(stop.shortName)]);
+    v.deps = deps; v.platforms = platforms;
+    v.fetched = !!deps; v.fetchTs = Date.now();
+    v.reloading = false;
+  }
+}
+
+function renderViews() {
+  if (sugBox.hidden) return;
+  for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
+}
+
+// Nur diese Station: neue Abfrage (Auto-Cooldown 15 s)
+async function refetchStop(sn, manual) {
+  const v = viewOf(sn);
+  if (!v) return;
+  const now = Date.now();
+  if (v.reloading) return;
+  v.lastAuto = now;
+  v.reloading = true;
+  renderViews();
+  depCache.delete(sn);
+  const [deps, platforms] = await Promise.all([getDepartures(sn), loadPlatforms(sn)]);
+  v.deps = deps; v.platforms = platforms;
+  v.fetched = !!deps; v.fetchTs = Date.now();
+  v.reloading = false;
+  renderViews();
+  renderPanels();
+}
+
+// ---------- Buszeilen rendern ----------
+function busLinesHTML(v) {
+  if (!v || !v.deps) return [];
+  const ageSec = (Date.now() - v.fetchTs) / 1000;
+  const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
+  const out = [];
+  for (const d of v.deps) {
+    const rel = d.actualRelativeTime - ageSec;
+    const losMin = Math.round((rel - walkSec) / 60);
+    const plat = v.platforms && v.platforms[d.tripId];
+    const cls = losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed";
+    const now = new Date();
+    const t = new Date(now.getTime() + rel * 1000);
+    const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+    const text = d.direction;
+    out.push({
+      html: '<div class="' + cls + '" data-bus="' + escapeHtml(v.stop.shortName) + "|" + escapeHtml(d.tripId) + '">' +
+        '<span class="dl">' + escapeHtml(d.line) + '</span>' +
+        (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
+        '<span class="mqwrap"><span class="mqi">' + escapeHtml(text) + "</span></span>" +
+        '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>",
+      losMin
+    });
+  }
+  return out;
+}
+
+// Sichtbare Zeile im Suchergebnis aktualisieren
+function renderView(sn, el) {
+  const v = stopViews.get(sn);
+  if (!v) return;
+  const meta = el.querySelector(".smeta");
+  if (v.meters && meta) {
+    const walkMin = Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60));
+    const pre = isEst(sn) ? "~" : "";
+    const newText = pre + formatDist(v.meters) + " · " + pre + walkMin + " min";
+    if (meta.textContent !== newText) meta.textContent = newText;
+  }
+  const info = el.querySelector(".rowinfo");
+  if (info) {
+    if (v.reloading) {
+      info.className = "rowinfo dim";
+      info.textContent = "wird aktualisiert …";
+    } else if (!v.fetched) {
+      info.className = "rowinfo dim";
+      info.textContent = "Daten werden geladen …";
+    } else if (v.deps && v.deps.length) {
+      const lines = busLinesHTML(v);
+      // Abgefahrene raus: wenn der letzte Bus weg ist, Station neu laden
+      const reachable = lines.filter(l => l.losMin >= -5);
+      if (!reachable.length) {
+        info.className = "rowinfo dim";
+        info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
+        refetchStop(sn, false);
+        return;
+      }
+      const newHTML = lines.map(l => l.html).join("");
+      if (info.dataset.last !== newHTML) {
+        info.dataset.last = newHTML;
+        info.className = "rowinfo";
+        info.innerHTML = newHTML;
+        marqueeify(info);
+      }
+    } else if (v.fetched) {
+      info.className = "rowinfo dim";
+      info.textContent = "keine Abfahrten in den nächsten Minuten";
+    }
+  }
+}
+
+// Sichtbare Zeilen finden & befüllen (einmaliger Fetch bei erster Sichtbarkeit)
+let enrichTimer = null;
+function enrichVisible(force) {
+  clearTimeout(enrichTimer);
+  enrichTimer = setTimeout(() => {
+    const box = sugBox;
+    if (box.hidden) return;
+    const rows = [...box.querySelectorAll("div[data-sn]")];
+    for (const el of rows) {
+      const r = el.getBoundingClientRect();
+      const visible = r.bottom > -60 && r.top < (innerHeight || 800) + 60;
+      if (!visible) continue;
+      const sn = el.dataset.sn;
+      const stop = stops.find(s => s.shortName === sn);
+      if (!stop) continue;
+      const v = viewOf(sn);
+      if (v && v.meters && !force) { renderView(sn, el); continue; }
+      enrichRow(stop, false).then(() => renderView(sn, el));
+    }
+  }, 60);
+}
+sugBox.addEventListener("scroll", () => enrichVisible(false));
+window.addEventListener("resize", () => enrichVisible(false));
+
+// ---------- 15-Sekunden-Ticker (nur Neu-Berechnung, keine Abrufe) ----------
+setInterval(() => {
+  if (!sugBox.hidden) {
+    for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
+  }
+  if (stationPanel && !stationPanel.hidden) renderStationPanel();
+  if (busPanel && !busPanel.hidden) renderBusPanel();
+}, TICK_MS);
+
+// ---------- Globaler Aktualisieren-Knopf ----------
+const refreshBtn = document.getElementById("refreshBtn");
+refreshBtn.addEventListener("click", refreshNow);
+function refreshNow() {
+  depCache.clear();
+  stopViews.clear();
+  enrichVisible(true);
+  renderPanels();
+}
+
+// ---------- Lauftext für überlaufende Zeilen ----------
+function marqueeify(container) {
+  const els = container.querySelectorAll(".mqi");
+  for (const el of els) {
+    if (el.dataset.mq) continue;
+    requestAnimationFrame(() => {
+      const parent = el.parentElement;   // .mqwrap: nur die Richtung läuft,
+      if (!parent) return;                // Linie/Steig und Zeit bleiben fest
+      const maxW = parent.clientWidth - parseFloat(getComputedStyle(parent).paddingLeft || 0);
+      const w = el.scrollWidth;
+      if (w <= maxW || w === 0) return;   // passt: kein Lauftext
+      el.dataset.mq = "1";
+      const overflow = w - maxW + 8;
+      const visibleChars = Math.max(Math.round(maxW / (w / (el.textContent.length || 1))), 4);
+      const hold = Math.max(visibleChars * 0.05, 1.2);        // Verweildauer links/rechts
+      const run = overflow / 40;                               // Laufzeit bei 40 px/s
+      const total = hold + run + hold;
+      el.animate([
+        { transform: "translateX(0)", offset: 0 },
+        { transform: "translateX(0)", offset: hold / total },
+        { transform: "translateX(-" + overflow + "px)", offset: (hold + run) / total },
+        { transform: "translateX(-" + overflow + "px)", offset: 1 }
+      ], { duration: total * 1000, iterations: Infinity });
+    });
+  }
+}
+
+// ---------- Schriftgrößen-Regler ----------
+const fontSlider = document.getElementById("fontSlider");
+fontSlider.addEventListener("input", () => {
+  document.body.style.fontSize = (100 * Number(fontSlider.value)) + "%";
+  try { localStorage.setItem("kvg-font", fontSlider.value); } catch (e) {}
+});
+try {
+  const saved = localStorage.getItem("kvg-font");
+  if (saved) {
+    fontSlider.value = saved;
+    document.body.style.fontSize = (100 * Number(saved)) + "%";
+  }
+} catch (e) {}
+
+// ---------- Sonstiges ----------
+function setStatus(t) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = t;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+setStatus(stops.length + " Haltestellen bereit");
+renderFavs();
+</script>
+</body>
+</html>
