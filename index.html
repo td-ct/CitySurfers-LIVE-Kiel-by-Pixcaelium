@@ -179,8 +179,8 @@ type: "text/html"
   .trip .trow.done .takt { text-decoration: line-through; }
   .trip .tdelay { flex-shrink: 0; font-size: 0.75rem; font-weight: 600; min-width: 38px; }
   .trip .tdelay.up { color: #f87171; }
-  .trip .tdelay.down { color: #4ade80; }
-  .trip .tdelay.ok { color: #64748b; }
+  .trip .tdelay.down { color: #7dd3fc; }
+  .trip .tdelay.ok { color: #4ade80; }
   .trip .tarr { flex-shrink: 0; font-size: 0.65rem; color: #7dd3fc; align-self: flex-start; }
   .trip .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
     font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; margin-left: auto; }
@@ -418,6 +418,7 @@ let stops = (EMBEDDED_STOPS.length ? EMBEDDED_STOPS.map(p => ({
 // ---------- DB-Bahnhöfe in Kiel (NAH.SH-HAFAS, nur Schienenverkehr) ----------
 const DB_STOPS = [
   { sn: "DB:9049079", name: "Kiel Hbf (DB)",        lid: "A=1@O=Kiel Hbf@X=10131427@Y=54314209@U=100@L=9049079@", lat: 54.314209, lon: 10.131427 },
+  { sn: "DB:9049332", name: "Kiel Suchsdorf Bahnhof (DB)", lid: "A=1@O=Kiel Suchsdorf Bahnhof@X=10091758@Y=54350058@U=100@L=9049332@", lat: 54.350058, lon: 10.091758 },
   { sn: "DB:9049320", name: "Kiel-Hassee (DB)",     lid: "A=1@O=Kiel-Hassee CITTI-PARK@X=10098437@Y=54310856@U=100@L=9049320@", lat: 54.310856, lon: 10.098437 },
   { sn: "DB:9049327", name: "Kiel-Russee (DB)",     lid: "A=1@O=Kiel-Russee@X=10070211@Y=54310038@U=100@L=9049327@", lat: 54.310038, lon: 10.070211 },
   { sn: "DB:9049232", name: "Kiel Schulen am Langsee (DB)", lid: "A=1@O=Kiel Schulen am Langsee (Bahn)@X=10156966@Y=54307206@U=100@L=9049232@", lat: 54.307206, lon: 10.156966 },
@@ -1195,7 +1196,7 @@ function tripSectionHTML() {
     let delayTxt = "", delayCls = "";
     if (dl && dl.delayMin != null) {
       delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
-      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "pünktlich";
+      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "0m";
     }
     const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
       (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
@@ -1579,11 +1580,12 @@ async function dbDepartures(sn) {
     const t = st.dTimeR || st.dTimeS;
     if (!t) continue;
     const rawName = String(prod.name || "").trim();
-    // "de:NAHSH" o.ä. ist ein Datenpseudonym, kein Linienname -> besserer Fallback
-    const isPseudo = !rawName || rawName.indexOf("de:") === 0;
-    const line = isPseudo
-      ? String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim()
-      : rawName;
+    // Datenpseudonym "de:NAHSH" entfernen, auch mitten im Namen (z.B. "SEVde:NA" -> "SEV")
+    const deIdx = rawName.indexOf("de:");
+    const cleanName = deIdx > 0 ? rawName.slice(0, deIdx).trim() : (deIdx === 0 ? "" : rawName);
+    const isPseudo = !cleanName;
+    const line = cleanName
+      || String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim();
     // Doppelungen vermeiden:
     // a) gleiche Fahrt-ID (jid) nur einmal (SEV-Schleifen: mehrfache Durchgänge pro Tageslauf)
     // b) gleiche Fahrt kommt teils als ZWEI Produkte mit verschiedenen jids
@@ -1599,7 +1601,7 @@ async function dbDepartures(sn) {
       isPseudo,
       plannedTime: dbHHMM(st.dTimeS),
       actualTime: dbHHMM(st.dTimeR || st.dTimeS),
-      actualRelativeTime: dbRelMin(t),
+      actualRelativeTime: dbRelMin(t) * 60,   // Sekunden ab jetzt (wie KVG-API)
       status: st.dTimeR ? "PREDICTED" : "PLANNED",
       alerts: []
     };
