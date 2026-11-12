@@ -1,1 +1,2279 @@
-�*^��m�f���*^�٥�٥���u�^iٞ��!j��D������ڙ
+type: "text/html"
+---
+
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CitySurfers LIVE @ Kiel by Pixcaelium</title>
+<style>
+  :root {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    margin: 0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; padding: 16px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { font-size: 1.5rem; margin: 0; color: #4d8fd6; display: flex; align-items: center; gap: 8px; }
+  h1 .by { color: #94a3b8; font-size: 0.8em; font-weight: 500; }
+  h1 .kiel { color: #f87171; font-weight: 700; margin-left: auto; }
+  h1 .live { color: #4ade80; font-size: 0.85rem; vertical-align: super; }
+  .status { font-size: 0.85rem; color: #94a3b8; }
+  .zoomctl { display: flex; align-items: center; gap: 6px; margin-left: auto;
+    font-size: 0.85rem; color: #94a3b8; }
+  .zoomctl input[type="range"] { width: 110px; accent-color: #4d8fd6; }
+
+  /* Zeile 1: GPS-Kontrolle + Adresse */
+  .addrwrap { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+  #gpsCtl { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  #gpsCtl.disabled .gpsbtn, #gpsCtl.disabled .accbar { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
+  .gpsbtn {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8; border-radius: 10px;
+    padding: 9px 11px; cursor: pointer; font-size: 1.1rem; line-height: 1;
+  }
+  .gpsbtn:hover { color: #e2e8f0; }
+  .gpsbtn.active { color: #4ade80; border-color: #4ade80; }
+  .gpsbtn.busy { animation: pulse 1.2s ease-in-out infinite; color: #4d8fd6; border-color: #4d8fd6; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .accbar { display: inline-flex; gap: 1px; align-items: flex-end; height: 10px; }
+  .accbar i { width: 3px; background: #334155; border-radius: 1px; display: inline-block; }
+  .accbar i.on { background: #4ade80; }
+  .addrfield { position: relative; flex: 1; }
+  input[type="search"] {
+    width: 100%; padding: 12px 14px; font-size: 1.05rem; border-radius: 10px;
+    border: 1px solid #334155; background: #1e293b; color: #e2e8f0; outline: none;
+  }
+  input[type="search"]:focus { border-color: #00519e; }
+  input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
+  #addrSearch { padding-right: 14px; }
+  .suggestions {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 10; background: #1e293b;
+    border: 1px solid #334155; border-radius: 0 0 10px 10px; max-height: 60vh; overflow-y: auto;
+  }
+  .suggestions > div { padding: 11px 14px; cursor: pointer; }
+  .suggestions > div[data-sn] { display: block; } /* Buszeilen UNTER der Stationszeile */
+  .suggestions > div:hover, .suggestions > div.active { background: #00519e; }
+  #addrSug > div { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .suggestions .snr { color: #94a3b8; font-size: 0.9rem; white-space: nowrap; }
+  #addrSug div { font-size: 1rem; }
+  #addrSug .atype { color: #64748b; font-size: 0.8rem; white-space: nowrap; }
+
+  /* Zeile 2: Haltestellensuche */
+  .searchbox { position: relative; margin-bottom: 6px; }
+  #stopSearch { padding-right: 40px; }
+  .ddbtn {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #94a3b8; font-size: 1rem;
+    padding: 8px 10px; cursor: pointer; border-radius: 8px;
+  }
+  .ddbtn:hover { color: #e2e8f0; background: #33415580; }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .chip {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8; border-radius: 999px;
+    padding: 5px 14px; font-size: 0.9rem; cursor: pointer;
+  }
+  .chip:hover { color: #e2e8f0; }
+  .chip.sel { background: #00519e; color: #fff; border-color: #00519e; }
+  .chip.ok { background: #14532d; color: #4ade80; border-color: #14532d; }
+  .chip.bad { background: #7f1d1d; color: #f87171; border-color: #7f1d1d; }
+  .locnote { font-size: 0.85rem; color: #64748b; margin: 2px 2px 6px; }
+
+  /* Stationszeile in der Auswahl + Panels: gleiche Optik */
+  .srow, .phead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .sname, .pname {
+    font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex-shrink: 1; min-width: 0; color: #e2e8f0;
+  }
+  .pname { font-weight: 700; color: #4d8fd6; }
+  .smeta, .pmeta { color: #94a3b8; white-space: nowrap; font-size: 0.95rem; }
+  .rowref {
+    background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 7px;
+    font-size: 0.9rem; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
+  }
+  .rowref:hover { color: #e2e8f0; border-color: #4d8fd6; }
+  .rowref:active { transform: rotate(90deg); }
+  .star { background: none; border: none; cursor: pointer; font-size: 1.1rem; line-height: 1;
+    color: #fbbf24; padding: 2px 4px; flex-shrink: 0; }
+  .star.off { color: #475569; }
+  .star:hover { transform: scale(1.2); }
+
+  .rowinfo { display: block; color: #4ade80; font-size: 0.95rem; margin-top: 3px; }
+  .rowinfo.dim { color: #64748b; }
+  .bl { display: flex; align-items: center; gap: 8px; overflow: hidden; white-space: nowrap;
+    padding: 2px 0; cursor: pointer; }
+  .bl:hover { text-decoration: none; }
+  .bl .dl { background: #00519e; color: #fff; font-weight: 700; border-radius: 6px;
+    min-width: 46px; text-align: center; padding: 1px 6px; flex-shrink: 0; }
+  .bl .plat { color: #94a3b8; flex-shrink: 0; font-size: 0.9rem; }
+  .bl .mqwrap { flex: 1 1 auto; overflow: hidden; white-space: nowrap; min-width: 30px; }
+  .bl .btime { flex-shrink: 0; font-size: 0.95rem; }
+  .bl .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
+    color: #4d8fd6; font-size: 0.95rem; padding: 0 2px; }
+  .bl .lupe:hover { transform: scale(1.2); }
+  .bl.soon { color: #fbbf24; }
+  .bl.missed { color: #f87171; }
+
+  /* Panels (Station / einzelne Abfahrt) unter der Suche */
+  .panel { background: #1e293b; border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
+  .panel .phead { margin-bottom: 4px; }
+  .busdetail { font-size: 1rem; line-height: 1.7; }
+  .busdetail .dl { background: #00519e; color: #fff; font-weight: 700; border-radius: 8px;
+    min-width: 56px; text-align: center; padding: 6px 8px; display: inline-block; }
+  .busdetail .big { font-size: 1.15rem; font-weight: 700; }
+
+  .alerts { margin: 10px 0; }
+  .alert {
+    background: #451a03; border: 1px solid #b45309; color: #fbbf24; border-radius: 10px;
+    padding: 10px 14px; font-size: 0.95rem; margin-bottom: 8px;
+  }
+  .msg { color: #94a3b8; text-align: center; padding: 32px 0; font-size: 1rem; }
+
+  footer { margin-top: 24px; font-size: 0.8rem; color: #475569; line-height: 1.5; }
+  footer a { color: #64748b; }
+  #addrFavPanel { position: fixed; top: 60px; right: 12px; z-index: 50; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
+    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  #addrFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
+    border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
+  #addrFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
+  #addrFavPanel .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #addrFavPanel .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
+    border-radius: 6px; padding: 1px 7px; font-size: 0.9rem; }
+  #addrFavPanel .afbtn:hover { background: #334155; }
+  #addrFavPanel .afsave { width: 100%; margin-bottom: 6px; }
+  footer details.legal { margin-top: 14px; border: 1px solid #334155; border-radius: 8px;
+    padding: 8px 12px; background: #0b1222; }
+  footer details.legal summary { cursor: pointer; font-weight: 600; color: #4d8fd6; font-size: 1.05rem; }
+  footer details.legal p { font-size: 0.92rem; line-height: 1.45; margin: 8px 0; }
+  footer details.legal .dim { color: #94a3b8; }
+  footer details.legal a { color: #4d8fd6; }
+
+  /* Fahrtverlauf (Lupe) */
+  .trip { margin-top: 10px; }
+  .sechead { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 6px 8px;
+    background: #16233c; border: 1px solid #1e3a5f; border-radius: 8px; cursor: pointer;
+    font-weight: 600; font-size: 0.95rem; color: #cbd5e1; }
+  .sechead:hover { background: #1b2b4a; }
+  .sechead .sarr { width: 1em; color: #38bdf8; }
+  .sechead .sfrozen { margin-left: auto; font-size: 0.7rem; font-weight: 400; color: #64748b; }
+  .blink { cursor: pointer; color: #7dd3fc; }
+  .blink:hover { text-decoration: underline dotted; }
+  .abell { background: none; border: none; font-size: 0.95rem; padding: 0 2px;
+    color: #64748b; cursor: pointer; line-height: 1; }
+  .abell.on { color: #38bdf8; text-shadow: 0 0 6px rgba(56,189,248,.8); }
+  .abell.fired { color: #f59e0b; text-shadow: 0 0 8px rgba(245,158,11,.9); }
+  .dlgwrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
+    justify-content: center; background: rgba(3,7,18,.7); }
+  .dlg { background: #16233c; border: 1px solid #1e3a5f; border-radius: 10px;
+    padding: 14px; width: min(320px, 92vw); max-height: 86vh; overflow-y: auto;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  .dtitle { font-weight: 600; margin-bottom: 8px; }
+  .dlabel { display: block; font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: .05em; color: #64748b; margin: 10px 0 4px; }
+  .achips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .achip { border: 1px solid #1e3a5f; border-radius: 999px; padding: 4px 10px;
+    font-size: .8rem; cursor: pointer; background: #0f1a30; color: #cbd5e1; user-select: none; }
+  .achip.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
+  .doder { text-align: center; color: #7dd3fc; font-weight: 600; margin: 6px 0; }
+  .dstages { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+  .dstage { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+  .dbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .dbtns button { background: none; border: 1px solid #1e3a5f; border-radius: 8px;
+    padding: 6px 12px; cursor: pointer; color: #cbd5e1; font-size: .85rem; }
+  .dbtns .aok { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
+  .dbtns .aok:disabled { opacity: .35; cursor: not-allowed; }
+  .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .trip .tlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: 0.7rem;
+    color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+  .trip .tlegend .lgep { min-width: 44px; }
+  .trip .tlegend .lakt { min-width: 48px; font-weight: 600; }
+  .trip .trow { position: relative; display: flex; align-items: center; gap: 8px;
+    padding: 5px 2px 5px 30px; font-size: 1rem; }
+  .trip .trow::before { content: ""; position: absolute; left: 10px; top: 0; bottom: 0;
+    width: 3px; border-radius: 2px; background: #1e3a5f; }
+  .trip .trow.frow::before { top: 50%; }
+  .trip .trow.lrow::before { bottom: 50%; }
+  .trip .trow.done::before { background: #334155; }
+  .trip .trow::after { content: ""; position: absolute; left: 6.5px; top: 50%;
+    margin-top: -5.5px; width: 10px; height: 10px; border-radius: 50%;
+    background: #0b1222; border: 2px solid #38bdf8; box-sizing: border-box; }
+  .trip .trow.done::after { border-color: #475569; }
+  .trip .trow.here::after { background: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, .25); }
+  .trip .trow.done { color: #64748b; }
+  .trip .tgep { flex-shrink: 0; min-width: 44px; font-size: 0.85rem; color: #94a3b8; }
+  .trip .trow.done .tgep { text-decoration: line-through; }
+  .trip .takt { flex-shrink: 0; min-width: 48px; font-weight: 700; }
+  .trip .trow.done .takt { text-decoration: line-through; }
+  .trip .tdelay { flex-shrink: 0; font-size: 0.75rem; font-weight: 600; min-width: 38px; }
+  .trip .tdelay.up { color: #f87171; }
+  .trip .tdelay.down { color: #7dd3fc; }
+  .trip .tdelay.ok { color: #4ade80; }
+  .trip .tq { flex-shrink: 0; min-width: 38px; font-weight: 700; color: #fbbf24; }
+  .trip .tarr { flex-shrink: 0; font-size: 0.65rem; color: #7dd3fc; align-self: flex-start; }
+  .trip .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
+    font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; margin-left: auto; }
+  .trip .lupe:hover { transform: scale(1.2); }
+  .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* API-Indikatoren (rechte obere Ecke) */
+  #apiInd { position: fixed; top: 8px; right: 12px; z-index: 45; display: flex; gap: 5px;
+    pointer-events: none; }
+  #apiInd .ind { pointer-events: auto; cursor: pointer; }
+  #apiStats { position: fixed; top: 38px; right: 12px; z-index: 56; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
+    min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
+  #apiStats .ashdr { font-weight: 700; color: #e2e8f0; margin-bottom: 5px; }
+  #apiStats .asrow { display: flex; align-items: center; gap: 7px; padding: 3px 0; }
+  #apiStats .asdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  #apiStats .asname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #apiStats .asval { color: #cbd5e1; white-space: nowrap; }
+  #apiStats .astot { border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px;
+    color: #e2e8f0; font-weight: 600; }
+  #apiStats .asdim { color: #64748b; margin-top: 6px; }
+  #apiInd .ind { display: inline-flex; align-items: center; gap: 4px; font-size: 0.62rem;
+    font-weight: 700; color: #94a3b8; background: #0f172ae6; border: 1px solid #334155;
+    border-radius: 999px; padding: 2px 7px 2px 6px; opacity: 0.45; transition: opacity 0.3s; }
+  #apiInd .ind::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--c, #94a3b8); flex-shrink: 0; }
+  #apiInd .ind[data-ind=db]   { --c: #EC0016; }  /* Deutsche Bahn: Rot */
+  #apiInd .ind[data-ind=kvg]  { --c: #00519E; }  /* KVG: Verkehrsblau */
+  #apiInd .ind[data-ind=nom]  { --c: #7EBC6F; }  /* Nominatim/OSM: Grün */
+  #apiInd .ind[data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
+  #apiInd .ind.ping { opacity: 1; animation: indPing 0.9s ease-out; }
+  @keyframes indPing {
+    0%   { box-shadow: 0 0 0 0 var(--c); transform: scale(1); }
+    60%  { box-shadow: 0 0 10px 5px transparent; transform: scale(1.15); }
+    100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+  }
+</style>
+</head>
+<body>
+<div id="apiInd" aria-hidden="true">
+  <span class="ind" data-ind="db" title="Deutsche Bahn / NAH.SH (Zugabfahrten)">DB</span>
+  <span class="ind" data-ind="kvg" title="KVG (Busabfahrten)">KVG</span>
+  <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
+  <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
+</div>
+<div id="apiStats" hidden></div>
+<div class="wrap">
+  <header>
+    <h1>CitySurfers <span class="live">● LIVE</span><span class="kiel">@ Kiel</span> <span class="by">by Pixcaelium</span></h1>
+    <button class="chip" id="refreshBtn" title="Alle Daten zurücksetzen und neu holen (manuell)">↻ Aktualisieren</button>
+    <span class="status" id="status"></span>
+    <span class="zoomctl">A̲
+      <input type="range" id="fontSlider" min="0.85" max="1.5" step="0.05" value="1" title="Textgröße" />
+      A
+    </span>
+    <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
+  </header>
+
+  <div id="addrFavPanel" hidden></div>
+
+  <div class="addrwrap">
+    <span id="gpsCtl">
+      <button class="gpsbtn" id="locBtn" title="GPS aktivieren">◎</button>
+      <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
+    </span>
+    <div class="addrfield">
+      <input type="search" id="addrSearch" placeholder="Startadresse (statt GPS) suchen, z. B. Holtenauer Straße 100 …" autocomplete="off" />
+      <div class="suggestions" id="addrSug" hidden></div>
+    </div>
+  </div>
+  <div class="chips" id="addrChip"></div>
+  <div class="locnote" id="locNote"></div>
+
+  <div class="searchbox">
+    <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
+    <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
+    <div class="suggestions" id="suggestions" hidden></div>
+  </div>
+
+  <div class="panel" id="stationPanel" hidden></div>
+  <div class="panel" id="busPanel" hidden></div>
+
+  <div class="chips" id="favorites"></div>
+  <div class="alerts" id="alerts"></div>
+
+  <footer>
+    Datenquelle: inoffizielle JSON-Schnittstelle der Kieler Verkehrsgesellschaft (INIT InternetService,
+    kvg-internetservice-proxy.p.networkteam.com) – dieselbe Quelle, die kvg-kiel.de für
+    seine Echtzeitabfahrten nutzt (CORS freigegeben). Fußwege: OSRM-Fußprofil auf
+    OpenStreetMap-Wegenetz (6 km/h). Adressen: Photon/OpenStreetMap (Fallback: Nominatim).
+    Kein Scraping, aber ohne Garantien. Offizielle Alternative: <a href="https://www.nah.sh">NAH.SH</a>.
+
+    <details class="legal">
+      <summary>Impressum</summary>
+      <p><strong>Angaben gemäß § 5 DDG</strong></p>
+      <p>PixCaelium – Himmlische Pixel<br>
+      Timo Damm (freiberuflicher Programmierer)<br>
+      Butten 2<br>
+      24107 Kiel<br>
+      Deutschland</p>
+      <p><strong>Kontakt:</strong> E-Mail: <a href="mailto:info@pixcaelium.de">info@pixcaelium.de</a></p>
+      <p><strong>Vertreten durch:</strong> Inhaber Timo Damm</p>
+      <p><strong>Umsatzsteuer:</strong> Gemäß § 19 UStG wird keine Umsatzsteuer ausgewiesen.</p>
+      <p><strong>Berufsbezeichnung:</strong> Freiberuflicher Programmierer (Softwareentwickler),
+      keine kammerpflichtige Berufsbezeichnung.</p>
+      <p><strong>Verantwortlich für den Inhalt:</strong> Timo Damm, Adresse wie oben.</p>
+      <p><strong>EU-Streitschlichtung:</strong> Die Europäische Kommission stellt eine Plattform
+      zur Online-Streitbeilegung bereit
+      (<a href="https://ec.europa.eu/consumers/odr/" rel="noopener">ec.europa.eu/consumers/odr</a>).
+      Wir sind nicht verpflichtet und nicht bereit, an einem Streitbeilegungsverfahren vor einer
+      Verbraucherschlichtungsstelle teilzunehmen.</p>
+      <p><strong>Haftung für Inhalte und Links:</strong> Als Diensteanbieter sind wir für eigene Inhalte
+      nach den allgemeinen Gesetzen verantwortlich, sind aber nicht verpflichtet, übermittelte oder
+      gespeicherte fremde Informationen zu überwachen. Für Inhalte verlinkter Seiten ist stets der
+      jeweilige Anbieter verantwortlich; zum Zeitpunkt der Verlinkung waren keine rechtswidrigen
+      Inhalte erkennbar.</p>
+      <p><strong>Urheberrecht:</strong> Die durch den Seitenbetreiber erstellten Inhalte und Werke
+      unterliegen dem deutschen Urheberrecht. Vervielfältigung, Bearbeitung und Verbreitung
+      bedürfen der schriftlichen Zustimmung.</p>
+      <p class="dim">Vollständige Fassung: <a href="https://impressum.pixcaelium.de" rel="noopener">impressum.pixcaelium.de</a></p>
+    </details>
+
+    <details class="legal">
+      <summary>Credits &amp; Dank</summary>
+      <p>Diese App wäre ohne die Arbeit und die offenen Datenquellen folgender Anbieter nicht möglich. Allen Beteiligten ein herzliches <strong>Dankeschön</strong>:</p>
+      <p><strong>Bus-Abfahrtsdaten</strong><br>
+      Danke der <a href="https://www.kvg-kiel.de" rel="noopener">Kieler Verkehrsgesellschaft (KVG)</a> für das
+      Bereitstellen ihrer Echtzeit-Abfahrtsdaten, und Danke den Entwicklern der
+      INIT InternetService-Schnittstelle samt Proxy-Betrieb
+      (kvg-internetservice-proxy.p.networkteam.com), über die kvg-kiel.de seine Live-Anzeige
+      mit offener CORS-Freigabe auch dieser Seite zur Verfügung stellt.</p>
+      <p><strong>Zug-Abfahrtsdaten (DB)</strong><br>
+      Danke der <a href="https://www.nah.sh" rel="noopener">NAH.SH</a> (Nahverkehrsportal des
+      Landes Schleswig-Holstein, DB Regio Nord) und der Deutschen Bahn AG für die
+      Echtzeit-Daten der Kieler Bahnstationen (Kiel Hbf, Kiel-Hassee, Kiel-Russee,
+      Kiel Schulen am Langsee, Kiel-Elmschenhagen). Die Zugabfahrten und Fahrtverläufe
+      werden über die HAFAS-Auskunft von NAH.SH (nahsh.hafas.cloud, CORS offen) abgerufen.</p>
+      <p><strong>Fußwege &amp; Karten</strong><br>
+      Danke dem <a href="https://project-osrm.org" rel="noopener">OSRM-Projekt</a> (Open Source Routing
+      Machine) und dem Betrieb des Fußweg-Routers auf
+      <a href="https://routing.openstreetmap.de" rel="noopener">routing.openstreetmap.de</a> für die
+      realistische Wegstreckenberechnung.</p>
+      <p><strong>Adresssuche</strong><br>
+      Danke dem <a href="https://nominatim.org" rel="noopener">Nominatim-Projekt</a> (OpenStreetMap
+      Foundation) für die Adresssuche sowie dem Team von
+      <a href="https://photon.komoot.io" rel="noopener">Photon (komoot)</a> für den
+      fehlertoleranten Geocoder als Alternative.</p>
+      <p><strong>Grundlage aller Geodaten</strong><br>
+      Danke allen Mitwirkenden von <a href="https://www.openstreetmap.org" rel="noopener">OpenStreetMap</a>.
+      Karten- und Adressdaten © OpenStreetMap-Mitwirkende, ODbL 1.0.</p>
+      <p class="dim">Alle genannten Marken und Dienste gehören ihren jeweiligen Betreibern.
+      Diese App ist ein privates, nicht-kommerzielles Projekt und steht in keiner Verbindung
+      zu den genannten Anbietern.</p>
+    </details>
+
+    <details class="legal">
+      <summary>Datenschutzerklärung</summary>
+      <p>PixCaelium – Himmlische Pixel · Stand: 12.11.2026</p>
+      <p><strong>1. Verantwortlicher</strong><br>
+      PixCaelium – Timo Damm (freiberuflicher Programmierer), Butten 2, 24107 Kiel, Deutschland,
+      E-Mail: <a href="mailto:info@pixcaelium.de">info@pixcaelium.de</a></p>
+      <p><strong>2. Grundsatz: Datenminimierung</strong><br>
+      Diese App führt keine Benutzerkonten und setzt keine Analyse-, Tracking- oder Werbedienste
+      und keine Social-Media-Plugins ein. Es findet kein Profiling und kein Behavioral Tracking statt.</p>
+      <p><strong>3. Lokale Speicherung (localStorage)</strong><br>
+      Haltestellen- und Adressfavoriten, Einstellungen (Schriftgröße) sowie Zwischenergebnisse
+      (Fußwege, Bussteige) werden ausschließlich lokal im Browser des Nutzers (localStorage)
+      gespeichert. Diese Daten verlassen das Gerät nicht und werden an keinen Server übertragen.
+      Sie lassen sich im Browser über „Website-Daten löschen" jederzeit selbst entfernen.</p>
+      <p><strong>4. Standortdaten (GPS) und Adressen</strong><br>
+      Die Standortbestimmung erfolgt nur nach ausdrücklicher Freigabe durch den Nutzer (Browser-
+      Abfrage). Die Koordinaten werden im Browser genutzt, um Haltestellenentfernungen zu berechnen,
+      und – zur Fußwegberechnung – an den Routing-Dienst übertragen (siehe Abschnitt 5). Es werden
+      keine Standortdaten gespeichert oder an den Betreiber dieser Seite übermittelt. Bei Nutzung
+      einer gespeicherten Adresse (Adressfavorit) gelten dieselben Regeln.</p>
+      <p><strong>5. Externe Dienste beim Betrieb dieser App</strong><br>
+      Für Live-Abfahrten, Fußwege und die Adresssuche ruft die App im Browser des Nutzers
+      Drittanbieter auf. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an
+      der funktionsfähigen App):
+      <em>Abfahrtsdaten</em> (inoffizielle Schnittstelle der Kieler Verkehrsgesellschaft über
+      kvg-internetservice-proxy.p.networkteam.com): übermittelt nur die abgefragte Haltestellennummer;
+      <em>Zug-Abfahrtsdaten</em> (NAH.SH-HAFAS der DB Regio Nord, nahsh.hafas.cloud): übermittelt
+      nur die abgefragte Bahnstation bzw. die Zughaltestellen der gewählten Fahrt;
+      <em>Fußweg-Routing</em> (OSRM auf OpenStreetMap-Basis, routing.openstreetmap.de): übermittelt
+      Start- und Zielkoordinaten der berechneten Wegstrecke;
+      <em>Adresssuche</em> (Photon auf OpenStreetMap-Basis, photon.komoot.io): übermittelt den
+      eingegebenen Suchbegriff. Für die Verarbeitung bei diesen Diensten ist der jeweilige
+      Anbieter verantwortlich.</p>
+      <p><strong>6. Server-Logfiles</strong><br>
+      Beim Abruf der Seite speichert der Hosting-Anbieter automatisch technisch notwendige Daten
+      (IP-Adresse – soweit möglich gekürzt/anonymisiert -, Datum und Uhrzeit, aufgerufene Seite,
+      übertragene Datenmenge, Referrer, User-Agent) auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO
+      zum sicheren und stabilen Betrieb. Löschung nach maximal 7 Tagen.</p>
+      <p><strong>7. Ihre Rechte</strong><br>
+      Recht auf Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der
+      Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20), Widerspruch (Art. 21) und Widerruf
+      erteilter Einwilligungen (Art. 7 Abs. 3 DSGVO). Zudem besteht ein Beschwerderecht bei einer
+      Datenschutz-Aufsichtsbehörde (Art. 77 DSGVO).</p>
+      <p><strong>8. Datensicherheit</strong><br>
+      Die Übertragung erfolgt verschlüsselt über HTTPS; die vom Hosting-Anbieter bereitgestellten
+      Sicherheitsmechanismen (Firewall, TLS) werden genutzt.</p>
+      <p><strong>9. Änderungen</strong><br>
+      Diese Datenschutzerklärung kann angepasst werden, um gesetzliche Änderungen umzusetzen oder
+      die tatsächliche Datenverarbeitung korrekt abzubilden. Die jeweils aktuelle Version ist
+      unter <a href="https://datenschutz.pixcaelium.de" rel="noopener">datenschutz.pixcaelium.de</a> abrufbar.</p>
+    </details>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+// ---------- Konfiguration ----------
+const API_BASE = "https://kvg-internetservice-proxy.p.networkteam.com/internetservice";
+const STOPS_URL   = API_BASE + "/geoserviceDispatcher/services/stopinfo/stops" +
+  "?top=324000000&bottom=-324000000&left=-648000000&right=648000000";
+const PLATFORMS_URL = API_BASE + "/geoserviceDispatcher/services/stopinfo/stopPoints";
+const DEPART_URL  = API_BASE + "/services/passageInfo/stopPassages/stop";
+const TRIP_URL    = API_BASE + "/services/tripInfo/tripPassages";
+const STEIG_URL   = API_BASE + "/services/passageInfo/stopPassages/stopPoint";
+const FOOT_ROUTER = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
+const PHOTON      = "https://photon.komoot.io/api/";
+const NOMINATIM   = "https://nominatim.openstreetmap.org/search";
+const DB_GATE     = "https://nahsh.hafas.cloud/gate"; // NAH.SH-HAFAS (DB Regio Nord, Schleswig-Holstein)
+const WALK_SPEED_KMH = 6;
+const TICK_MS = 15000;      // Anzeige-Takt (nur Rechnen, keine Abrufe)
+
+const EMBEDDED_STOPS = [["2157","Malmöweg",54.322056,10.061218],["2808","Kurt-Schumacher-Platz",54.321993,10.051893],["9019","Thor-Heyerdahl-Gymnasium",54.325354,10.048942],["9131","Leif-Eriksson-Gemeinschaftsschule",54.325354,10.048942],["2904","Melsdorf, Dorfplatz",54.31554,10.030145],["2771","Bahnhof Melsdorf",54.312793,10.031058],["2153","Roskilder Weg",54.312405,10.047303],["1356","Melsdorf, Schmiedekoppel",54.316093,10.035058],["1862","Melsdorf, Schneiderkoppel",54.317773,10.033232],["9163","Schule am Heidenberger Teich",54.319652,10.048547],["1758","Seelandweg",54.314942,10.045118],["1962","Aalborgring",54.316302,10.04811],["2687","Jütlandring",54.315917,10.048137],["2132","Harmsstraße",54.316544,10.121683],["1393","Am Reben",54.275429,10.100713],["2940","Meimersdorfer Weg",54.27984,10.097239],["1245","Kleinflintbeker Weg",54.274281,10.105126],["2067","Am Dorfplatz",54.274758,10.109141],["1413","Goldregenholz",54.278982,10.113774],["2883","Am Biberbach",54.281281,10.116897],["1792","Meimersdorf, Schule",54.282791,10.120526],["9228","Johanna-Mestorf-Schule",54.2828,10.120441],["1148","Russee, Kirche",54.301938,10.06711],["1505","Russeer Weg",54.316689,10.06701],["1966","Am Voßberg",54.290053,10.063192],["1972","Ihlseeweg",54.293943,10.062508],["2512","Tannenholz",54.291678,10.059901],["2623","Schiefe Horn",54.302628,10.052334],["2272","Ihlkatenweg",54.301338,10.059049],["1210","Eiderbad",54.287973,10.072842],["1776","Pudelhütte",54.294493,10.070208],["2886","Wiepenkrog",54.29075,10.080373],["2346","Speckenbeker Weg",54.293228,10.08408],["9238","Uwe-Jens-Lornsen-Schule",54.292651,10.085009],["1477","Am Hain",54.294878,10.075356],["1149","Rendsburger Hof",54.300605,10.07167],["2457","Rutkamp",54.300357,10.077431],["2448","Redderkamp",54.302953,10.077631],["1770","Gedenkort am Russee",54.299813,10.085061],["2074","Odensestraße",54.315328,10.049993],["2713","Max-Tau-Schule",54.317229,10.051386],["9125","Max-Tau-Schule",54.317163,10.051613],["2519","Königsförder Weg",54.317146,10.056498],["1326","Stavangerstraße",54.319501,10.050282],["2034","Alt-Mettenhof",54.317067,10.061842],["1538","Am Wohld",54.319503,10.065184],["9116","Grundschule Russee",54.303917,10.067709],["2045","Hofkoppel",54.30636,10.06894],["2946","Bahnhof Russee",54.309493,10.071359],["1971","Melsdorfer Feldweg",54.311146,10.068406],["1517","Dahmeweg",54.30858,10.075401],["2491","Gatowweg",54.305678,10.077586],["1923","Waldesruh",54.317676,10.071253],["9014","Gorch-Fock-Schule",54.314901,10.073532],["2130","Melsdorfer Straße",54.319573,10.07682],["2812","Stadtrade",54.309003,10.103256],["2406","PREY",54.300788,10.094268],["1147","Eiderbrücke",54.289939,10.090402],["1255","Eiderbrücke",54.289725,10.090447],["2668","Hamburger Baum",54.292941,10.09968],["1930","Marienlust",54.299666,10.089666],["1469","Seekoppelweg",54.296078,10.088333],["2545","Streitkamp",54.303683,10.102293],["9087","Theodor-Heuss-Schule",54.303653,10.102261],["9273","Gemeinschaftsschule Hassee",54.303653,10.102261],["2199","Diesterwegstraße",54.303628,10.112658],["1444","Krummbogen",54.293547,10.113702],["5371","WaD Haus Schönow",54.295205,10.103719],["2287","Petersburger Weg",54.297413,10.105022],["1073","Wulfsbrook",54.30171,10.109113],["1832","Schleswiger Straße",54.30346,10.109167],["2254","Holunderbusch",54.295707,10.116502],["2461","Hasenholz",54.296792,10.118569],["2852","Pappelweg",54.299404,10.116922],["2046","Fröbelstraße",54.302352,10.113008],["2561","Kolonnenweg",54.312094,10.090684],["1705","Uhlenkrog",54.306368,10.096743],["2022","Bärenkrog",54.308807,10.096205],["2612","CITTI-PARK",54.312711,10.101645],["1341","Waldeck",54.319646,10.086293],["1400","Hasselrade",54.31979,10.092868],["9211","Freie Waldorfschule",54.319815,10.092514],["1070","Mühlenweg",54.319308,10.099399],["1434","REWE CENTER",54.309349,10.108353],["1286","Gärtnerstraße",54.30516,10.106888],["1668","Christianistraße",54.306505,10.108853],["2011","Saarbrückenstraße",54.311955,10.109182],["2833","Lantziusstraße",54.312375,10.111474],["1075","Krusenrotter Weg",54.306113,10.121173],["1975","Waldwiese",54.305096,10.117183],["2005","Winterbeker Weg",54.310992,10.116628],["9072","Klaus-Groth-Schule",54.31118,10.116968],["2256","IKEA",54.31358,10.109409],["2619","Virchowstraße",54.320683,10.109897],["9189","Fr.-Junge-Grundschule (Virchowstr.)",54.321401,10.1112],["1087","RBZ am Schützenpark",54.317299,10.110951],["9266","RBZ am Schützenpark",54.318882,10.110961],["1844","Käthe-Kollwitz-Schule",54.318118,10.118888],["9219","Käthe-Kollwitz-Schule",54.319311,10.11762],["1451","Schützenwall/Boiestraße",54.317182,10.115099],["9271","Fr.-Junge-Gem. (Boiestr.)",54.317385,10.115425],["2239","Südfriedhof",54.31493,10.118105],["1540","Metzstraße",54.321624,10.114642],["1801","Kreisauer Straße",54.284264,10.161139],["2856","Moorsee, Dorfplatz",54.264663,10.145792],["2857","Moorsee/B404",54.265136,10.150038],["2900","Schlüsbek",54.261825,10.151638],["1466","Bustorfer Weg",54.282358,10.126308],["2377","Odbarsweg",54.280252,10.133655],["2252","Solldiekswall",54.277326,10.1356],["2024","Im Saal",54.279527,10.138705],["1335","Grot Steenbusch",54.283335,10.131456],["2380","Fettberg",54.285592,10.139158],["1928","Barkauer Straße",54.283888,10.135679],["2134","Edisonstraße/B404",54.273528,10.144843],["1791","Schlachthof",54.274286,10.149828],["2160","IG Wellsee",54.275663,10.151411],["1787","Braunstraße",54.278273,10.141871],["1964","Liebigstraße",54.280282,10.14578],["2508","Borsigstraße",54.277879,10.149499],["2133","Edisonstraße",54.278425,10.157054],["5372","WaD Wellsee",54.28275,10.153996],["1716","Bunsenstraße",54.284584,10.154659],["2396","Götenhof",54.269722,10.176396],["1675","Am Teich",54.267098,10.177108],["1677","Rönne, Dorf",54.267137,10.177984],["2956","Beekkate",54.273336,10.170528],["2758","Marconistraße",54.278089,10.165158],["1798","Pottberg",54.285284,10.183921],["2581","Pottbergkrug",54.283094,10.187915],["1961","Berchtesgadener Straße",54.283163,10.193713],["4086","Betriebshof Postareal",54.312384,10.140117],["2203","Karlsburg",54.291436,10.129171],["1746","Lindenhain",54.288018,10.134519],["2082","Kieler Weg",54.286618,10.131354],["1290","Reesenberg",54.287996,10.139448],["2538","Spolertstraße",54.300279,10.125916],["2655","Barkauer Kreuz",54.303153,10.129166],["9005","BFDS / Sonderfahrt",54.30213,10.136146],["1224","Diedrichstraße",54.30286,10.13638],["4065","Betriebshof Diedrichstraße",54.300768,10.136655],["1748","Kronsburg",54.285848,10.14341],["9147","Grundschule Kronsburg",54.285693,10.142422],["1205","Tresckowweg",54.286056,10.154748],["2425","Julius-Leber-Straße",54.288637,10.155159],["1240","Hubertus",54.292318,10.157098],["1679","Alte Siedlung",54.294139,10.153733],["1997","Ostring/B76",54.301483,10.144302],["1545","TÜV",54.297812,10.150727],["2257","Gaardener Ring",54.312993,10.138281],["2387","Hauptbahnhof",54.315563,10.131113],["1323","Stormarnstraße",54.304663,10.125244],["2535","Rondeel",54.308117,10.124842],["2855","Hummelwiese",54.311159,10.128024],["1680","Schwedendamm",54.306307,10.134792],["1307","Adolf-Westphal-Straße",54.309755,10.13114],["1462","Gablenzstraße/Hörnbad",54.309771,10.134771],["2258","KVG-Betriebshof Werftstraße",54.310158,10.138988],["5219","Hörnbad",54.309454,10.135671],["4085","Betriebshof Werftstraße",54.309608,10.139057],["1755","KVG-Verwaltung",54.308841,10.138521],["1692","Kirchhofallee",54.316928,10.124827],["2779","Adelheidstraße",54.319557,10.122543],["2840","Exerzierplatz",54.320899,10.127138],["2722","Dammstraße",54.32183,10.128103],["3001","Hbf/Kaistraße",54.314956,10.133141],["3002","Norwegenkai Terminal",54.315991,10.139254],["2488","Ziegelteich",54.318833,10.131833],["1256","Andreas-Gayk-Straße",54.319067,10.13398],["2392","Bootshafen",54.321643,10.138868],["1918","Augustenstraße",54.314713,10.148839],["2246","Preetzer Straße/Ostring",54.30692,10.149013],["9299","Fröbelschule",54.306161,10.145997],["1701","Karlstal",54.310805,10.14452],["2930","Räucherei",54.307138,10.143524],["1357","Stoschstraße",54.310363,10.152827],["9291","Hans-Christian-Andersen-Schule",54.310045,10.152386],["2858","Norwegenkai",54.316196,10.143551],["1235","Kieler Straße",54.314299,10.145771],["1133","HDW",54.316263,10.150961],["1390","Gerstenkamp",54.303988,10.176852],["1884","Dornbusch",54.296435,10.176475],["1412","Buschkoppel",54.291734,10.162428],["1422","Sportplatz Wellsee",54.290094,10.158773],["1991","Theodor-Steltzer-Weg",54.288643,10.160992],["1815","Kölenberg",54.290222,10.166804],["2859","Schoolkamp",54.287604,10.169238],["9286","Grundschule Wellsee",54.287489,10.169292],["1691","Dorfstraße",54.294456,10.174332],["1860","Sophienhöhe",54.301178,10.164808],["2753","Villacher Straße",54.297618,10.170588],["9130","Matthias-Claudius-Schule",54.295558,10.174149],["1287","Nelkenweg",54.298532,10.175457],["1890","Bahnhof Elmschenhagen",54.287313,10.181899],["1246","Reichenberger Allee",54.289628,10.182738],["2878","Friedhof Elmschenhagen",54.29193,10.178993],["2364","Bebelplatz",54.294652,10.183571],["2305","Illerweg",54.288491,10.187467],["2931","Isarweg",54.289077,10.193478],["2997","Troppauer Straße",54.29446,10.18948],["2050","Teplitzer Allee",54.292849,10.18565],["1638","Schulzentrum Elmschenhagen",54.291626,10.192133],["9085","Lilli-Martius-Schule",54.291728,10.191448],["9289","Gymnasium Elmschenhagen",54.291728,10.191448],["2086","Wiener Allee",54.296023,10.182889],["2788","Andreas-Hofer-Platz",54.297847,10.183665],["9140","Hermann-Löns-Schule",54.301304,10.181727],["1167","Weinberg",54.301252,10.180853],["2600","Toweddern",54.295978,10.18814],["2355","Hollmannstraße",54.314895,10.166615],["1312","Bf. Schulen am Langsee",54.306604,10.15851],["9298","Gemeinschaftsschule Gaarden",54.306161,10.145997],["2989","Geschwister-Scholl-Straße",54.306666,10.163358],["1111","Hans-Geiger-Gymnasium",54.309088,10.162568],["9091","Hans-Geiger-Gymnasium",54.309055,10.162614],["9052","Gerhart-Hauptmann-Schule",54.312843,10.163679],["2706","Poppenrade",54.309221,10.163368],["1368","Tröndelweg",54.306328,10.176523],["1802","Wohldkoppel",54.308374,10.174153],["1851","Grabastraße",54.309659,10.168698],["2992","Federmannstraße",54.310351,10.170728],["2648","Ernestinenstraße",54.31307,10.159058],["1909","Große Ziegelstraße",54.317188,10.161615],["1069","Franziusallee",54.319196,10.165988],["2266","Bahnhof Ellerbek",54.313659,10.170229],["1919","Schwanenseeplatz",54.314302,10.173764],["1371","Ellerbeker Schule",54.320143,10.170178],["9166","Ellerbeker Schule",54.320084,10.170725],["1369","Ellerbeker Weg",54.306888,10.177802],["2700","Selenter Straße",54.312553,10.177907],["1359","August-Sievers-Ring",54.315388,10.17841],["1959","Nissenstraße",54.317558,10.179707],["1550","Klausdorfer Weg/Ostring",54.319285,10.177628],["1541","Ostfriedhof",54.31465,10.190081],["1635","Dreikronen",54.394916,10.145396],["2541","Hauptfeuerwache",54.331108,10.121607],["2582","Brauner Berg",54.394663,10.174522],["2645","Bachweg",54.395004,10.157352],["9172","Claus-Rixen-Schule Klausdorf",54.400054,10.117916],["1624","Rathaus Kronshagen",54.331576,10.085367],["1886","Ernst-Barlach-Gymnasium",54.358425,10.106539],["1893","Stockholmstraße",54.326165,10.057877],["2592","Bergenring",54.324747,10.053971],["2583","Narvikstraße",54.329866,10.054504],["1146","Göteborgring",54.325298,10.06305],["9296","Grundschule am Göteborgring",54.323055,10.061704],["2187","Am Forsthaus",54.324602,10.070295],["1318","Hofbrook",54.327729,10.072069],["1904","Daimlerstraße",54.323791,10.079586],["1676","Wittland",54.324394,10.084431],["1317","Heischberg",54.332213,10.075491],["1724","Steindamm",54.335861,10.074823],["2238","Suchsdorfer Weg",54.338248,10.079709],["1942","Kronshagen, Schulzentrum",54.340153,10.081187],["2679","Eichkoppelweg",54.338384,10.084584],["1564","An der Au",54.355213,10.071551],["1637","Lehmkoppel",54.351378,10.071521],["2428","Holmredder",54.349774,10.080992],["2819","Möllenholt",54.353976,10.079017],["1372","Nienbrügger Weg",54.356518,10.084904],["9086","Grundschule Suchsdorf",54.356119,10.085208],["2146","Eichhof",54.333833,10.104471],["2839","Villenweg",54.330304,10.088888],["2091","Königstein",54.328523,10.095394],["2477","Friedenskamp",54.332604,10.093077],["1849","Bürgerhaus Kronshagen",54.337249,10.087401],["1957","Eichhofstraße",54.333262,10.112254],["1875","Dehnckestraße",54.327635,10.104862],["2932","Gravelottestraße",54.325176,10.112933],["2608","Wilhelmplatz",54.322633,10.120308],["2869","Arndtplatz",54.325483,10.121073],["2937","Professor-Peters-Platz",54.328053,10.118286],["1987","Nordmarksportfeld/Mare-Klinikum",54.339201,10.104527],["2544","Christian-Kruse-Straße",54.332502,10.117383],["9180","Gutenbergschule",54.332482,10.117504],["2652","IPN",54.339988,10.118008],["1989","Albert-Schweitzer-Straße",54.34283,10.093194],["2548","Dr.-Eißing-Kaserne",54.341153,10.091618],["2811","Johann-Fleck-Straße",54.344182,10.098325],["2728","Kopperpahler Teich",54.341445,10.101661],["2327","Vulkanweg",54.347533,10.094644],["2757","Schneiderkamp",54.353118,10.088998],["1478","Bahnhof Suchsdorf",54.350015,10.09215],["2471","Mangoldtstraße",54.350085,10.102543],["2060","Leibnizstraße",54.344945,10.108955],["2805","Uni-Sportstätten",54.34325,10.111098],["5075","Uni-Schwimmhalle",54.343351,10.110877],["1502","Bremerskamp",54.346553,10.10574],["2952","Uni-Bibliothek",54.34624,10.111587],["2337","Botanischer Garten",54.347284,10.113217],["1379","Torfende",54.355423,10.106423],["9270","Ernst-Barlach-Gymnasium",54.335348,10.136323],["2738","Rehbenitzwinkel",54.356173,10.104099],["2078","Woltersweg",54.356917,10.112374],["1456","Steenbeker Weg",54.353985,10.120646],["1184","Lubinus Clinicum",54.354288,10.116229],["1643","Gurlittstraße",54.356511,10.117585],["1050","Rungholtplatz",54.361686,10.075511],["2015","Sylter Bogen",54.359204,10.080985],["1095","Tannenberg",54.367952,10.104243],["1169","Frerich-Frerichs-Allee",54.360142,10.112405],["1853","Wiesenweg",54.362411,10.109037],["2916","Projensdorfer Gehölz",54.36447,10.106615],["1432","Erlenkampsee",54.366547,10.104624],["2169","Wenrade",54.358991,10.113604],["2363","Knorrstraße",54.358085,10.130425],["2731","Petruskirche",54.358629,10.134854],["1071","Carl-Loewe-Weg",54.340604,10.156593],["1116","Feldstraße/Waitzstraße",54.335361,10.140059],["1599","Unikliniken",54.330988,10.139896],["1003","Lehmberg",54.331035,10.128038],["1584","Kunsthochschule",54.327595,10.128148],["9132","Humboldtschule",54.327736,10.128213],["9179","Muhliusschule",54.327469,10.128116],["1271","Rathaus/Opernhaus",54.323107,10.134419],["1395","Martensdamm",54.323525,10.135721],["2818","Lorentzendamm",54.325668,10.135515],["2151","Dreiecksplatz",54.330086,10.131741],["2375","Hansastraße",54.331898,10.123198],["1102","Goetheschule",54.334498,10.123283],["9074","Goethe-Gemeinschaftsschule",54.334357,10.123311],["9223","Goethe-Grundschule",54.334357,10.123311],["2465","Alsenstraße",54.334718,10.129718],["1079","Uni-Hochhaus",54.339118,10.123236],["1491","Uni-Westring",54.338719,10.125264],["9137","Ricarda-Huch-Schule",54.338262,10.124891],["2035","Samwerstraße",54.337616,10.129676],["1823","Ansgarkirche",54.335338,10.133406],["9267","Reventlouschule",54.335348,10.136323],["1895","Schauenburgerstraße",54.332773,10.132521],["2293","Schauspielhaus",54.338998,10.133741],["2304","Schwanenweg",54.33112,10.14858],["1843","Schloßgarten",54.326478,10.143599],["2697","Seegarten/Ostseekai",54.323479,10.143608],["1796","Jensendamm",54.325068,10.141848],["1810","Hospitalstraße",54.328231,10.140131],["1745","Kunsthalle",54.326973,10.145504],["1115","Niemannsweg",54.335424,10.145769],["1629","Wrangelstraße",54.339426,10.14],["2939","Landtag",54.334743,10.151119],["1237","Reventloubrücke",54.333892,10.151524],["2593","Institut für Weltwirtschaft/ZBW",54.337541,10.154865],["2058","Elendsredder",54.355014,10.13026],["1744","Nordfriedhof",54.344508,10.128246],["1990","Holstein-Stadion (Shuttle)",54.347621,10.126212],["2887","Rankestraße",54.341104,10.126494],["2628","Yorckstraße",54.343983,10.139715],["1985","Hardenbergstraße",54.341819,10.133455],["9188","Hardenbergschule",54.341989,10.133458],["1005","Belvedere",54.345694,10.132641],["1473","Düvelsbeker Weg",54.348299,10.139011],["9204","Hebbelschule",54.348647,10.138959],["1988","Am Stadion",54.350458,10.125391],["1708","Husumer Weg",54.354605,10.124123],["9207","Gemeinschaftsschule Wik",54.354496,10.125318],["2854","Mercatorstraße",54.354914,10.135058],["2191","Hanssenstraße",54.349605,10.132254],["2125","Schulredder",54.352893,10.131934],["1130","Homannstraße",54.352053,10.136961],["2767","Flandernbunker",54.354639,10.13879],["2571","Diederichsenpark",54.349467,10.143239],["2141","Roonstraße",54.345198,10.147817],["2633","Bellevue",54.343409,10.155103],["9118","Privatschule Düsternbrook",54.343331,10.155128],["1375","Ellerbeker Markt",54.323445,10.169691],["9196","Theodor-Storm-Schule",54.322998,10.174853],["1370","Kieler Kuhle",54.324854,10.173089],["1281","Anleger Dietrichsdorf",54.330004,10.178386],["1254","Seefischmarkt",54.325304,10.178816],["9290","Gymnasium Wellingdorf",54.325246,10.178951],["2066","Wischhofstraße",54.325178,10.181532],["2113","Grenzstraße",54.329777,10.18247],["1162","Wellingdorf",54.326118,10.186351],["2693","Tiefe Allee",54.329182,10.190546],["1927","HAW-Sokratesplatz",54.332604,10.182675],["2882","Salzredder",54.337222,10.184218],["1573","Hermannstraße",54.339299,10.189813],["1630","Lüderitzstraße",54.335327,10.190759],["1835","Johannisburger Straße",54.336764,10.191713],["9225","Adolf-Reichwein-Schule",54.332303,10.186987],["2765","Boksberg",54.331682,10.186161],["1774","Ivensring",54.33256,10.189207],["2899","Poggendörper Weg",54.331836,10.192506],["9227","Grundschule an der Bake",54.348763,10.19242],["1608","Hasselfelde",54.343237,10.186663],["2268","Mönkeberg, Gänsekrug",54.348298,10.187409],["2760","Mönkeberg, Am Eksol",54.350229,10.192266],["1153","Grimmstraße",54.370827,10.146092],["1526","Holtenau, Schule",54.372538,10.142552],["1626","Schleuse",54.3699,10.14219],["1977","Kastanienallee",54.369073,10.147483],["9055","Grundschule Holtenau",54.37254,10.142545],["2874","Schleusenstraße",54.360746,10.129711],["9084","Schule am Sonderburger Platz",54.358529,10.130577],["2766","Maschinenmuseum",54.364485,10.136723],["2739","Herthastraße",54.36022,10.138093],["2809","Adalbertstraße",54.358807,10.133319],["2207","Auberg",54.361751,10.131035],["1062","Wik, Kanal",54.3654,10.131496],["2672","Gravensteiner Straße",54.369037,10.130373],["2196","Immelmannstraße",54.374051,10.130003],["1134","Jaegerallee/Kanalfähre",54.369425,10.134965],["1627","Nixenweg",54.371717,10.130957],["2881","Apenrader Straße",54.371985,10.138297],["1915","Richthofenstraße",54.373744,10.131943],["9171","Claus-Rixen-Schule Stift",54.383614,10.131273],["9203","Gemeinschaftsschule Altenholz",54.383614,10.131273],["9257","Gymnasium Altenholz",54.383614,10.131273],["1769","Altenholz-Stift, Stettiner Weg",54.383226,10.137504],["1963","Altenholz-Stift, Ostpreußenplatz",54.385632,10.137029],["2322","Flughafen Kiel",54.384506,10.143981],["2658","Schusterkrug",54.384727,10.157212],["1576","Prieser Strand",54.38732,10.164498],["1736","Fehrsstraße",54.390952,10.161539],["1944","Eiche",54.394287,10.164684],["1945","Ottomar-Enking-Straße",54.39423,10.165552],["9297","Gemeinschaftsschule Friedrichsort",54.39438,10.163692],["2650","Lindenauwerft",54.389606,10.17086],["9083","Lernwerft",54.391891,10.17639],["1127","An der Schanze",54.391681,10.176148],["1891","Falckensteiner Straße",54.391679,10.179709],["1213","Hohenleuchte",54.398531,10.157572],["2982","Schilksee Süd",54.413281,10.168622],["2901","Brahmsweg",54.395855,10.161474],["2143","Kreuzung Pries",54.403187,10.164697],["1472","Redinskamp",54.396085,10.169945],["9158","Fritz-Reuter-Schule",54.395116,10.167656],["1581","Claudiusstraße",54.397942,10.170282],["1931","Grüffkamp",54.40043,10.168035],["1306","Seekamp",54.409746,10.165705],["2998","Falckenstein (Fähre)",54.399447,10.186065],["1657","Falckensteiner Strand",54.404016,10.186138],["5812","Schwimmhalle Schilksee",54.429247,10.167179],["9246","Grundschule Schilksee",54.414122,10.167165],["2615","Funkstellenweg",54.417558,10.170927],["1064","Schilksee, Kirche",54.421015,10.173028],["1658","Seestraße",54.422778,10.171987],["2609","Olympiazentrum",54.425648,10.16833],["2120","Drachenbahn",54.42897,10.167404],["2318","Strande",54.437263,10.172039],["2319","Strande, Bernstorffweg",54.440456,10.169343],["9293","Grundschule am Schwentinepark",54.284326,10.240743],["1242","Rarsrott",54.277592,10.205545],["1879","Partenkirchener Straße",54.279898,10.207738],["2171","Plötzen",54.282613,10.20395],["1921","Waldhof",54.278802,10.200817],["2450","Am Wellsee",54.277711,10.196523],["1508","Zeppelinring",54.281774,10.196272],["1348","Sonthofener Straße",54.284025,10.197348],["2183","Franzensbader Straße",54.28802,10.197683],["2870","Krooger Kamp",54.287684,10.196102],["2891","Klosterweg",54.296515,10.195533],["2977","Klausdorf, Liesenhörnweg",54.295441,10.202458],["2177","Abzweig Klausdorf",54.295452,10.209067],["1109","Klausdorf, Nadelberg",54.301507,10.212863],["2497","Klausdorf, Ritzebeker Weg",54.302435,10.216033],["5230","Schwimmhalle Klausdorf",54.302855,10.215997],["2496","Klausdorf, Schule",54.30296,10.215908],["1819","Klausdorf, Südring",54.309045,10.204408],["2550","Klausdorf, Rosenweg",54.311597,10.200794],["2453","Rundweg",54.320838,10.201391],["2698","Klausdorf, Schulstraße",54.307283,10.214802],["2323","Klausdorf, Klausdorfer Hof",54.309378,10.213],["1998","Heikendorf, Haffkamper Weg",54.380733,10.230541],["2898","Rosenfelder Straße",54.323375,10.198141],["1621","Flüggendorfer Straße",54.325463,10.194833],["2921","Schönkirchener Straße",54.329699,10.197],["1867","Ulmenweg",54.322193,10.212626],["1055","Bahnhof Oppendorf",54.326342,10.208744],["2750","Trenntrader Weg",54.325096,10.210274],["1979","Kätnersredder",54.328048,10.204441],["1487","Toni-Jensen-Schule",54.335975,10.195162],["9017","Toni-Jensen-Grundschule",54.335975,10.195162],["9256","Toni-Jensen-Gemeinschaftsschule",54.335975,10.195162],["1866","Pillauer Straße",54.337413,10.196563],["2351","Mönkeberg, Hirschtal",54.353465,10.198513],["2505","Heikendorf, Grasweg",54.372167,10.212816],["1594","Heikendorf, Künstlermuseum",54.367369,10.203328],["1752","Heikendorf, Kitzeberg",54.362603,10.201588],["9101","Grund- und Gemeinschaftsschule Heikendor",54.368875,10.211527],["1783","Heikendorf, Gymnasium",54.368875,10.211527],["1829","Heikendorf, Rathaus",54.370576,10.205616],["1822","Heikendorf, Laboer Weg",54.374378,10.206698],["2836","Heikendorf, Stückenberg",54.374383,10.225893],["1020","Heikendorf, Am Heidberg",54.379982,10.204243],["2599","Heikendorf, Korügen",54.378885,10.210783],["1383","Heikendorf, Rührsbrook",54.377024,10.21982],["2176","Heikendorf, Silberturmer Weg",54.377478,10.230183],["1821","Brodersdorf",54.3866,10.248513],["2189","Neu Brodersdorf",54.391193,10.243099],["1722","Laboe, Hafen",54.403574,10.220139],["1986","Laboe, Steinkampberg",54.401708,10.224122],["2876","Laboe, Kirche",54.40288,10.22516],["1181","Laboe, Ostlandstraße",54.40067,10.22915],["2216","Laboe, Brodersdorfer Weg",54.398821,10.232748]];
+
+// ---------- Zustand ----------
+let stops = (EMBEDDED_STOPS.length ? EMBEDDED_STOPS.map(p => ({
+  shortName: p[0], name: p[1], lat: p[2], lon: p[3]
+})) : []);
+
+// ---------- DB-Bahnhöfe in Kiel (NAH.SH-HAFAS, nur Schienenverkehr) ----------
+const DB_STOPS = [
+  { sn: "DB:9049079", name: "Kiel Hbf (DB)",        lid: "A=1@O=Kiel Hbf@X=10131427@Y=54314209@U=100@L=9049079@", lat: 54.314209, lon: 10.131427 },
+  { sn: "DB:9049332", name: "Kiel Suchsdorf Bahnhof (DB)", lid: "A=1@O=Kiel Suchsdorf Bahnhof@X=10091758@Y=54350058@U=100@L=9049332@", lat: 54.350058, lon: 10.091758 },
+  { sn: "DB:9049320", name: "Kiel-Hassee (DB)",     lid: "A=1@O=Kiel-Hassee CITTI-PARK@X=10098437@Y=54310856@U=100@L=9049320@", lat: 54.310856, lon: 10.098437 },
+  { sn: "DB:9049327", name: "Kiel-Russee (DB)",     lid: "A=1@O=Kiel-Russee@X=10070211@Y=54310038@U=100@L=9049327@", lat: 54.310038, lon: 10.070211 },
+  { sn: "DB:9049232", name: "Kiel Schulen am Langsee (DB)", lid: "A=1@O=Kiel Schulen am Langsee (Bahn)@X=10156966@Y=54307206@U=100@L=9049232@", lat: 54.307206, lon: 10.156966 },
+  { sn: "DB:9049316", name: "Kiel-Elmschenhagen (DB)", lid: "A=1@O=Kiel-Elmschenhagen@X=10180410@Y=54287142@U=100@L=9049316@", lat: 54.287142, lon: 10.18041 }
+];
+for (const d of DB_STOPS) stops.push({ shortName: d.sn, name: d.name, lat: d.lat, lon: d.lon });
+const isDB = sn => sn.indexOf("DB:") === 0;
+const dbStopOf = sn => DB_STOPS.find(d => d.sn === sn);
+let myPos = null;         // GPS-Position (oder letzte bekannte aus Cache)
+let addrPos = null;       // gewählte Startadresse (überschreibt GPS solange aktiv)
+let gpsState = "off";     // "off" | "searching" | "on"
+let watchId = null;
+let gpsErrShown = false;
+let currentStop = null;   // im Stations-Panel angezeigte Haltestelle
+let currentBus = null;    // { sn, tripId } im Abfahrts-Panel
+let favs = JSON.parse(localStorage.getItem("kvg-favs") || "[]");
+let searchIndex = -1;
+
+function getPos() { return addrPos || myPos; }
+
+// Bei neuem Standort (GPS-Update, Adresse, Favorit):
+// Liste leeren, neu nach Entfernung sortieren, Gehweg-Distanzen neu berechnen
+let lastSortPos = null;
+function positionReset(reason) {
+  const pos = getPos();
+  if (!pos) return;
+  lastSortPos = { lat: pos.lat, lon: pos.lon };
+  sortStops();
+  for (const v of stopViews.values()) v.meters = null;   // Gehzeiten neu berechnen
+  if (!sugBox.hidden) {
+    if (!search.value.trim()) updateSuggestions();
+    else enrichVisible(false);
+  }
+}
+function sortStops() {
+  const pos = getPos();
+  if (pos) stops.sort((a, b) => dist(pos, a) - dist(pos, b));
+  else stops.sort((a, b) => a.name.localeCompare(b.name, "de"));
+}
+sortStops();
+
+// ---------- GPS-Steuerung ----------
+const locBtn = document.getElementById("locBtn");
+const locNote = document.getElementById("locNote");
+const gpsCtl = document.getElementById("gpsCtl");
+const accBar = document.getElementById("accBar");
+
+try {
+  const cached = JSON.parse(localStorage.getItem("kvg-pos") || "null");
+  if (cached && isFinite(cached.lat) && isFinite(cached.lon)) {
+    myPos = { lat: cached.lat, lon: cached.lon, accuracy: cached.accuracy || null };
+    sortStops();
+    setLocNote("GPS aus – nutze letzten bekannten Standort (±" +
+      Math.round(cached.accuracy || 0) + " m). ◎ schaltet Live-GPS ein.");
+  }
+} catch (e) {}
+
+function isSecure() { return window.isSecureContext; }
+
+function gpsToggle() { gpsState === "off" ? gpsStart() : gpsStop(); }
+
+function gpsStart() {
+  if (!("geolocation" in navigator)) {
+    setLocNote("Standortdienst wird von diesem Browser nicht unterstützt.");
+    return;
+  }
+  if (!isSecure()) {
+    setLocNote("GPS benötigt HTTPS (oder localhost). Nach dem Hosten der Seite mit https:// funktioniert es.");
+    return;
+  }
+  gpsState = "searching";
+  gpsErrShown = false;
+  renderGpsBtn();
+  setLocNote("GPS wird aktiviert – warte auf Positionsdaten …");
+  watchId = navigator.geolocation.watchPosition(onPos, onGpsErr,
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+  clearTimeout(gpsStart._wd);
+  gpsStart._wd = setTimeout(() => {
+    if (gpsState === "searching") {
+      setLocNote("Noch keine Positionsdaten – GPS-Signal wird weiter gesucht (im Freien hilft es). ◎ bricht ab.");
+    }
+  }, 20000);
+}
+
+function gpsStop() {
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  gpsState = "off";
+  renderGpsBtn();
+  renderAcc();
+  if (!addrPos) {
+    setLocNote(myPos
+      ? "GPS aus – nutze letzten Standort weiter (Liste bleibt nach Entfernung sortiert)."
+      : "GPS aus – Liste alphabetisch. ◎ zum Aktivieren.");
+  }
+}
+
+function onPos(pos) {
+  const firstFix = gpsState === "searching";
+  const newPos = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+  const moved = !myPos ||
+    Math.abs(myPos.lat - newPos.lat) > 0.0002 ||
+    Math.abs(myPos.lon - newPos.lon) > 0.0002;
+  myPos = newPos;
+  gpsState = "on";
+  gpsErrShown = false;
+  renderGpsBtn();
+  renderAcc();
+  try {
+    localStorage.setItem("kvg-pos", JSON.stringify({
+      lat: myPos.lat, lon: myPos.lon, accuracy: myPos.accuracy, ts: Date.now()
+    }));
+  } catch (e) {}
+  if (addrPos) {
+    if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✗ hinter der Adresse kehrt zu GPS zurück.");
+    return;
+  }
+  if (firstFix || moved) {
+    positionReset();
+    setLocNote("GPS aktiv · Positionen kommen laufend (±" + Math.round(myPos.accuracy) +
+      " m) · " + stops.length + " Haltestellen nach Entfernung.");
+  }
+}
+
+function onGpsErr(err) {
+  if (gpsState === "off") return;
+  const reasons = {
+    1: "Standortfreigabe verweigert – bitte in den Browser-Berechtigungen für diese Seite erlauben und ◎ erneut klicken.",
+    2: "Standort aktuell nicht verfügbar (kein GPS-Empfang).",
+    3: "Zeitüberschreitung – GPS-Signal wird weiter gesucht …"
+  };
+  if (err.code === 1) {
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    gpsState = "off";
+    renderGpsBtn();
+    renderAcc();
+  }
+  if (!gpsErrShown || err.code === 1) {
+    setLocNote((myPos ? "Letzter Standort bleibt aktiv. " : "") +
+      (reasons[err.code] || ("GPS-Fehler: " + err.message)));
+    gpsErrShown = true;
+  }
+}
+
+function renderGpsBtn() {
+  locBtn.classList.toggle("busy", gpsState === "searching");
+  locBtn.classList.toggle("active", gpsState === "on");
+  locBtn.textContent = gpsState === "on" ? "◉" : "◎";
+  locBtn.title = gpsState === "on" ? "GPS aktiv (läuft laufend) – klicken zum Deaktivieren"
+    : gpsState === "searching" ? "GPS-Suche läuft – klicken zum Abbrechen"
+    : "GPS aktivieren";
+}
+
+function renderAcc() {
+  if (gpsState === "on" && myPos) {
+    const a = myPos.accuracy;
+    const seg = a <= 10 ? 5 : a <= 25 ? 4 : a <= 50 ? 3 : a <= 100 ? 2 : 1;
+    [...accBar.children].forEach((el, i) => el.classList.toggle("on", i < seg));
+    accBar.title = "GPS-Genauigkeit ±" + Math.round(a) + " m";
+    accBar.hidden = false;
+  } else {
+    accBar.hidden = true;
+  }
+}
+
+function setLocNote(t) { locNote.textContent = t; }
+locBtn.addEventListener("click", gpsToggle);
+renderGpsBtn();
+
+// ---------- Adresssuche (Alternative ohne GPS) ----------
+const addrSearch = document.getElementById("addrSearch");
+const addrSug = document.getElementById("addrSug");
+const addrChip = document.getElementById("addrChip");
+let addrTimer = null;
+let addrResults = [];
+
+addrSearch.addEventListener("input", () => {
+  clearTimeout(addrTimer);
+  const q = addrSearch.value.trim();
+  if (q.length < 3) { addrSug.hidden = true; return; }
+  addrTimer = setTimeout(() => searchAddress(q), 400);
+});
+addrSearch.addEventListener("keydown", e => {
+  if (e.key === "Escape") addrSug.hidden = true;
+  if (e.key === "Enter" && addrResults.length && !addrSug.hidden) selectAddr(0);
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".addrfield")) addrSug.hidden = true;
+});
+
+async function searchAddress(q) {
+  addrResults = [];
+  // primär: Nominatim (Photon derzeit oft nicht erreichbar, nur Fallback)
+  try {
+    const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
+      "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+    if (res.ok) {
+      const list = await res.json();
+      addrResults = (list || []).map(r => ({
+        lat: String(r.lat), lon: String(r.lon),
+        label: String(r.display_name || "").split(",").map(s => s.trim()).slice(0, 3).join(", "),
+        type: r.type || r.category || ""
+      }));
+    }
+  } catch (e) {}
+  if (!addrResults.length) {
+    try {
+      const url = PHOTON + "?q=" + encodeURIComponent(q) + "&limit=5&lang=de&lat=54.32&lon=10.13";
+      const res = await apiFetch("nom", url);
+      if (res.ok) {
+        const data = await res.json();
+        const seen = new Set();
+        addrResults = (data.features || []).map(f => {
+          const pr = f.properties || {};
+          const label = [pr.street || pr.name, pr.housenumber].filter(Boolean).join(" ") +
+            (pr.postcode ? ", " + pr.postcode : "") + (pr.city ? " " + pr.city : "");
+          return { lat: String(f.geometry.coordinates[1]), lon: String(f.geometry.coordinates[0]),
+                   label, type: pr.osm_value || "" };
+        }).filter(r => {
+          const key = r.label + "|" + r.lat.slice(0, 5);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 5);
+      }
+    } catch (e) {}
+  }
+  if (!addrResults.length) {
+    addrSug.innerHTML = '<div><span>keine passende Adresse gefunden</span></div>';
+    addrSug.hidden = false;
+    return;
+  }
+  addrSug.innerHTML = addrResults.map((r, i) => {
+    const isFav = addrFavs.some(f =>
+      f.label === r.label && f.lat === Number(r.lat) && f.lon === Number(r.lon));
+    return '<div data-addr="' + i + '"><span>' + escapeHtml(r.label) + "</span>" +
+      '<button class="star' + (isFav ? "" : " off") + '" data-afav="' + i +
+      '" title="Adresse als Favorit speichern bzw. entfernen">★</button>' +
+      '<span class="atype">' + escapeHtml(r.type) + "</span></div>";
+  }).join("");
+  addrSug.hidden = false;
+}
+
+addrSug.addEventListener("click", e => {
+  const st = e.target.closest("[data-afav]");
+  if (st) {
+    const r = addrResults[Number(st.dataset.afav)];
+    if (!r) return;
+    const fav = { name: r.label, lat: Number(r.lat), lon: Number(r.lon), label: r.label };
+    const idx = addrFavs.findIndex(f => f.label === fav.label && f.lat === fav.lat && f.lon === fav.lon);
+    if (idx >= 0) addrFavs.splice(idx, 1);
+    else addrFavs.push(fav);
+    saveAddrFavs();
+    st.classList.toggle("off", !addrFavs.some(f =>
+      f.label === fav.label && f.lat === fav.lat && f.lon === fav.lon));
+    addrFavCount.textContent = addrFavs.length;
+    if (!addrFavPanel.hidden) renderAddrFavs();
+    return;
+  }
+  const div = e.target.closest("div[data-addr]");
+  if (div) selectAddr(Number(div.dataset.addr));
+});
+
+function selectAddr(i) {
+  const r = addrResults[i];
+  if (!r) return;
+  addrPos = { lat: Number(r.lat), lon: Number(r.lon), label: r.label };
+  addrSug.hidden = true;
+  addrSearch.value = "";
+  renderAddrChip();
+  gpsCtl.classList.add("disabled");
+  positionReset();
+  setLocNote("Adresse aktiv: " + addrPos.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  renderPanels();
+}
+
+function clearAddr() {
+  addrPos = null;
+  renderAddrChip();
+  gpsCtl.classList.remove("disabled");
+  positionReset();
+  if (gpsState === "on" && myPos) {
+    setLocNote("GPS aktiv · ±" + Math.round(myPos.accuracy) + " m · Haltestellen nach GPS-Entfernung.");
+  } else if (myPos) {
+    setLocNote("GPS aus – nutze letzten bekannten Standort. ◎ schaltet Live-GPS ein.");
+  } else {
+    setLocNote("Kein Standort – Liste alphabetisch. GPS oder Adresse nutzen.");
+  }
+  if (!sugBox.hidden) updateSuggestions();
+  renderPanels();
+}
+
+function renderAddrChip() {
+  if (!addrPos) { addrChip.innerHTML = ""; return; }
+  addrChip.innerHTML =
+    '<span class="chip ok" title="Diese Adresse ist als Standort aktiv">✓ ' +
+    escapeHtml(addrPos.label) + "</span>" +
+    '<span class="chip bad" id="addrClear" title="Adresse abwählen und zu GPS zurückkehren">✗ Adresse abwählen</span>';
+  document.getElementById("addrClear").addEventListener("click", clearAddr);
+}
+
+// ---------- Adressfavoriten (oben rechts) ----------
+let addrFavs = JSON.parse(localStorage.getItem("kvg-addrfavs") || "[]");
+const addrFavBtn = document.getElementById("addrFavBtn");
+const addrFavPanel = document.getElementById("addrFavPanel");
+const addrFavCount = document.getElementById("addrFavCount");
+
+function saveAddrFavs() {
+  try { localStorage.setItem("kvg-addrfavs", JSON.stringify(addrFavs)); } catch (e) {}
+}
+function renderAddrFavs() {
+  addrFavCount.textContent = addrFavs.length;
+  if (addrFavPanel.hidden) return;
+  let inner = '<button class="chip ok afsave" id="addrFavSave" title="Aktuell aktive Adresse oder GPS-Standort speichern">＋ Aktuelle Position speichern</button>';
+  if (!getPos()) {
+    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Position aktiv (Adresse wählen oder GPS aktivieren).</span></div>';
+  }
+  if (!addrFavs.length) {
+    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Adressfavoriten gespeichert.</span></div>';
+  }
+  addrFavs.forEach((f, i) => {
+    inner += '<div class="afsrow" data-afi="' + i + '" title="Als Startadresse aktivieren">' +
+      '<span class="afsname">📍 ' + escapeHtml(f.name) + '</span>' +
+      '<button class="afbtn" data-afedit="' + i + '" title="Umbenennen">✎</button>' +
+      '<button class="afbtn" data-afdel="' + i + '" title="Löschen">✗</button>' +
+      "</div>";
+  });
+  addrFavPanel.innerHTML = inner;
+  const saveBtn = document.getElementById("addrFavSave");
+  if (saveBtn) saveBtn.disabled = !getPos();
+}
+function toggleAddrFavPanel() {
+  addrFavPanel.hidden = !addrFavPanel.hidden;
+  renderAddrFavs();
+}
+addrFavBtn.addEventListener("click", e => { e.stopPropagation(); toggleAddrFavPanel(); });
+document.addEventListener("click", e => {
+  if (!addrFavPanel.hidden && !e.target.closest("#addrFavPanel") && !e.target.closest("#addrFavBtn")) {
+    addrFavPanel.hidden = true;
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !addrFavPanel.hidden) addrFavPanel.hidden = true;
+});
+addrFavPanel.addEventListener("click", e => {
+  e.stopPropagation();
+  const edit = e.target.closest("[data-afedit]");
+  const del = e.target.closest("[data-afdel]");
+  if (edit) {
+    const i = Number(edit.dataset.afedit);
+    const name = prompt("Adressfavorit umbenennen:", addrFavs[i].name);
+    if (name && name.trim()) { addrFavs[i].name = name.trim(); saveAddrFavs(); }
+    renderAddrFavs();
+    return;
+  }
+  if (del) {
+    const i = Number(del.dataset.afdel);
+    if (confirm("Adressfavorit „" + addrFavs[i].name + "“ löschen?")) {
+      addrFavs.splice(i, 1); saveAddrFavs();
+    }
+    renderAddrFavs();
+    return;
+  }
+  if (e.target.closest("#addrFavSave")) {
+    const pos = getPos();
+    if (!pos) return;
+    const def = pos.label || ("Standort " + pos.lat.toFixed(4) + ", " + pos.lon.toFixed(4));
+    const name = prompt("Name für diese Position:", def);
+    if (!name || !name.trim()) return;
+    addrFavs.push({ name: name.trim(), lat: pos.lat, lon: pos.lon, label: pos.label || "" });
+    saveAddrFavs();
+    renderAddrFavs();
+    return;
+  }
+  const row = e.target.closest("[data-afi]");
+  if (row) {
+    const f = addrFavs[Number(row.dataset.afi)];
+    if (!f) return;
+    addrPos = { lat: f.lat, lon: f.lon, label: f.name };
+    addrSug.hidden = true;
+    addrSearch.value = f.name;   // über das Adressfeld wieder aufgerufen
+    renderAddrChip();
+    gpsCtl.classList.add("disabled");
+    positionReset();
+    setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+    renderPanels();
+    addrFavPanel.hidden = true;
+  }
+});
+addrFavCount.textContent = addrFavs.length;
+
+// ---------- Haltestellenliste im Hintergrund aktuell halten ----------
+(async function refreshStops() {
+  try {
+    const res = await apiFetch("kvg", STOPS_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.stops) && data.stops.length) {
+      stops = data.stops.map(s => ({
+        shortName: s.shortName, name: s.name,
+        lat: s.latitude / 3600000, lon: s.longitude / 3600000
+      }));
+      for (const d of DB_STOPS) stops.push({ shortName: d.sn, name: d.name, lat: d.lat, lon: d.lon }); // DB-Bahnhöfe erhalten
+      sortStops();
+      setStatus(stops.length + " Haltestellen (live geladen)");
+    }
+  } catch (e) {}
+})();
+
+// ---------- Haltestellensuche ----------
+const search = document.getElementById("stopSearch");
+const sugBox = document.getElementById("suggestions");
+
+// Handy: beim ersten Antippen des Suchfelds die Bildschirm-Tastatur unten lassen
+// (Fokus sofort wieder abgeben, Liste öffnet trotzdem); erst der zweite Tipp ins
+// Feld öffnet die Tastatur. Gilt auch fürs programmatische Öffnen (z.B. Adresse).
+let searchFocusArmed = false;
+search.addEventListener("focus", () => {
+  updateSuggestions();
+  if (!searchFocusArmed) {
+    searchFocusArmed = true;
+    setTimeout(() => { if (!search.value) search.blur(); }, 60);
+  }
+});
+search.addEventListener("blur", () => {
+  if (sugBox.hidden) searchFocusArmed = false;   // Liste zu: beim nächsten Öffnen wieder ohne Tastatur
+});
+document.getElementById("ddBtn").addEventListener("click", () => {
+  if (!sugBox.hidden) { sugBox.hidden = true; return; }
+  search.focus();
+  updateSuggestions();
+});
+
+// ---------- Haltestellensuche: ab 1 Buchstabe, Wortanfang, Tippfehler-Toleranz ----------
+function wordsOf(name) {
+  return name.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(Boolean);
+}
+function lev1(a, b) {   // true, wenn max. 1 Buchstabe fehlt/falsch/zu viel ist
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, diff = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diff > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return true;
+}
+function searchHits(q) {
+  const startHits = [], subHits = [], typoHits = [];
+  for (const s of stops) {
+    const name = s.name.toLowerCase();
+    const words = wordsOf(s.name);
+    if (name.startsWith(q) || s.shortName.startsWith(q)) { startHits.push(s); continue; }
+    if (words.some(w => w.startsWith(q))) { startHits.push(s); continue; }
+    if (q.length >= 3) {
+      if (name.includes(q)) { subHits.push(s); continue; }
+      if (words.some(w => (w.length >= q.length - 1 && w.length <= q.length + 1 && lev1(w, q)) ||
+                          lev1(w.slice(0, q.length), q))) { typoHits.push(s); }
+    }
+  }
+  return [...startHits, ...subHits, ...typoHits];
+}
+
+function updateSuggestions() {
+  searchIndex = -1;
+  if (!stops.length) { sugBox.hidden = true; return; }
+  const pos = getPos();
+  const q = search.value.trim().toLowerCase();
+  let hits = q.length ? searchHits(q) : stops;
+  if (!hits.length) { sugBox.hidden = true; return; }
+  if (pos && !q.length) {
+    hits = hits.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
+  }
+  sugBox.innerHTML = hits.map(s => {
+    const air = pos ? dist(pos, s) * 1.3 : 0;
+    const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
+    return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
+      '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
+      '<span class="smeta">' + meta + "</span>" +
+      starHTML(s.shortName) +
+      '<button class="rowref" data-ref="' + escapeHtml(s.shortName) +
+        '" title="Nur diese Haltestelle neu abfragen">↻</button></div>' +
+      '<small class="rowinfo dim" data-sn="' + escapeHtml(s.shortName) + '">Daten werden beim Sichtbarwerden geladen …</small>' +
+      "</div>";
+  }).join("");
+  sugBox.hidden = false;
+  sugBox.scrollTop = 0;
+  if (pos) enrichVisible(false);   // auch während der Suche laden
+}
+
+search.addEventListener("keydown", e => {
+  const items = [...sugBox.querySelectorAll("div[data-sn]")];
+  if (sugBox.hidden || !items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    searchIndex = e.key === "ArrowDown"
+      ? Math.min(searchIndex + 1, items.length - 1)
+      : Math.max(searchIndex - 1, 0);
+    items.forEach((el, i) => el.classList.toggle("active", i === searchIndex));
+    items[searchIndex].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter" && searchIndex >= 0) {
+    selectStop(items[searchIndex].dataset.sn);
+  } else if (e.key === "Escape") {
+    sugBox.hidden = true;
+  }
+});
+
+// Klick-Auswertung: Einzel-↻ > Buslinie (Detail) > Station (Panel)
+sugBox.addEventListener("click", e => {
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); return; }
+  const bl = e.target.closest("[data-buslink]");
+  if (bl) {
+    const [lSn, lId] = bl.dataset.buslink.split("~");
+    selectBus(lSn, lId);        // Stationsansicht
+    selectTrip(lSn, lId);       // Fahrtverlauf (beide Blöcke aufgetaut)
+    sugBox.hidden = true;
+    return;
+  }
+  const trip = e.target.closest("[data-trip]");
+  if (trip) {
+    const [tSn, tId] = trip.dataset.trip.split("~");
+    selectBus(tSn, tId);
+    selectTrip(tSn, tId);
+    sugBox.hidden = true;   // Auswahl schließen
+    return;
+  }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) { refetchStop(ref.dataset.ref, true); return; }
+  const bus = e.target.closest("[data-bus]");
+  if (bus) {
+    const [sn, tripId] = bus.dataset.bus.split("~");
+    selectBus(sn, tripId);
+    sugBox.hidden = true;   // Auswahl schließen
+    return;
+  }
+  const div = e.target.closest("div[data-sn]");
+  if (div) selectStop(div.dataset.sn);
+});
+
+document.addEventListener("click", e => {
+  if (!e.target.closest(".searchbox")) sugBox.hidden = true;
+});
+
+function selectStop(shortName) {
+  const stop = stops.find(s => s.shortName === shortName);
+  if (!stop) return;
+  currentStop = stop;
+  currentBus = null;
+  sugBox.hidden = true;
+  search.value = stop.name;
+  renderFavs();
+  renderAddFav();
+  renderPanels();
+  refetchStop(shortName, true); // Panel braucht Live-Daten, auch wenn Zeile nie sichtbar war
+}
+
+function selectBus(sn, tripId) {
+  currentBus = { sn, tripId, stationOpen: true, tripOpen: false };
+  if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
+  const stop = stops.find(s => s.shortName === sn);
+  if (stop) currentStop = stop;
+  renderPanels();
+}
+
+// ---------- Panels: Stationsansicht + Einzelabfahrt ----------
+const stationPanel = document.getElementById("stationPanel");
+const busPanel = document.getElementById("busPanel");
+
+function renderPanels() {
+  renderStationPanel();
+  renderBusPanel();
+}
+
+let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
+let stationPanelCache = "";
+function renderStationPanel() {
+  if (!currentStop) { stationPanel.hidden = true; stationPanel.innerHTML = ""; return; }
+  const v = stopViews.get(currentStop.shortName);
+  const pos = getPos();
+  let meta;
+  if (v && v.meters) {
+    const pre = isEst(currentStop.shortName) ? "~" : "";
+    meta = pre + formatDist(v.meters) + " · " + pre +
+      Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min";
+  } else if (pos) {
+    const air = dist(pos, currentStop) * 1.3;
+    meta = "~" + formatDist(air) + " · ~" +
+      Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)";
+  } else {
+    meta = "";
+  }
+  // Titelleiste des Bereichs; nur der aufgeklappte Bereich wird aktualisiert,
+  // der zugeklappte zeigt den eingefrorenen Stand
+  let inner = '<div class="sechead" data-ssec="1"><span class="sarr">' +
+    (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
+    escapeHtml(currentStop.name) +
+    (stationPanelOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') +
+    "</div>";
+  if (!stationPanelOpen) {
+    inner += stationPanelCache;
+    if (stationPanel.dataset.last !== inner) {
+      stationPanel.dataset.last = inner;
+      stationPanel.innerHTML = inner;
+    }
+    stationPanel.hidden = false;
+    return;
+  }
+  inner +=
+    '<div class="phead"><span class="pname">' + escapeHtml(currentStop.name) + "</span>" +
+    '<span class="pmeta">' + meta + "</span>" + starHTML(currentStop.shortName) +
+    '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
+      '" title="Diese Haltestelle neu abfragen">↻</button></div>';
+  if (v && v.fetched) {
+    const lines = busLinesHTML(v);
+    if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000) {
+      // alle Abfahrten länger als 2 Minuten weg: automatisch neu abfragen
+      refetchStop(currentStop.shortName, false);
+      return;
+    }
+    inner += lines.map(l => l.html).join("");
+  } else {
+    inner += '<small class="rowinfo dim">Daten werden geladen …</small>';
+  }
+  stationPanelCache = inner.slice(inner.indexOf('<div class="phead"'));   // Körper fürs Einfrieren
+  if (stationPanel.dataset.last !== inner) {
+    stationPanel.dataset.last = inner;
+    stationPanel.innerHTML = inner;
+    marqueeify(stationPanel);
+  }
+  stationPanel.hidden = false;
+  if (v && v.meters == null && getPos()) {
+    walkMeters(currentStop).then(m => { if (m != null) { v.meters = m; renderStationPanel(); } });
+  }
+}
+
+// Kopf eines umschaltbaren Blocks (Stationsansicht / Fahrtverlauf)
+function secHead(sec, isOpen, label) {
+  return '<div class="sechead" data-sec="' + sec + '"><span class="sarr">' +
+    (isOpen ? "▾" : "▸") + "</span>" + label +
+    (isOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') + "</div>";
+}
+function renderBusPanel() {
+  if (!currentBus) { busPanel.hidden = true; busPanel.innerHTML = ""; return; }
+  const stop = stops.find(s => s.shortName === currentBus.sn);
+  const v = stopViews.get(currentBus.sn);
+  const pos = getPos();
+  let meta;
+  if (v && v.meters) {
+    const pre = isEst(currentBus.sn) ? "~" : "";
+    meta = pre + formatDist(v.meters) + " · " + pre +
+      Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min";
+  } else if (pos && stop) {
+    const air = dist(pos, stop) * 1.3;
+    meta = "~" + formatDist(air) + " · ~" + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)";
+  } else {
+    meta = "";
+  }
+  let inner =
+    '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
+    '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
+    '<button class="rowref" data-ref="' + escapeHtml(currentBus.sn) +
+      '" title="Diese Haltestelle neu abfragen">↻</button></div>';
+  // Jeder Block ist unabhängig auf-/zuklappbar; ein zugeklappter Block wird
+  // nicht neu generiert (eingefrorener Stand, spart Daten und Aktualisierungen)
+  const stOpen = !!currentBus.stationOpen;
+  const trOpen = !!currentBus.tripOpen;
+  let stationHTML;
+  if (stOpen) {
+    stationHTML = stationSectionHTML();
+    currentBus.cachedStation = stationHTML;
+  } else {
+    stationHTML = currentBus.cachedStation || "";
+  }
+  let tripHTML;
+  if (trOpen) {
+    tripHTML = tripSectionHTML();
+    if (currentTrip && currentTrip.tripId === currentBus.tripId)
+      currentBus.cachedTrip = { id: currentBus.tripId, html: tripHTML };
+  } else {
+    tripHTML = (currentBus.cachedTrip && currentBus.cachedTrip.id === currentBus.tripId)
+      ? currentBus.cachedTrip.html : "";
+  }
+  inner += secHead("station", stOpen, "Stationsansicht") + stationHTML;
+  inner += secHead("trip", trOpen, "Fahrtverlauf") + tripHTML;
+  if (busPanel.dataset.last !== inner) {
+    busPanel.dataset.last = inner;
+    busPanel.innerHTML = inner;
+    marqueeify(busPanel);
+  }
+  busPanel.hidden = false;
+}
+
+// Detailblock der angeklickten Abfahrt (in der Stationsansicht)
+function stationSectionHTML() {
+  if (!currentBus) return "";
+  const v = stopViews.get(currentBus.sn);
+  if (v && v.fetched) {
+    const ageSec = (Date.now() - v.fetchTs) / 1000;
+    const dep = v.deps.find(d => d.tripId === currentBus.tripId);
+    if (dep) {
+      const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
+      const rel = dep.actualRelativeTime - ageSec;
+      const losMin = Math.round((rel - walkSec) / 60);
+      const plat = v.platforms && v.platforms[dep.tripId];
+      const live = dep.status === "PREDICTED" || dep.status === "STOPPING";
+      const [ph, pm] = (dep.plannedTime || "").split(":").map(Number);
+      const [ah, am] = (dep.actualTime || dep.plannedTime || "").split(":").map(Number);
+      const delayMin = (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+        ? (ah * 60 + am) - (ph * 60 + pm) : 0;
+      const colorCls = losMin > 3 ? "" : (losMin >= 0 ? " soon" : " missed");
+      const now = new Date();
+      const depClock = (() => {
+        const t = new Date(now.getTime() + rel * 1000);
+        return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+      })();
+      return '<div class="busdetail"><span class="dl">' + escapeHtml(dep.line) +
+        '</span> <span class="big">→ ' + escapeHtml(dep.direction) + "</span><br>" +
+        (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
+        "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
+        (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")<br>" +
+        (v.meters
+          ? 'Fußweg <b>' + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min</b> · "
+          : "") +
+        '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
+        "los in " + losMin + " min</span></div>";
+    } else {
+      return '<small class="rowinfo dim">Abfahrt nicht mehr in den Daten – ↻ für neue Abfrage.</small>';
+    }
+  } else {
+    return '<small class="rowinfo dim">Daten werden geladen …</small>';
+  }
+}
+
+// ---------- Fahrtverlauf (Lupe) ----------
+let currentTrip = null;   // { tripId, sn, stops:[{shortName,name,time,status,seq}], route, direction, delay:{}, progressIdx, loading }
+const tripDelayCache = new Map();   // "sn|tripId" -> { plannedTime, actualTime, delayMin, ts }
+
+async function selectTrip(sn, tripId, force) {
+  if (currentTrip && currentTrip.tripId === tripId && !force) {
+    // erneut angeklickt: nur Ansicht öffnen
+    renderBusPanel();
+    return;
+  }
+  currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, missing: {}, progressIdx: -1, loading: true };
+  if (currentBus) currentBus.tripOpen = true;   // Fahrtverlauf auftauen
+  if (force) {
+    for (const k of [...tripDelayCache.keys()]) {
+      if (k.endsWith("|" + tripId)) tripDelayCache.delete(k);
+    }
+  }
+  renderBusPanel();
+  if (isDB(sn)) {
+    // geplante Abfahrtszeit der angeklickten Fahrt mitgeben: bei Zügen kann dieselbe
+    // Fahrt-ID (jid) mehrfach an einer Haltestelle verkehren (SEV-Schleifen) —
+    // nur mit der Zeit ist der Fahrtverlauf eindeutig der richtigen Abfahrt zugeordnet.
+    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    await dbTrip(tripId, dep ? dep.plannedTime : null);
+    if (currentBus && currentBus.tripId === tripId) renderBusPanel();
+    return;
+  }
+  try {
+    const res = await apiFetch("kvg", TRIP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tripId=" + encodeURIComponent(tripId)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    // bereits befahrene Haltestellen (old, DEPARTED) vor die restliche Fahrt hängen.
+    // Die Zeiten aus tripPassages sind die (prognostizierten) IST-Zeiten -> "Aktuell".
+    // Sie füllen die Spalte komplett beim Öffnen; die Spalte "Gep." (Soll) kommt je
+    // Station aus den Abfahrtstafeln und wird über den globalen ↻-Knopf geladen.
+    const mapKvgStop = p => ({
+      shortName: p.stop.shortName, name: p.stop.name,
+      time: p.actualTime, plannedTime: "",
+      status: p.status, seq: Number(p.stop_seq_num) || 0
+    });
+    currentTrip.stops = (data.old || []).map(mapKvgStop)
+      .concat((data.actual || []).map(mapKvgStop));
+    currentTrip.route = data.routeName || "";
+    currentTrip.direction = data.directionText || "";
+    // Soll/Ist der Starthaltestelle aus der Abfahrtstafel übernehmen (keine Zusatzabfrage)
+    const dep0 = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    if (dep0 && dep0.plannedTime) {
+      const [ph, pm] = dep0.plannedTime.split(":").map(Number);
+      const [ah, am] = (dep0.actualTime || dep0.plannedTime).split(":").map(Number);
+      currentTrip.delay[sn + "|" + tripId] = {
+        plannedTime: dep0.plannedTime, actualTime: dep0.actualTime,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+    }
+    currentTrip.loading = false;
+    // ↻-Knopf (force): zusätzlich Soll-Zeiten ALLER Haltestellen in einem Rutsch
+    if (force) await kvgFillPlanned();
+  } catch (e) {
+    currentTrip.loading = false;
+    currentTrip.error = true;
+  }
+  if (currentBus && currentBus.tripId === tripId) renderBusPanel();
+}
+
+// (Soll-Zeiten je Station der Kieler Busse sind nur einzeln abfragbar ->
+//  gebündelt über den globalen ↻-Knopf des Fahrtverlaufs, s. kvgFillPlanned)
+
+// Globale Aktualisierung für Busse: Soll-Zeit jeder Haltestelle der Fahrt aus
+// den Abfahrtstafeln (eine Abfrage je Haltestelle, alle auf einen Schlag)
+async function kvgFillPlanned() {
+  const tripId = currentTrip.tripId;
+  await Promise.all((currentTrip.stops || []).map(async s => {
+    const key = s.key || (s.shortName + "|" + tripId);
+    try {
+      const res = await apiFetch("kvg", DEPART_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "stop=" + encodeURIComponent(s.shortName)
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === tripId);
+      if (!d || !d.plannedTime) return;
+      const old = currentTrip.delay[key] || {};
+      const actualTime = old.actualTime || d.actualTime || d.plannedTime;
+      const [ph, pm] = d.plannedTime.split(":").map(Number);
+      const [ah, am] = actualTime.split(":").map(Number);
+      const info = {
+        plannedTime: d.plannedTime, actualTime,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+      tripDelayCache.set(key, info);
+      currentTrip.delay[key] = info;
+    } catch (e) {}
+  }));
+}
+
+function tripSectionHTML() {
+  if (!currentTrip || !currentBus || currentTrip.tripId !== currentBus.tripId) return "";
+  let html = '<div class="trip">';
+  if (currentTrip.loading) {
+    html += '<small class="rowinfo dim">Fahrtverlauf wird geladen …</small></div>';
+    return html;
+  }
+  if (currentTrip.error || !currentTrip.stops || !currentTrip.stops.length) {
+    html += '<small class="rowinfo dim">Fahrtverlauf gerade nicht verfügbar.</small></div>';
+    return html;
+  }
+  const pos = getPos();
+  const tstops = currentTrip.stops;
+  // Fortschritt: GPS nahe an einer Station der Fahrt -> alle bis dahin ausgrauen.
+  // Radius: 75 m bei Bussen, 250 m bei Zügen/Schienenersatz (größere Halteflächen)
+  const gpsR = isDB(currentTrip.sn) ? 250 : 75;
+  let gpsKey = null;   // Station im Radius: dort live Ist-Abfahrt füllen
+  if (pos) {
+    for (let i = 0; i < tstops.length; i++) {
+      const s = tstops[i];
+      const stop = stops.find(x => x.shortName === s.shortName);
+      if (!stop) continue;
+      if (dist(pos, stop) < gpsR) {
+        currentTrip.progressIdx = Math.max(currentTrip.progressIdx, i);
+        gpsKey = s.key || (s.shortName + "|" + currentTrip.tripId);
+        break;
+      }
+    }
+  }
+  html += '<div class="thead"><span class="pname">Fahrtverlauf Linie ' +
+    escapeHtml(currentTrip.route) + " → " + escapeHtml(currentTrip.direction) + "</span>" +
+    '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
+      '" title="Fahrtverlauf und alle Haltestellen global neu abfragen">↻</button></div>' +
+    '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  const done = currentTrip.progressIdx;
+  const last = tstops.length - 1;
+  for (let i = 0; i < tstops.length; i++) {
+    const s = tstops[i];
+    const key = s.key || (s.shortName + "|" + currentTrip.tripId);
+    const dl = currentTrip.delay[key];
+    const planned = (dl && dl.plannedTime) || s.plannedTime || "";
+    let actual = s.time || (dl && dl.actualTime) || "";
+    let delayHtml = "";
+    if (dl && dl.delayMin != null) {
+      const delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
+      const delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "0m";
+      delayHtml = '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>";
+    }
+    // GPS-Live: eigene Position an dieser Station -> laufend die aktuelle Uhrzeit als
+    // Ist-Abfahrt eintragen (+/- Indikator), solange bis die Station wieder verlassen
+    // wird; danach bleibt der letzte Stand eingefroren (es sind Abfahrtszeiten)
+    if (gpsKey && key === gpsKey) {
+      const [ph, pm] = (planned || "").split(":").map(Number);
+      const nowD = new Date();
+      if (isFinite(ph) && isFinite(pm)) {
+        const clock = String(nowD.getHours()).padStart(2, "0") + ":" +
+          String(nowD.getMinutes()).padStart(2, "0");
+        const dMin = (nowD.getHours() * 60 + nowD.getMinutes()) - (ph * 60 + pm);
+        if (Math.abs(dMin) < 720) {   // Soll-Zeit gehört zum heutigen Lauf
+          actual = clock;
+          delayHtml = '<span class="tdelay ' + (dMin > 0 ? "up" : dMin < 0 ? "down" : "ok") + '">' +
+            (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
+          currentTrip.delay[key] = { plannedTime: planned, actualTime: clock,
+            delayMin: dMin, ts: Date.now() };
+        }
+      }
+    }
+    const aKey = currentTrip.tripId + "|" + s.shortName;
+    const armed = alarms.has(aKey);
+    const fired = firedAlarms.has(aKey);
+    const bellCls = fired ? " abell fired" : armed ? " abell on" : " abell";
+    const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
+      (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
+    html += '<div class="trow' + rowCls + '">' +
+      '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
+      '<span class="takt">' + escapeHtml(actual || "–") + "</span>" +
+      delayHtml +
+      '<span class="tname">' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
+      '<button class="' + bellCls + '" data-alarm="' + escapeHtml(aKey) + '" title="' +
+        (fired ? "Wecker bereits ausgelöst" : armed ? "Wecker ausschalten" : "Wecker stellen") +
+        '">' + (fired ? "⏰" : "🔔") + "</button>" +
+      "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+
+// ---------- Wecker je Haltestelle im Fahrtverlauf ----------
+// Auslösung: Distanz zur Station (GPS) ODER Minuten vor der geplanten bzw.
+// aktualisierten Abfahrtszeit. Zwei Stufen: Vibration (sofern vom Gerät
+// unterstützt) und Weckton (im Browser). Bei aktivem Wecker wird die Zeit der
+// Station alle (Auswahlzeit)/2 Minuten neu geprüft.
+const alarms = new Map();       // "tripId|sn" -> {sn, name, dist, leadMin, vib, tone, lastPoll}
+const firedAlarms = new Set(); // "tripId|sn" (ausgelöst, im Verlauf als ⏰ sichtbar)
+let audioCtx = null;
+
+function alarmBeep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    for (let i = 0; i < 4; i++) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = i % 2 ? 880 : 660;
+      g.gain.setValueAtTime(0.001, t0 + i * 0.6);
+      g.gain.exponentialRampToValueAtTime(0.4, t0 + i * 0.6 + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.6 + 0.5);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + i * 0.6); o.stop(t0 + i * 0.6 + 0.55);
+    }
+  } catch (e) {}
+}
+function fireAlarm(aKey, a) {
+  alarms.delete(aKey);
+  firedAlarms.add(aKey);
+  if (a.vib && navigator.vibrate) { try { navigator.vibrate([400, 200, 400, 200, 800]); } catch (e) {} }
+  if (a.tone) alarmBeep();
+  setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!");
+  if (currentBus) renderBusPanel();
+}
+
+// Abfahrtszeit (Minuten des Tages) der Wecker-Station aus dem aktuellen Fahrtverlauf
+function alarmDepMin(a) {
+  if (!currentTrip || currentTrip.tripId !== a.tripId) return null;
+  const s = (currentTrip.stops || []).find(x => x.shortName === a.sn);
+  if (!s) return null;
+  const key = s.key || (a.sn + "|" + a.tripId);
+  const dl = currentTrip.delay[key] || {};
+  const t = (dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "");
+  const [h, m] = t.split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? h * 60 + m : null;
+}
+// Zeit der Station für den Wecker aktualisieren (KVG: Tafel der Station; DB: Fahrt neu)
+async function pollAlarmStop(a) {
+  if (!currentTrip || currentTrip.tripId !== a.tripId) return;
+  const s = (currentTrip.stops || []).find(x => x.shortName === a.sn);
+  if (!s) return;
+  const key = s.key || (a.sn + "|" + a.tripId);
+  if (isDB(currentTrip.sn)) { selectTrip(currentTrip.sn, a.tripId, true); return; }
+  try {
+    const res = await apiFetch("kvg", DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(a.sn)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === a.tripId);
+    if (!d || !d.plannedTime) return;
+    const old = currentTrip.delay[key] || {};
+    const actualTime = d.actualTime || old.actualTime || d.plannedTime;
+    const [ph, pm] = d.plannedTime.split(":").map(Number);
+    const [ah, am] = actualTime.split(":").map(Number);
+    currentTrip.delay[key] = {
+      plannedTime: d.plannedTime, actualTime,
+      delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+        ? (ah * 60 + am) - (ph * 60 + pm) : null,
+      ts: Date.now()
+    };
+  } catch (e) {}
+}
+function alarmTick() {
+  if (!alarms.size) return;
+  const pos = getPos();
+  const nowD = new Date();
+  const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+  for (const [aKey, a] of [...alarms]) {
+    const stop = stops.find(x => x.shortName === a.sn);
+    if (a.dist && pos && stop && dist(pos, stop) <= a.dist) { fireAlarm(aKey, a); continue; }
+    if (a.leadMin != null) {
+      if (Date.now() - (a.lastPoll || 0) > a.leadMin * 30000) {   // alle leadMin/2 Minuten
+        a.lastPoll = Date.now();
+        pollAlarmStop(a);
+      }
+      const depMin = alarmDepMin(a);
+      if (depMin != null) {
+        let d = depMin - nowMin;
+        if (d < -720) d += 1440;
+        if (d <= a.leadMin) { fireAlarm(aKey, a); continue; }
+      }
+    }
+  }
+}
+
+// Wecker-Dialog: Distanz ODER Zeit vor Abfahrt, Stufen Vibration/Weckton.
+// "Distanz" und "Zeit" sind nur Überschriften, nicht wählbar; der Wecker lässt
+// sich erst stellen, wenn mindestens eine der beiden Bedingungen gewählt ist.
+function openAlarmDialog(aKey) {
+  const i = aKey.indexOf("|");
+  const a = { tripId: aKey.slice(0, i), sn: aKey.slice(i + 1) };
+  const stop = (currentTrip && currentTrip.stops || []).find(x => x.shortName === a.sn);
+  a.name = stop ? stop.name : a.sn;
+  const old = alarms.get(aKey) || {};
+  let selDist = old.dist || null, selLead = old.leadMin || null;
+  const vib = old.vib !== false, tone = old.tone !== false;
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const chip = (label, val, group) =>
+    '<button class="achip" data-g="' + group + '" data-v="' + val + '">' + label + "</button>";
+  wrap.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dtitle">Wecker: ' + escapeHtml(a.name) + "</div>" +
+    '<div class="dlabel">Distanz</div>' +
+    '<div class="achips">' +
+      chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
+      chip("5 km", 5000, "d") + chip("10 km", 10000, "d") + "</div>" +
+    '<div class="doder">ODER</div>' +
+    '<div class="dlabel">Zeit vor gepl. / akt. Abfahrt</div>' +
+    '<div class="achips">' +
+      chip("2 min", 2, "t") + chip("5 min", 5, "t") + chip("10 min", 10, "t") + chip("20 min", 20, "t") + "</div>" +
+    '<div class="dstages">' +
+      '<label class="dstage"><input type="checkbox" class="avib"' + (vib ? " checked" : "") + (navigator.vibrate ? "" : " disabled") +
+        "> Vibration" + (navigator.vibrate ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
+      '<label class="dstage"><input type="checkbox" class="atone"' + (tone ? " checked" : "") + "> Weckton</label>" +
+    "</div>" +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
+    '<button class="aok" disabled>Wecker stellen</button></div>' +
+    "</div>";
+  document.body.appendChild(wrap);
+  const okBtn = wrap.querySelector(".aok");
+  const sync = () => {
+    wrap.querySelectorAll(".achip").forEach(c => {
+      const on = c.dataset.g === "d" ? Number(c.dataset.v) === selDist
+                                     : Number(c.dataset.v) === selLead;
+      c.classList.toggle("on", on);
+    });
+    okBtn.disabled = !(selDist || selLead);   // erst mit mindestens einer Bedingung stellbar
+  };
+  wrap.addEventListener("click", e => {
+    const c = e.target.closest(".achip");
+    if (c) {
+      const v = Number(c.dataset.v);
+      if (c.dataset.g === "d") selDist = selDist === v ? null : v;
+      else selLead = selLead === v ? null : v;
+      sync();
+      return;
+    }
+    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest(".aok") && (selDist || selLead)) {
+      alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
+        dist: selDist, leadMin: selLead,
+        vib: wrap.querySelector(".avib").checked,
+        tone: wrap.querySelector(".atone").checked, lastPoll: 0 });
+      wrap.remove();
+      setLocNote("🔔 Wecker gestellt: " + a.name +
+        (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
+        (selDist && selLead ? " oder " : "") +
+        (selLead ? selLead + " min vor Abfahrt" : ""));
+      if (currentBus) renderBusPanel();
+    }
+  });
+  sync();
+}
+
+// Panels-Klicks (↻ und Buslinien)
+stationPanel.addEventListener("click", e => {
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const ssec = e.target.closest("[data-ssec]");
+  if (ssec) {
+    stationPanelOpen = !stationPanelOpen;   // zugeklappt = eingefroren
+    renderStationPanel();
+    return;
+  }
+  const bl = e.target.closest("[data-buslink]");
+  if (bl) {
+    const [lSn, lId] = bl.dataset.buslink.split("~");
+    selectBus(lSn, lId);        // Stationsansicht
+    selectTrip(lSn, lId);       // Fahrtverlauf (beide Blöcke aufgetaut)
+    return;
+  }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) { refetchStop(ref.dataset.ref, true); return; }
+  const bus = e.target.closest("[data-bus]");
+  if (bus) {
+    const [sn, tripId] = bus.dataset.bus.split("~");
+    selectBus(sn, tripId);
+  }
+});
+busPanel.addEventListener("click", e => {
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const sec = e.target.closest("[data-sec]");
+  if (sec) {
+    // Blöcke Stationsansicht <-> Fahrtverlauf unabhängig auf-/zuklappen:
+    // zugeklappt = eingefroren (keine Aktualisierung)
+    if (currentBus) {
+      if (sec.dataset.sec === "station") currentBus.stationOpen = !currentBus.stationOpen;
+      else currentBus.tripOpen = !currentBus.tripOpen;
+      renderBusPanel();
+    }
+    return;
+  }
+  const al = e.target.closest("[data-alarm]");
+  if (al) {
+    const aKey = al.dataset.alarm;
+    if (alarms.has(aKey)) {           // aktiv -> ausschalten
+      alarms.delete(aKey);
+      setLocNote("🔕 Wecker ausgeschaltet.");
+      renderBusPanel();
+    } else if (!firedAlarms.has(aKey)) {
+      openAlarmDialog(aKey);          // neu stellen
+    }
+    return;
+  }
+  const tripref = e.target.closest("[data-tripref]");
+  if (tripref) { selectTrip(currentBus.sn, tripref.dataset.tripref, true); return; }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) refetchStop(ref.dataset.ref, true);
+});
+
+// ---------- Favoriten ----------
+function renderFavs() {
+  const box = document.getElementById("favorites");
+  if (!favs.length) { box.innerHTML = ""; renderAddFav(); return; }
+  const names = favs.map(sn => {
+    const s = stops.find(x => x.shortName === sn);
+    return s ? s.name : null;
+  });
+  box.innerHTML = favs.map((sn, i) =>
+    '<span class="chip' + (currentStop && currentStop.shortName === sn ? " sel" : "") +
+    '" data-sn="' + escapeHtml(sn) + '">' + escapeHtml(names[i] || sn) + " ✕</span>").join("");
+  renderAddFav();
+}
+
+document.getElementById("favorites").addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (!chip || chip.id === "addFav") return;
+  const sn = chip.dataset.sn;
+  const remove = e.offsetX > chip.offsetWidth - 24;
+  if (remove) {
+    favs = favs.filter(f => f !== sn);
+    localStorage.setItem("kvg-favs", JSON.stringify(favs));
+    renderFavs();
+  } else if (stops.length) {
+    selectStop(sn);
+  }
+});
+
+function toggleFavSn(sn) {
+  if (favs.includes(sn)) favs = favs.filter(f => f !== sn);
+  else { favs.unshift(sn); favs = favs.slice(0, 8); }
+  localStorage.setItem("kvg-favs", JSON.stringify(favs));
+  renderFavs();
+  // alle Sterne dieser Station überall aktualisieren
+  document.querySelectorAll("[data-star]").forEach(b => {
+    b.classList.toggle("off", !favs.includes(b.dataset.star));
+  });
+}
+function starHTML(sn) {
+  return '<button class="star' + (favs.includes(sn) ? "" : " off") +
+    '" data-star="' + escapeHtml(sn) + '" title="Favorit">★</button>';
+}
+function toggleFav() {
+  if (!currentStop) return;
+  toggleFavSn(currentStop.shortName);
+  renderPanels();
+}
+
+function renderAddFav() {
+  const box = document.getElementById("favorites");
+  const add = currentStop && !favs.includes(currentStop.shortName);
+  let btn = document.getElementById("addFav");
+  if (!btn) {
+    btn = document.createElement("span");
+    btn.id = "addFav";
+    btn.className = "chip";
+    btn.textContent = "☆ Merken";
+    btn.addEventListener("click", toggleFav);
+    box.appendChild(btn);
+  }
+  btn.style.display = add ? "" : "none";
+}
+
+// ---------- Entfernung & Fußweg-Routing ----------
+const walkCache = JSON.parse(localStorage.getItem("kvg-walk2") || "{}"); // sn -> {m,lat,lon,ts}
+function dist(pos, stop) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (stop.lat - pos.lat) * rad, dLon = (stop.lon - pos.lon) * rad;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(pos.lat * rad) * Math.cos(stop.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function formatDist(m) {
+  return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km";
+}
+function saveWalkCache() {
+  try { localStorage.setItem("kvg-walk2", JSON.stringify(walkCache)); } catch (e) {}
+}
+async function walkMeters(stop) {
+  const pos = getPos();
+  if (!pos) return null;
+  const c = walkCache[stop.shortName];
+  // echte Wegdaten: 24 h gültig; Schätzung (~, Luftlinie × 1,3): nur 10 min, dann Router neu versuchen
+  if (c && Math.abs(c.lat - pos.lat) < 0.0002 && Math.abs(c.lon - pos.lon) < 0.0002 &&
+      Date.now() - c.ts < (c.est ? 6e5 : 864e5)) {
+    return c.m;
+  }
+  const air = dist(pos, stop);
+  try {
+    const url = FOOT_ROUTER + "/" + pos.lon + "," + pos.lat + ";" + stop.lon + "," + stop.lat + "?overview=false";
+    const res = await apiFetch("osrm", url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.routes && data.routes[0]) {
+        walkCache[stop.shortName] = { m: data.routes[0].distance, est: false, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+        saveWalkCache();
+        return data.routes[0].distance;
+      }
+    }
+  } catch (e) {}
+  const est = air * 1.3; // Schätzung (Router nicht erreichbar): Luftlinie × 1,3
+  walkCache[stop.shortName] = { m: est, est: true, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+  saveWalkCache();
+  return est;
+}
+function isEst(sn) {
+  const c = walkCache[sn];
+  return !!(c && c.est);
+}
+
+// ---------- Bussteige (A1, B3 ...) ----------
+let steige = null; // shortName -> [{label, id}]
+try { steige = JSON.parse(localStorage.getItem("kvg-steige") || "null"); } catch (e) {}
+function saveSteige() {
+  try { localStorage.setItem("kvg-steige", JSON.stringify(steige)); } catch (e) {}
+}
+async function getSteige() {
+  if (steige) return;
+  try {
+    const res = await apiFetch("kvg", PLATFORMS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    if (!res.ok) return;
+    const data = await res.json();
+    steige = {};
+    for (const p of (data.stopPoints || [])) {
+      const sn = String(p.stopShortName || "");
+      if (!sn) continue;
+      (steige[sn] = steige[sn] || []).push({ label: p.label || "", id: p.id });
+    }
+    saveSteige();
+  } catch (e) {}
+}
+async function loadPlatforms(sn) {
+  if (isDB(sn)) return dbPlatformCache.get(sn) || {};
+  await getSteige();
+  const list = steige && steige[sn];
+  if (!list || !list.length) return {};
+  const byId = {};
+  for (const p of list) byId[p.id] = p.label;
+  const map = {}; // tripId -> label
+  await Promise.all(list.map(async p => {
+    try {
+      const res = await apiFetch("kvg", DEPART_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "stopPoint=" + encodeURIComponent(p.id)
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const all = [...(data.actual || []), ...(data.oldActual || [])];
+      for (const d of all) if (d.tripId && byId[p.id]) map[d.tripId] = byId[p.id];
+    } catch (e) {}
+  }));
+  return map;
+}
+
+// ---------- DB-Live-Auskunft über NAH.SH-HAFAS (DB Regio Nord) ----------
+const dbPlatformCache = new Map(); // sn -> { tripId: Gleis/Kante }
+function flashAPI(kind) {
+  const el = document.querySelector('#apiInd [data-ind="' + kind + '"]');
+  if (!el) return;
+  el.classList.remove("ping");
+  void el.offsetWidth;   // Animation neu starten
+  el.classList.add("ping");
+}
+
+// ---------- API-Statistik (Anzahl + Datenmenge je Anbieter) ----------
+const API_KINDS = {
+  db:   { label: "Deutsche Bahn / NAH.SH", color: "#EC0016" },
+  kvg:  { label: "KVG (Bus)",              color: "#00519E" },
+  nom:  { label: "Nominatim / OSM",         color: "#7EBC6F" },
+  osrm: { label: "OSRM (Fußweg)",          color: "#FF7F2A" }
+};
+let apiStats;
+try {
+  const s = JSON.parse(localStorage.getItem("kvg-apistats") || "null");
+  apiStats = (s && s.kinds) ? s : null;
+} catch (e) { apiStats = null; }
+if (!apiStats) {
+  apiStats = { since: Date.now(), kinds: {} };
+  for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+}
+function saveApiStats() {
+  try { localStorage.setItem("kvg-apistats", JSON.stringify(apiStats)); } catch (e) {}
+}
+const apiEnc = new TextEncoder();
+async function apiFetch(kind, url, opts) {
+  flashAPI(kind);
+  const res = await fetch(url, opts);
+  if (res.ok) {
+    try {
+      const c = res.clone();
+      const txt = await c.text();
+      apiStats.kinds[kind].n++;
+      apiStats.kinds[kind].b += apiEnc.encode(txt).length;
+      saveApiStats();
+      renderApiStats();
+    } catch (e) {}
+  }
+  return res;
+}
+function fmtBytes(b) {
+  return b < 1024 ? b + " B"
+       : b < 1048576 ? (b / 1024).toFixed(1) + " KB"
+       : (b / 1048576).toFixed(1) + " MB";
+}
+function renderApiStats() {
+  const el = document.getElementById("apiStats");
+  if (!el) return;
+  let totN = 0, totB = 0;
+  let html = '<div class="ashdr">Übertragene Live-Daten</div>';
+  for (const k in API_KINDS) {
+    const st = apiStats.kinds[k] || { n: 0, b: 0 };
+    totN += st.n; totB += st.b;
+    html += '<div class="asrow"><span class="asdot" style="background:' + API_KINDS[k].color +
+      '"></span><span class="asname">' + API_KINDS[k].label + '</span><span class="asval">' +
+      st.n + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
+  }
+  html += '<div class="asrow astot"><span class="asname">insgesamt</span><span class="asval">' +
+    totN + " Anfr. · " + fmtBytes(totB) + "</span></div>";
+  html += '<div class="asdim">Statistik seit ' + new Date(apiStats.since).toLocaleString("de-DE") + "</div>";
+  html += '<button class="afbtn" id="apiStatsReset" style="width:100%;margin-top:8px;">Zähler zurücksetzen</button>';
+  el.innerHTML = html;
+}
+document.getElementById("apiInd").addEventListener("click", e => {
+  const ind = e.target.closest(".ind");
+  if (!ind) return;
+  const el = document.getElementById("apiStats");
+  if (!el.hidden) { el.hidden = true; return; }
+  renderApiStats();
+  el.hidden = false;
+});
+document.addEventListener("click", e => {
+  const el = document.getElementById("apiStats");
+  if (el && !el.hidden && !e.target.closest("#apiInd") && !e.target.closest("#apiStats")) el.hidden = true;
+});
+document.getElementById("apiStats").addEventListener("click", e => {
+  if (e.target.closest("#apiStatsReset")) {
+    apiStats = { since: Date.now(), kinds: {} };
+    for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+    saveApiStats();
+    renderApiStats();
+  }
+});
+async function dbFetch(svcReqL) {
+  const res = await apiFetch("db", DB_GATE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ver: "1.68", lang: "deu", ext: null,
+      client: { id: "NAHSH", type: "WEB", name: "webapp", l: "vs_webapp" },
+      auth: { type: "AID", aid: "nahsh" },
+      svcReqL
+    })
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+// HAFAS-Zeitformat: "HHMMSS"; nach Mitternacht teils mit Tagesoffset-Prefix ("01HHMMSS")
+function dbHHMM(t) { if (!t) return ""; const h = t.length > 6 ? t.slice(-6) : t;
+  return h.slice(0, 2) + ":" + h.slice(2, 4); }
+function dbRelMin(t) {   // "HHMMSS" -> Minuten ab jetzt (negativ = bereits abgefahren)
+  const s6 = t.length > 6 ? t.slice(-6) : t;
+  const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
+  const h = Number(s6.slice(0, 2)), m = Number(s6.slice(2, 4));
+  if (!isFinite(h) || !isFinite(m)) return 0;
+  const now = new Date();
+  let s = day * 86400 + h * 3600 + m * 60 + (Number(s6.slice(4, 6)) || 0)
+        - (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds());
+  if (s < -43200) s += 86400 * (day ? 0 : 1);   // nach Mitternacht
+  return s / 60;
+}
+function dbNow() {
+  const n = new Date();
+  const p = x => String(x).padStart(2, "0");
+  return { date: n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()),
+           time: p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds()) };
+}
+async function dbDepartures(sn) {
+  const d = dbStopOf(sn);
+  if (!d) return null;
+  const { date, time } = dbNow();
+  const res = await dbFetch([{ meth: "StationBoard",
+    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time, maxJny: 100 } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  if (!out || !out.jnyL) return null;
+  const prodL = (out.common && out.common.prodL) || [];
+  const deps = [], platforms = {};
+  const seenJid = new Set();
+  const seenDep = new Map(); // "Ziel|Sollzeit" -> Index in deps
+  for (const j of out.jnyL) {
+    const prod = prodL[j.prodX] || {};
+    if ((prod.cls || 0) >= 32) continue;   // nur Schienenverkehr (Zug/Schienenersatz)
+    const st = j.stbStop || {};
+    const t = st.dTimeR || st.dTimeS;
+    if (!t) continue;
+    const rawName = String(prod.name || "").trim();
+    // Datenpseudonym "de:NAHSH" entfernen, auch mitten im Namen (z.B. "SEVde:NA" -> "SEV")
+    const deIdx = rawName.indexOf("de:");
+    const cleanName = deIdx > 0 ? rawName.slice(0, deIdx).trim() : (deIdx === 0 ? "" : rawName);
+    const isPseudo = !cleanName;
+    const line = cleanName
+      || String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim();
+    // Doppelungen vermeiden:
+    // a) gleiche Fahrt-ID (jid) nur einmal (SEV-Schleifen: mehrfache Durchgänge pro Tageslauf)
+    // b) gleiche Fahrt kommt teils als ZWEI Produkte mit verschiedenen jids
+    //    (z.B. "RB73" und SEV-Ersatz "de:NAHSH") mit identischer Zeit+Ziel ->
+    //    nur den Eintrag mit dem konkreten Liniennamen behalten.
+    const dkey = (j.dirTxt || "") + "|" + (st.dTimeS || "");
+    const prev = seenDep.get(dkey);
+    if (seenJid.has(j.jid)) continue;
+    const entry = {
+      tripId: j.jid,
+      line: line || "DB",
+      direction: j.dirTxt || "",
+      isPseudo,
+      plannedTime: dbHHMM(st.dTimeS),
+      actualTime: dbHHMM(st.dTimeR || st.dTimeS),
+      actualRelativeTime: dbRelMin(t) * 60,   // Sekunden ab jetzt (wie KVG-API)
+      status: st.dTimeR ? "PREDICTED" : "PLANNED",
+      alerts: []
+    };
+    if (prev !== undefined) {
+      if (deps[prev].isPseudo && !isPseudo) deps[prev] = entry;
+      continue;
+    }
+    seenJid.add(j.jid);
+    seenDep.set(dkey, deps.length);
+    deps.push(entry);
+    const plat = st.dPlatF || st.dPlatR;
+    if (plat) platforms[j.jid] = plat;
+  }
+  deps.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return { deps, platforms };
+}
+// Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
+async function dbTrip(tripId, depTime) {
+  try {
+    const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: tripId } }]);
+    const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+    const j = out && out.journey;
+    if (!j || !j.stopL) throw new Error("no journey");
+    const locL = (out.common && out.common.locL) || [];
+    const prodL = (out.common && out.common.prodL) || [];
+    const prod = prodL[j.prodX] || {};
+    currentTrip.route = (prod.name || "DB").trim();
+    currentTrip.direction = j.dirTxt || "";
+    // Startindex bestimmen: die zur angeklickten Abfahrt passende Station+durchgang.
+    // JourneyDetails liefert den GANZEN Tageslauf der Fahrt; bei SEV-Schleifen
+    // steht dieselbe Haltestelle mehrfach darin. Gesucht ist der Durchgang, dessen
+    // geplante Zeit der Abfahrtszeit aus der Liste entspricht.
+    // Achtung: die extId in JourneyDetails (z.B. 4940199) weicht von unserer
+    // Stations-ID (z.B. DB:9049079) ab -> zusätzlich per Name vergleichen.
+    const stExt = String(currentTrip.sn || "").slice(3); // "DB:<extId>" -> extId
+    const stStop = stops.find(s => s.shortName === currentTrip.sn);
+    const stName = stStop ? String(stStop.name || "").replace(/\s*\(DB\)\s*$/, "").trim() : "";
+    const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+    const stN = norm(stName);
+    const isSt = p => {
+      const loc = locL[p.locX] || {};
+      if (String(loc.extId || "") === stExt) return true;
+      if (!stN || stN.length < 6) return false;
+      const n = norm(loc.name);
+      return (n && (n.indexOf(stN) === 0 || stN.indexOf(n) === 0)) ||
+             (n.length >= 6 && (n.indexOf(stN) >= 0 || stN.indexOf(n) >= 0));
+    };
+    const wantHHMM = depTime ? depTime.replace(":", "") : null; // "HHMM"
+    let start = -1, firstHit = -1;
+    for (let i = 0; i < j.stopL.length; i++) {
+      const p = j.stopL[i];
+      if (!isSt(p)) continue;
+      if (firstHit < 0) firstHit = i;
+      const tS = p.dTimeS ? (String(p.dTimeS).length > 6 ? String(p.dTimeS).slice(-6) : String(p.dTimeS)) : "";
+      if (wantHHMM && tS.slice(0, 4) === wantHHMM) { start = i; break; }
+    }
+    if (start < 0) start = (firstHit < 0) ? 0 : firstHit;
+    currentTrip.stops = j.stopL.slice(start).map((p, k) => {
+      const idx = start + k;
+      const loc = locL[p.locX] || {};
+      const key = tripId + "#" + idx;
+      // Endstation hat keine Abfahrtszeit -> Ankunftszeit (aTimeS/aTimeR) anzeigen
+      const isArr = !p.dTimeS && !!p.aTimeS;
+      const planned = dbHHMM(p.dTimeS || p.aTimeS);
+      const actual = dbHHMM(p.dTimeR || p.dTimeS || p.aTimeR || p.aTimeS);
+      const [ph, pm] = (planned || "").split(":").map(Number);
+      const [ah, am] = (actual || "").split(":").map(Number);
+      currentTrip.delay[key] = {
+        plannedTime: planned, actualTime: actual,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+      return {
+        shortName: loc.extId ? "DB:" + loc.extId : "DB:x" + idx,
+        name: loc.name || "?", time: actual, isArr,
+        status: (p.dTimeR || p.aTimeR) ? "PREDICTED" : "PLANNED",
+        seq: idx, key
+      };
+    });
+    currentTrip.loading = false;
+  } catch (e) {
+    currentTrip.loading = false;
+    currentTrip.error = true;
+  }
+}
+
+// ---------- Abfahrtsdaten ----------
+const depCache = new Map(); // sn -> deps (bis globaler Reset)
+async function getDepartures(sn) {
+  if (depCache.has(sn)) return depCache.get(sn);
+  if (isDB(sn)) {
+    try {
+      const r = await dbDepartures(sn);
+      if (!r) return null;
+      depCache.set(sn, r.deps);
+      dbPlatformCache.set(sn, r.platforms);
+      return r.deps;
+    } catch (e) { return null; }
+  }
+  try {
+    const res = await apiFetch("kvg", DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(sn)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const deps = (data.actual || []).map(d => ({
+      tripId: d.tripId, line: d.patternText, direction: d.direction,
+      plannedTime: d.plannedTime, actualTime: d.actualTime,
+      actualRelativeTime: d.actualRelativeTime, status: d.status,
+      alerts: d.generalAlerts || []
+    }));
+    depCache.set(sn, deps);
+    return deps;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---------- Sichtbarkeits-Steuerung ----------
+const stopViews = new Map(); // sn -> {stop, meters, fetchTs, deps, platforms, fetched, reloading}
+function viewOf(sn) {
+  if (!stopViews.has(sn)) {
+    const stop = stops.find(s => s.shortName === sn);
+    if (!stop) return null;
+    stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false });
+  }
+  return stopViews.get(sn);
+}
+async function enrichRow(stop, force) {
+  const v = viewOf(stop.shortName);
+  if (!v) return;
+  if (!v.meters || force) {
+    const m = await walkMeters(stop);
+    if (m != null && (!v.meters || Math.abs(v.meters - m) / Math.max(v.meters, 1) > 0.15)) v.meters = m;
+    else if (m != null && !v.meters) v.meters = m;
+  }
+  if (!v.fetched) {
+    v.reloading = true;
+    const [deps, platforms] = await Promise.all([getDepartures(stop.shortName), loadPlatforms(stop.shortName)]);
+    v.deps = deps; v.platforms = platforms;
+    v.fetched = !!deps; v.fetchTs = Date.now();
+    v.reloading = false;
+  }
+}
+
+function renderViews() {
+  if (sugBox.hidden) return;
+  for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
+}
+
+// Nur diese Station: neue Abfrage (Auto-Cooldown 15 s)
+async function refetchStop(sn, manual) {
+  const v = viewOf(sn);
+  if (!v) return;
+  const now = Date.now();
+  if (v.reloading) return;
+  // Auto-Aktualisierung mit Cooldown, damit Soll/Ist laufend frisch bleiben
+  if (!manual && now - (v.lastAuto || 0) < 40000) return;
+  v.lastAuto = now;
+  v.reloading = true;
+  renderViews();
+  depCache.delete(sn);
+  const [deps, platforms] = await Promise.all([getDepartures(sn), loadPlatforms(sn)]);
+  v.deps = deps; v.platforms = platforms;
+  v.fetched = !!deps; v.fetchTs = Date.now();
+  v.reloading = false;
+  renderViews();
+  renderPanels();
+}
+
+// ---------- Buszeilen rendern ----------
+function busLinesHTML(v) {
+  if (!v || !v.deps) return [];
+  const ageSec = (Date.now() - v.fetchTs) / 1000;
+  const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
+  const out = [];
+  for (const d of v.deps) {
+    const rel = d.actualRelativeTime - ageSec;
+    const losMin = Math.round((rel - walkSec) / 60);
+    if (losMin < -2) continue;   // mehr als 2 Minuten abgefahren: nicht mehr anzeigen
+    const plat = v.platforms && v.platforms[d.tripId];
+    const cls = losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed";
+    const now = new Date();
+    const t = new Date(now.getTime() + rel * 1000);
+    const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+    const text = d.direction;
+    const bLink = escapeHtml(v.stop.shortName) + "~" + escapeHtml(d.tripId);
+    out.push({
+      html: '<div class="' + cls + '" data-bus="' + bLink + '">' +
+        '<span class="dl blink" data-buslink="' + bLink + '">' + escapeHtml(d.line) + '</span>' +
+        (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
+        '<span class="mqwrap"><span class="mqi blink" data-buslink="' + bLink + '">' + escapeHtml(text) + "</span></span>" +
+        '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>",
+      losMin
+    });
+  }
+  return out;
+}
+
+// Sichtbare Zeile im Suchergebnis aktualisieren
+function renderView(sn, el) {
+  const v = stopViews.get(sn);
+  if (!v) return;
+  const meta = el.querySelector(".smeta");
+  if (v.meters && meta) {
+    const walkMin = Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60));
+    const pre = isEst(sn) ? "~" : "";
+    const newText = pre + formatDist(v.meters) + " · " + pre + walkMin + " min";
+    if (meta.textContent !== newText) meta.textContent = newText;
+  }
+  const info = el.querySelector(".rowinfo");
+  if (info) {
+    if (v.reloading) {
+      info.className = "rowinfo dim";
+      info.textContent = "wird aktualisiert …";
+    } else if (!v.fetched) {
+      info.className = "rowinfo dim";
+      info.textContent = "Daten werden geladen …";
+    } else if (v.deps && v.deps.length) {
+      const lines = busLinesHTML(v);
+      // alle Abfahrten länger als 2 Minuten weg: Station neu laden (max. alle 30 s)
+      if (!lines.length) {
+        info.className = "rowinfo dim";
+        info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
+        if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
+        return;
+      }
+      const newHTML = lines.map(l => l.html).join("");
+      // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
+      if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
+      if (info.dataset.last !== newHTML) {
+        info.dataset.last = newHTML;
+        info.className = "rowinfo";
+        info.innerHTML = newHTML;
+        marqueeify(info);
+      }
+    } else if (v.fetched) {
+      info.className = "rowinfo dim";
+      info.textContent = "keine Abfahrten in den nächsten Minuten";
+    }
+  }
+}
+
+// Sichtbare Zeilen finden & befüllen (einmaliger Fetch bei erster Sichtbarkeit)
+let enrichTimer = null;
+function enrichVisible(force) {
+  clearTimeout(enrichTimer);
+  enrichTimer = setTimeout(() => {
+    const box = sugBox;
+    if (box.hidden) return;
+    const rows = [...box.querySelectorAll("div[data-sn]")];
+    for (const el of rows) {
+      const r = el.getBoundingClientRect();
+      const visible = r.bottom > -60 && r.top < (innerHeight || 800) + 60;
+      if (!visible) continue;
+      const sn = el.dataset.sn;
+      const stop = stops.find(s => s.shortName === sn);
+      if (!stop) continue;
+      const v = viewOf(sn);
+      if (v && v.meters && !force) { renderView(sn, el); continue; }
+      enrichRow(stop, false).then(() => renderView(sn, el));
+    }
+  }, 60);
+}
+sugBox.addEventListener("scroll", () => enrichVisible(false));
+window.addEventListener("resize", () => enrichVisible(false));
+
+// ---------- 15-Sekunden-Ticker (Rechnen + Positionsverfolgung, keine Regel-Abrufe) ----------
+setInterval(() => {
+  // Standort geändert (GPS bewegt oder Adresse gewechselt)? -> Liste leeren & neu sortieren
+  const pos = getPos();
+  if (pos && (!lastSortPos ||
+      Math.abs(lastSortPos.lat - pos.lat) > 0.0001 ||
+      Math.abs(lastSortPos.lon - pos.lon) > 0.0001)) {
+    positionReset();
+  }
+  if (!sugBox.hidden) {
+    for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
+  }
+  if (stationPanel && !stationPanel.hidden) renderStationPanel();
+  if (busPanel && !busPanel.hidden) renderBusPanel();
+  alarmTick();
+}, TICK_MS);
+
+// ---------- Globaler Aktualisieren-Knopf ----------
+const refreshBtn = document.getElementById("refreshBtn");
+refreshBtn.addEventListener("click", refreshNow);
+function refreshNow() {
+  depCache.clear();
+  stopViews.clear();
+  enrichVisible(true);
+  renderPanels();
+}
+
+// ---------- Lauftext für überlaufende Zeilen ----------
+function marqueeify(container) {
+  const els = container.querySelectorAll(".mqi");
+  for (const el of els) {
+    if (el.dataset.mq) continue;
+    requestAnimationFrame(() => {
+      const parent = el.parentElement;   // .mqwrap: nur die Richtung läuft,
+      if (!parent) return;                // Linie/Steig und Zeit bleiben fest
+      const maxW = parent.clientWidth - parseFloat(getComputedStyle(parent).paddingLeft || 0);
+      const w = el.scrollWidth;
+      if (w <= maxW || w === 0) return;   // passt: kein Lauftext
+      el.dataset.mq = "1";
+      const overflow = w - maxW + 8;
+      const visibleChars = Math.max(Math.round(maxW / (w / (el.textContent.length || 1))), 4);
+      const hold = Math.max(visibleChars * 0.05, 1.2);        // Verweildauer links/rechts
+      const run = overflow / 40;                               // Laufzeit bei 40 px/s
+      const total = hold + run + hold;
+      el.animate([
+        { transform: "translateX(0)", offset: 0 },
+        { transform: "translateX(0)", offset: hold / total },
+        { transform: "translateX(-" + overflow + "px)", offset: (hold + run) / total },
+        { transform: "translateX(-" + overflow + "px)", offset: 1 }
+      ], { duration: total * 1000, iterations: Infinity });
+    });
+  }
+}
+
+// ---------- Schriftgrößen-Regler ----------
+const fontSlider = document.getElementById("fontSlider");
+fontSlider.addEventListener("input", () => {
+  // zoom skaliert die gesamte App einheitlich (auch px-Größen), nicht nur einzelne Texte
+  document.body.style.zoom = String(Number(fontSlider.value));
+  try { localStorage.setItem("kvg-font", fontSlider.value); } catch (e) {}
+});
+try {
+  const saved = localStorage.getItem("kvg-font");
+  if (saved) {
+    fontSlider.value = saved;
+    document.body.style.zoom = String(Number(saved));
+  }
+} catch (e) {}
+
+// ---------- Sonstiges ----------
+function setStatus(t) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = t;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+setStatus(stops.length + " Haltestellen bereit");
+renderFavs();
+</script>
+</body>
+</html>
