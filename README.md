@@ -5,6 +5,12 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v0.2.1** – Bugfix Zug-Zeiten: die relative Zeit der DB-Züge wurde in Minuten
+statt Sekunden weitergerechnet, dadurch waren angezeigte Abfahrtszeiten
+fast identisch; jetzt korrekt. Bahnhof Kiel Suchsdorf ergänzt. Farbcodierung
+im Fahrtverlauf: 0m grün, −Xm blau, +Xm rot (Badge bestätigt erfolgreiche
+Einzelabfrage einer Haltestelle). SEV-Liniennamen bereinigt ("SEVde:NA" → "SEV").
+
 **v0.2.0** – Fahrtverlauf im DB-Navigator-Stil: vertikale Route mit
 Haltepunkten, Spalten "Gep." (Soll) und "Aktuell" (Ist) je Haltestelle,
 Verspätungs-Badge (+Xm/−Xm/pünktlich), aktuelle Position hervorgehoben,
