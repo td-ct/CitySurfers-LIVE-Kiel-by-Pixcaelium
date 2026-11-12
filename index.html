@@ -161,10 +161,15 @@ type: "text/html"
   .trip .trow.done { color: #475569; }
   .trip .ttime { flex-shrink: 0; font-weight: 600; min-width: 48px; }
   .trip .trow.done .ttime { text-decoration: line-through; }
-  .trip .tdelay { flex-shrink: 0; font-size: 0.85rem; min-width: 52px; }
+  .trip .ttime.late { color: #f87171; }
+  .trip .ttime.early { color: #4ade80; }
+  .trip .tdelay { flex-shrink: 0; font-size: 0.8rem; font-weight: 600; min-width: 40px; }
   .trip .tdelay.up { color: #f87171; }
   .trip .tdelay.down { color: #4ade80; }
   .trip .tdelay.ok { color: #64748b; }
+  .trip .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
+    font-size: 0.8rem; padding: 0 2px; color: #7dd3fc; }
+  .trip .lupe:hover { transform: scale(1.2); }
   .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 </style>
 </head>
@@ -1107,14 +1112,18 @@ function tripSectionHTML() {
     const s = tstops[i];
     const key = s.shortName + "|" + currentTrip.tripId;
     const dl = currentTrip.delay[key];
-    let delayTxt = "", delayCls = "";
+    let timeCls = "", delayTxt = "", delayCls = "";
     if (dl && dl.delayMin != null) {
+      // Zeit bleibt unverändert, wird aber gefärbt: rot = später als Plan, grün = früher/pünktlich
+      timeCls = dl.delayMin > 0 ? " late" : " early";
       delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
-      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + " min" : dl.delayMin < 0 ? dl.delayMin + " min" : "pünktlich";
+      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + "m" : dl.delayMin < 0 ? dl.delayMin + "m" : "pünktlich";
     }
     html += '<div class="trow' + (i <= done ? " done" : "") + '">' +
-      '<span class="ttime">' + escapeHtml(s.time || "") + "</span>" +
-      '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>" +
+      '<span class="ttime' + timeCls + '">' + escapeHtml(s.time || "") + "</span>" +
+      (delayTxt ? '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>" : "") +
+      '<button class="lupe" data-tripstop="' + escapeHtml(s.shortName) + "|" + escapeHtml(currentTrip.tripId) +
+        '" title="Abfahrt dieser Station neu prüfen">🔍</button>' +
       '<span class="tname">' + (i === 0 ? "▶ " : "") + escapeHtml(s.name) + "</span></div>";
   }
   html += "</div>";
@@ -1143,11 +1152,48 @@ stationPanel.addEventListener("click", e => {
 busPanel.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const tripstop = e.target.closest("[data-tripstop]");
+  if (tripstop) {
+    const [ssn, stid] = tripstop.dataset.tripstop.split("|");
+    checkTripStop(ssn, stid);
+    return;
+  }
   const tripref = e.target.closest("[data-tripref]");
   if (tripref) { selectTrip(currentBus.sn, tripref.dataset.tripref, true); return; }
   const ref = e.target.closest("[data-ref]");
   if (ref) refetchStop(ref.dataset.ref, true);
 });
+
+// Einzelne Station eines Fahrtverlaufs per Lupe neu prüfen (ignoriert den Cache)
+async function checkTripStop(sn, tripId) {
+  if (!currentTrip || currentTrip.tripId !== tripId) return;
+  const key = sn + "|" + tripId;
+  tripDelayCache.delete(key);
+  try {
+    const res = await fetch(DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(sn)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === tripId);
+      if (d) {
+        const [ph, pm] = (d.plannedTime || "").split(":").map(Number);
+        const [ah, am] = (d.actualTime || d.plannedTime || "").split(":").map(Number);
+        const info = {
+          plannedTime: d.plannedTime, actualTime: d.actualTime,
+          delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+            ? (ah * 60 + am) - (ph * 60 + pm) : null,
+          ts: Date.now()
+        };
+        tripDelayCache.set(key, info);
+        currentTrip.delay[key] = info;
+      }
+    }
+  } catch (e) {}
+  if (currentTrip && currentTrip.tripId === tripId) renderBusPanel();
+}
 
 // ---------- Favoriten ----------
 function renderFavs() {
