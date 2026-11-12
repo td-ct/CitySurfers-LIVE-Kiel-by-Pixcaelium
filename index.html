@@ -109,6 +109,9 @@
   .bl .plat { color: #94a3b8; flex-shrink: 0; font-size: 0.9rem; }
   .bl .mqwrap { flex: 1 1 auto; overflow: hidden; white-space: nowrap; min-width: 30px; }
   .bl .btime { flex-shrink: 0; font-size: 0.95rem; }
+  .bl .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
+    color: #4d8fd6; font-size: 0.95rem; padding: 0 2px; }
+  .bl .lupe:hover { transform: scale(1.2); }
   .bl.soon { color: #fbbf24; }
   .bl.missed { color: #f87171; }
 
@@ -146,6 +149,20 @@
   footer details.legal p { font-size: 0.92rem; line-height: 1.45; margin: 8px 0; }
   footer details.legal .dim { color: #94a3b8; }
   footer details.legal a { color: #4d8fd6; }
+
+  /* Fahrtverlauf (Lupe) */
+  .trip { margin-top: 10px; }
+  .trip .thead { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .trip .trow { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px;
+    border-bottom: 1px solid #0b1222; font-size: 1rem; }
+  .trip .trow.done { color: #475569; }
+  .trip .ttime { flex-shrink: 0; font-weight: 600; min-width: 48px; }
+  .trip .trow.done .ttime { text-decoration: line-through; }
+  .trip .tdelay { flex-shrink: 0; font-size: 0.85rem; min-width: 52px; }
+  .trip .tdelay.up { color: #f87171; }
+  .trip .tdelay.down { color: #4ade80; }
+  .trip .tdelay.ok { color: #64748b; }
+  .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
@@ -313,6 +330,7 @@ const STOPS_URL   = API_BASE + "/geoserviceDispatcher/services/stopinfo/stops" +
   "?top=324000000&bottom=-324000000&left=-648000000&right=648000000";
 const PLATFORMS_URL = API_BASE + "/geoserviceDispatcher/services/stopinfo/stopPoints";
 const DEPART_URL  = API_BASE + "/services/passageInfo/stopPassages/stop";
+const TRIP_URL    = API_BASE + "/services/tripInfo/tripPassages";
 const STEIG_URL   = API_BASE + "/services/passageInfo/stopPassages/stopPoint";
 const FOOT_ROUTER = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
 const PHOTON      = "https://photon.komoot.io/api/";
@@ -337,6 +355,21 @@ let favs = JSON.parse(localStorage.getItem("kvg-favs") || "[]");
 let searchIndex = -1;
 
 function getPos() { return addrPos || myPos; }
+
+// Bei neuem Standort (GPS-Update, Adresse, Favorit):
+// Liste leeren, neu nach Entfernung sortieren, Gehweg-Distanzen neu berechnen
+let lastSortPos = null;
+function positionReset(reason) {
+  const pos = getPos();
+  if (!pos) return;
+  lastSortPos = { lat: pos.lat, lon: pos.lon };
+  sortStops();
+  for (const v of stopViews.values()) v.meters = null;   // Gehzeiten neu berechnen
+  if (!sugBox.hidden) {
+    if (!search.value.trim()) updateSuggestions();
+    else enrichVisible(false);
+  }
+}
 function sortStops() {
   const pos = getPos();
   if (pos) stops.sort((a, b) => dist(pos, a) - dist(pos, b));
@@ -421,13 +454,9 @@ function onPos(pos) {
     return;
   }
   if (firstFix || moved) {
-    sortStops();
+    positionReset();
     setLocNote("GPS aktiv · Positionen kommen laufend (±" + Math.round(myPos.accuracy) +
       " m) · " + stops.length + " Haltestellen nach Entfernung.");
-    if (!sugBox.hidden) {
-      if (!search.value.trim()) updateSuggestions();
-      else enrichVisible(false);   // auch während der Suche Gehzeiten aktualisieren
-    }
   }
 }
 
@@ -579,9 +608,8 @@ function selectAddr(i) {
   addrSearch.value = "";
   renderAddrChip();
   gpsCtl.classList.add("disabled");
-  sortStops();
+  positionReset();
   setLocNote("Adresse aktiv: " + addrPos.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
-  if (!sugBox.hidden) updateSuggestions();
   renderPanels();
 }
 
@@ -589,7 +617,7 @@ function clearAddr() {
   addrPos = null;
   renderAddrChip();
   gpsCtl.classList.remove("disabled");
-  sortStops();
+  positionReset();
   if (gpsState === "on" && myPos) {
     setLocNote("GPS aktiv · ±" + Math.round(myPos.accuracy) + " m · Haltestellen nach GPS-Entfernung.");
   } else if (myPos) {
@@ -692,9 +720,8 @@ addrFavPanel.addEventListener("click", e => {
     addrSearch.value = f.name;   // über das Adressfeld wieder aufgerufen
     renderAddrChip();
     gpsCtl.classList.add("disabled");
-    sortStops();
+    positionReset();
     setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
-    if (!sugBox.hidden) updateSuggestions();
     renderPanels();
     addrFavPanel.hidden = true;
   }
@@ -811,6 +838,13 @@ search.addEventListener("keydown", e => {
 sugBox.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); return; }
+  const trip = e.target.closest("[data-trip]");
+  if (trip) {
+    const [tSn, tId] = trip.dataset.trip.split("|");
+    selectBus(tSn, tId);
+    selectTrip(tSn, tId);
+    return;
+  }
   const ref = e.target.closest("[data-ref]");
   if (ref) { refetchStop(ref.dataset.ref, true); return; }
   const bus = e.target.closest("[data-bus]");
@@ -842,6 +876,7 @@ function selectStop(shortName) {
 
 function selectBus(sn, tripId) {
   currentBus = { sn, tripId };
+  if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
   const stop = stops.find(s => s.shortName === sn);
   if (stop) currentStop = stop;
   renderPanels();
@@ -879,8 +914,8 @@ function renderStationPanel() {
       '" title="Diese Haltestelle neu abfragen">↻</button></div>';
   if (v && v.fetched) {
     const lines = busLinesHTML(v);
-    if (lines.length && !lines.some(l => l.losMin >= -5)) {
-      // alle abgefahren: wie in der Liste automatisch neu abfragen
+    if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000) {
+      // alle Abfahrten länger als 2 Minuten weg: automatisch neu abfragen
       refetchStop(currentStop.shortName, false);
       return;
     }
@@ -904,9 +939,17 @@ function renderBusPanel() {
   const stop = stops.find(s => s.shortName === currentBus.sn);
   const v = stopViews.get(currentBus.sn);
   const pos = getPos();
-  const meta = v
-    ? formatDist(v.meters) + " · " + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min"
-    : (pos && stop ? formatDist(dist(pos, stop)) : "");
+  let meta;
+  if (v && v.meters) {
+    const pre = isEst(currentBus.sn) ? "~" : "";
+    meta = pre + formatDist(v.meters) + " · " + pre +
+      Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min";
+  } else if (pos && stop) {
+    const air = dist(pos, stop) * 1.3;
+    meta = "~" + formatDist(air) + " · ~" + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)";
+  } else {
+    meta = "";
+  }
   let inner =
     '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
@@ -916,26 +959,29 @@ function renderBusPanel() {
     const ageSec = (Date.now() - v.fetchTs) / 1000;
     const dep = v.deps.find(d => d.tripId === currentBus.tripId);
     if (dep) {
-      const walkSec = v.meters / (WALK_SPEED_KMH * 1000 / 3600);
+      const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
       const rel = dep.actualRelativeTime - ageSec;
       const losMin = Math.round((rel - walkSec) / 60);
       const plat = v.platforms && v.platforms[dep.tripId];
       const live = dep.status === "PREDICTED" || dep.status === "STOPPING";
       const [ph, pm] = (dep.plannedTime || "").split(":").map(Number);
       const [ah, am] = (dep.actualTime || dep.plannedTime || "").split(":").map(Number);
-      const delayMin = isFinite(ah) ? (ah * 60 + am) - (ph * 60 + pm) : 0;
+      const delayMin = (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+        ? (ah * 60 + am) - (ph * 60 + pm) : 0;
       const colorCls = losMin > 3 ? "" : (losMin >= 0 ? " soon" : " missed");
       const now = new Date();
       const depClock = (() => {
         const t = new Date(now.getTime() + rel * 1000);
         return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
       })();
-      inner += '<div class="busdetail"><span class="dl">' + escapeHtml(dep.patternText) +
+      inner += '<div class="busdetail"><span class="dl">' + escapeHtml(dep.line) +
         '</span> <span class="big">→ ' + escapeHtml(dep.direction) + "</span><br>" +
         (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
         "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
         (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")<br>" +
-        'Fußweg <b>' + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min</b> · " +
+        (v.meters
+          ? 'Fußweg <b>' + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min</b> · "
+          : "") +
         '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
         "los in " + losMin + " min</span></div>";
     } else {
@@ -944,6 +990,7 @@ function renderBusPanel() {
   } else {
     inner += '<small class="rowinfo dim">Daten werden geladen …</small>';
   }
+  inner += tripSectionHTML();
   if (busPanel.dataset.last !== inner) {
     busPanel.dataset.last = inner;
     busPanel.innerHTML = inner;
@@ -952,10 +999,136 @@ function renderBusPanel() {
   busPanel.hidden = false;
 }
 
+// ---------- Fahrtverlauf (Lupe) ----------
+let currentTrip = null;   // { tripId, sn, stops:[{shortName,name,time,status,seq}], route, direction, delay:{}, progressIdx, loading }
+const tripDelayCache = new Map();   // "sn|tripId" -> { plannedTime, actualTime, delayMin, ts }
+
+async function selectTrip(sn, tripId, force) {
+  if (currentTrip && currentTrip.tripId === tripId && !force) {
+    // erneut angeklickt: nur Ansicht öffnen
+    renderBusPanel();
+    return;
+  }
+  currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, progressIdx: -1, loading: true };
+  if (force) {
+    for (const k of [...tripDelayCache.keys()]) {
+      if (k.endsWith("|" + tripId)) tripDelayCache.delete(k);
+    }
+  }
+  renderBusPanel();
+  try {
+    const res = await fetch(TRIP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tripId=" + encodeURIComponent(tripId)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    currentTrip.stops = (data.actual || []).map(p => ({
+      shortName: p.stop.shortName, name: p.stop.name,
+      time: p.actualTime, status: p.status, seq: Number(p.stop_seq_num) || 0
+    }));
+    currentTrip.route = data.routeName || "";
+    currentTrip.direction = data.directionText || "";
+    currentTrip.loading = false;
+    await loadTripDelays();
+  } catch (e) {
+    currentTrip.loading = false;
+    currentTrip.error = true;
+  }
+  if (currentBus && currentBus.tripId === tripId) renderBusPanel();
+}
+
+// Verspätung pro Station über die LIVE-Auskunft an der jeweiligen Station (Soll/Ist derselben Fahrt)
+async function loadTripDelays() {
+  const tripId = currentTrip.tripId;
+  await Promise.all((currentTrip.stops || []).map(async s => {
+    const key = s.shortName + "|" + tripId;
+    const c = tripDelayCache.get(key);
+    if (c && Date.now() - c.ts < 120000) { currentTrip.delay[key] = c; return; }
+    try {
+      const res = await fetch(DEPART_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "stop=" + encodeURIComponent(s.shortName)
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === tripId);
+      if (!d) return;    // Fahrt wird an dieser Station (noch) nicht angezeigt
+      const [ph, pm] = (d.plannedTime || "").split(":").map(Number);
+      const [ah, am] = (d.actualTime || d.plannedTime || "").split(":").map(Number);
+      const info = {
+        plannedTime: d.plannedTime, actualTime: d.actualTime,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+      tripDelayCache.set(key, info);
+      currentTrip.delay[key] = info;
+    } catch (e) {}
+  }));
+}
+
+function tripSectionHTML() {
+  if (!currentTrip || !currentBus || currentTrip.tripId !== currentBus.tripId) return "";
+  let html = '<div class="trip">';
+  if (currentTrip.loading) {
+    html += '<small class="rowinfo dim">Fahrtverlauf wird geladen …</small></div>';
+    return html;
+  }
+  if (currentTrip.error || !currentTrip.stops || !currentTrip.stops.length) {
+    html += '<small class="rowinfo dim">Fahrtverlauf gerade nicht verfügbar.</small></div>';
+    return html;
+  }
+  const pos = getPos();
+  const stops = currentTrip.stops;
+  // Fortschritt: GPS näher als 75 m an einer Station der Fahrt -> alle bis dahin ausgrauen
+  if (pos) {
+    for (let i = 0; i < stops.length; i++) {
+      const s = stops[i];
+      const stop = stops.find(x => x.shortName === s.shortName);
+      if (!stop) continue;
+      if (dist(pos, stop) < 75) {
+        currentTrip.progressIdx = Math.max(currentTrip.progressIdx, i);
+        break;
+      }
+    }
+  }
+  html += '<div class="thead"><span class="pname">Fahrtverlauf Linie ' +
+    escapeHtml(currentTrip.route) + " → " + escapeHtml(currentTrip.direction) + "</span>" +
+    '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
+      '" title="Fahrtverlauf und Verspätungen neu abfragen">↻</button></div>';
+  const done = currentTrip.progressIdx;
+  for (let i = 0; i < stops.length; i++) {
+    const s = stops[i];
+    const key = s.shortName + "|" + currentTrip.tripId;
+    const dl = currentTrip.delay[key];
+    let delayTxt = "", delayCls = "";
+    if (dl && dl.delayMin != null) {
+      delayCls = dl.delayMin > 0 ? "up" : dl.delayMin < 0 ? "down" : "ok";
+      delayTxt = dl.delayMin > 0 ? "+" + dl.delayMin + " min" : dl.delayMin < 0 ? dl.delayMin + " min" : "pünktlich";
+    }
+    html += '<div class="trow' + (i <= done ? " done" : "") + '">' +
+      '<span class="ttime">' + escapeHtml(s.time || "") + "</span>" +
+      '<span class="tdelay ' + delayCls + '">' + delayTxt + "</span>" +
+      '<span class="tname">' + (i === 0 ? "▶ " : "") + escapeHtml(s.name) + "</span></div>";
+  }
+  html += "</div>";
+  return html;
+}
+
 // Panels-Klicks (↻ und Buslinien)
 stationPanel.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const trip = e.target.closest("[data-trip]");
+  if (trip) {
+    const [tSn, tId] = trip.dataset.trip.split("|");
+    selectBus(tSn, tId);
+    selectTrip(tSn, tId);
+    return;
+  }
   const ref = e.target.closest("[data-ref]");
   if (ref) { refetchStop(ref.dataset.ref, true); return; }
   const bus = e.target.closest("[data-bus]");
@@ -967,6 +1140,8 @@ stationPanel.addEventListener("click", e => {
 busPanel.addEventListener("click", e => {
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const tripref = e.target.closest("[data-tripref]");
+  if (tripref) { selectTrip(currentBus.sn, tripref.dataset.tripref, true); return; }
   const ref = e.target.closest("[data-ref]");
   if (ref) refetchStop(ref.dataset.ref, true);
 });
@@ -1209,6 +1384,7 @@ function busLinesHTML(v) {
   for (const d of v.deps) {
     const rel = d.actualRelativeTime - ageSec;
     const losMin = Math.round((rel - walkSec) / 60);
+    if (losMin < -2) continue;   // mehr als 2 Minuten abgefahren: nicht mehr anzeigen
     const plat = v.platforms && v.platforms[d.tripId];
     const cls = losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed";
     const now = new Date();
@@ -1220,7 +1396,9 @@ function busLinesHTML(v) {
         '<span class="dl">' + escapeHtml(d.line) + '</span>' +
         (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
         '<span class="mqwrap"><span class="mqi">' + escapeHtml(text) + "</span></span>" +
-        '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>",
+        '<span class="btime">' + clock + " · los in " + losMin + " min</span>" +
+        '<button class="lupe" data-trip="' + escapeHtml(v.stop.shortName) + "|" + escapeHtml(d.tripId) +
+          '" title="Fahrtverlauf dieser Fahrt anzeigen">🔍</button></div>',
       losMin
     });
   }
@@ -1248,12 +1426,11 @@ function renderView(sn, el) {
       info.textContent = "Daten werden geladen …";
     } else if (v.deps && v.deps.length) {
       const lines = busLinesHTML(v);
-      // Abgefahrene raus: wenn der letzte Bus weg ist, Station neu laden
-      const reachable = lines.filter(l => l.losMin >= -5);
-      if (!reachable.length) {
+      // alle Abfahrten länger als 2 Minuten weg: Station neu laden (max. alle 30 s)
+      if (!lines.length) {
         info.className = "rowinfo dim";
         info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
-        refetchStop(sn, false);
+        if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
         return;
       }
       const newHTML = lines.map(l => l.html).join("");
@@ -1294,8 +1471,15 @@ function enrichVisible(force) {
 sugBox.addEventListener("scroll", () => enrichVisible(false));
 window.addEventListener("resize", () => enrichVisible(false));
 
-// ---------- 15-Sekunden-Ticker (nur Neu-Berechnung, keine Abrufe) ----------
+// ---------- 15-Sekunden-Ticker (Rechnen + Positionsverfolgung, keine Regel-Abrufe) ----------
 setInterval(() => {
+  // Standort geändert (GPS bewegt oder Adresse gewechselt)? -> Liste leeren & neu sortieren
+  const pos = getPos();
+  if (pos && (!lastSortPos ||
+      Math.abs(lastSortPos.lat - pos.lat) > 0.0001 ||
+      Math.abs(lastSortPos.lon - pos.lon) > 0.0001)) {
+    positionReset();
+  }
   if (!sugBox.hidden) {
     for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
   }
