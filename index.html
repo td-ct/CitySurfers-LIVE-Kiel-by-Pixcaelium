@@ -422,6 +422,7 @@
     <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
     <div class="suggestions" id="suggestions" hidden></div>
   </div>
+  <div class="chips" id="stopChip"></div>
 
   <div id="tabsbar" hidden></div>
   <div class="panel" id="stationPanel" hidden></div>
@@ -1377,8 +1378,50 @@ function renderAddrChip() {
   addrChip.innerHTML =
     '<span class="chip ok" title="Diese Adresse ist als Standort aktiv">✓ ' +
     escapeHtml(addrPos.label) + "</span>" +
+    '<a class="chip" target="_blank" rel="noopener" id="addrRoute" href="' + routeUrlG(myPos, addrPos) +
+      '" title="Weg von der GPS-Position bzw. dem letzten bekannten Standort zu dieser Adresse im externen Routing (Google Maps, zu Fuß)">🗺 Route</a>' +
     '<span class="chip bad" id="addrClear" title="Adresse abwählen und zu GPS zurückkehren">✗ Adresse abwählen</span>';
   document.getElementById("addrClear").addEventListener("click", clearAddr);
+}
+
+// ---------- Externes Routing & Fußweg zwischen zwei Punkten ----------
+// Google-Maps-Weglink (zu Fuß): Start = aktuelle Position (falls vorhanden),
+// Ziel = angegebener Punkt; ohne Start nur das Ziel.
+function routeUrlG(from, to) {
+  const o = from ? "origin=" + from.lat + "," + from.lon + "&" : "";
+  return "https://www.google.com/maps/dir/?api=1&" + o +
+    "destination=" + to.lat + "," + to.lon + "&travelmode=walking";
+}
+// OSRM-Fußweg-Routing zwischen zwei Punkten (ohne Cache, für Dialoge):
+// liefert { m, est } bzw. null. Luftlinie × 1,3 als Schätzung, wenn der
+// Router nicht antwortet.
+async function footRouteM(a, b) {
+  if (!a || !b) return null;
+  try {
+    const url = FOOT_ROUTER + "/" + a.lon + "," + a.lat + ";" + b.lon + "," + b.lat + "?overview=false";
+    const res = await apiFetch("osrm", url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.routes && data.routes[0]) return { m: data.routes[0].distance, est: false };
+    }
+  } catch (e) {}
+  return null;
+}
+function footMin(m) { return m == null ? null : Math.ceil(m / (WALK_SPEED_KMH * 1000 / 60)); }
+
+// ---------- Ausgewählte Station: Chip-Zeile wie bei der Adresse ----------
+const stopChip = document.getElementById("stopChip");
+function renderStopChip() {
+  const t = tabs[activeTab];
+  const s = t && stops.find(x => x.shortName === t.sn);
+  if (!s) { stopChip.innerHTML = ""; return; }
+  stopChip.innerHTML =
+    '<span class="chip ok" title="Diese Station ist ausgewählt">✓ Station ' + escapeHtml(s.name) + "</span>" +
+    '<a class="chip" target="_blank" rel="noopener" href="' + routeUrlG(getPos(), s) +
+      '" title="Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)">🗺 Route</a>' +
+    '<span class="chip bad" id="stopClear" title="Reiter dieser Station schließen (Wecker des Reiters werden mitgelöscht)">✗ Station abwählen</span>';
+  const c = document.getElementById("stopClear");
+  if (c) c.addEventListener("click", () => closeTab(activeTab));
 }
 
 // ---------- Adressfavoriten (oben rechts) ----------
@@ -1677,7 +1720,13 @@ function updateSuggestions() {
   const q = search.value.trim().toLowerCase();
   let hits = q.length ? searchHits(q) : stops;
   if (!hits.length) { sugBox.hidden = true; return; }
-  if (pos && !q.length) {
+  if (pos && q.length) {
+    // Suchtreffer: Haltestellenfavoriten zuerst (als ⭐ markiert), danach nach
+    // Entfernung zur aktuellen bzw. zuletzt bekannten Position
+    hits = hits.slice().sort((a, b) =>
+      (favs.includes(a.shortName) ? 0 : 1) - (favs.includes(b.shortName) ? 0 : 1) ||
+      dist(pos, a) - dist(pos, b));
+  } else if (pos) {
     hits = hits.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
   }
   sugHits = hits;
@@ -1770,6 +1819,7 @@ function tabAlarmCount(sn) {
   return n;
 }
 function renderTabs() {
+  renderStopChip();
   if (!tabs.length) { tabsbar.hidden = true; tabsbar.innerHTML = ""; return; }
   tabsbar.hidden = false;
   tabsbar.innerHTML = tabs.map((t, i) => {
@@ -2589,11 +2639,15 @@ async function fhScan() {
         // 3) fährt die Fahrt an einem Ziel-Favoriten vorbei?
         for (const tgt of targets) {
           if (fhMuted(tgt.cfg, route)) continue;
-          const hit = tStops.some(ts2 => {
+          // günstigste Station der Fahrt am Ziel: nächste im Ziel-Radius
+          let bestS = null, bestD = Infinity;
+          for (const ts2 of tStops) {
             const s2 = stops.find(x => x.shortName === ts2.sn);
-            return s2 && dist(tgt, s2) <= FH_TARGET_RADIUS_M;
-          });
-          if (!hit) continue;
+            if (!s2) continue;
+            const d2 = dist(tgt, s2);
+            if (d2 <= FH_TARGET_RADIUS_M && d2 < bestD) { bestD = d2; bestS = s2; }
+          }
+          if (!bestS) continue;
           // 4) Live-Prüfung: Abfahrt noch da? Ist-Zeit holen
           depCache.delete(st.shortName);
           const live = await getDepartures(st.shortName) || [];
@@ -2604,7 +2658,7 @@ async function fhScan() {
           const seenKey = tgt.id + "|" + route + "|" + d.tripId + "|" + st.shortName;
           if (fhSeen.has(seenKey)) continue;
           fhSeen.set(seenKey, (aMin + 5) * 60000 + now.setHours(0, 0, 0, 0)); // bis kurz nach Abfahrt
-          fhNotify(tgt, st, ld, aMin);
+          fhNotify(tgt, st, ld, aMin, bestS);
         }
       }
     }
@@ -2635,22 +2689,39 @@ function fhSignal(cfg) {
   if (cfg.tone !== false) alarmBeep(cfg.vol == null ? 1 : cfg.vol, cfg.snd || "notif", 5);
   if (cfg.vib !== false) vibratePattern([3000]);
 }
-function fhNotify(tgt, st, dep, aMin) {
+async function fhNotify(tgt, st, dep, aMin, bestS) {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const losMin = aMin - nowMin;
   const depClock = String(Math.floor(aMin / 60)).padStart(2, "0") + ":" + String(aMin % 60).padStart(2, "0");
+  // Abstände: eigene Position -> Abfahrtsstation und Zielstation -> Ziel.
+  // Luftlinie sofort, zusätzlich echtes Wegerouting (OSRM); die Gehzeit zur
+  // Station wird von der Wartezeit abgezogen ("los in x Minuten" = losgehen).
+  const pos = getPos();
+  const air1 = pos ? dist(pos, st) : null;
+  const air2 = bestS ? dist(bestS, tgt) : null;
+  const r1 = pos ? await footRouteM(pos, st) : null;
+  const r2 = bestS ? await footRouteM(bestS, tgt) : null;
+  const m1 = r1 ? r1.m : (air1 != null ? air1 * 1.3 : null);   // Fallback: Luftlinie × 1,3
+  const m2 = r2 ? r2.m : (air2 != null ? air2 * 1.3 : null);
+  const w1 = footMin(m1), w2 = footMin(m2);
+  const losMin = (aMin - nowMin) - (w1 || 0);
   const title = "🏠 Mögliche Fahrt nach " + tgt.name;
   const lines = '<div class="bl"><span class="dl blink">' + escapeHtml(dep.line) + "</span>" +
     '<span class="mqwrap"><span class="mqi">' + escapeHtml(dep.direction) + "</span></span></div>" +
-    '<div class="rowinfo">' + escapeHtml(st.name) + " <b>" + depClock + "</b> – los in " +
-    (losMin > 0 ? losMin + " Minuten" : "jetzt") + "</div>";
+    '<div class="rowinfo">' + escapeHtml(st.name) + " <b>" + depClock + "</b> – " +
+    (losMin > 0 ? "in " + losMin + " Minuten losgehen" : "jetzt losgehen!") +
+    (w1 != null ? " (Fußweg " + w1 + " min" + (r1 ? "" : ", geschätzt") + ")" : "") + "</div>" +
+    '<div class="rowinfo">🚶 Zur Abfahrtsstation: ' + formatDist(air1 || 0) + " Luftlinie" +
+      (m1 != null ? " · " + formatDist(m1) + " Weg (~" + w1 + " min" + (r1 ? "" : ", geschätzt") + ")" : "") + "</div>" +
+    (bestS ? '<div class="rowinfo">🎯 ' + escapeHtml(bestS.name) + " → Ziel: " + formatDist(air2 || 0) + " Luftlinie" +
+      (m2 != null ? " · " + formatDist(m2) + " Weg (~" + w2 + " min" + (r2 ? "" : ", geschätzt") + ")" : "") + "</div>" : "");
   // Android-System-Benachrichtigung (erscheint in der Nachrichtenliste)
   if (window.KvgNative) {
     if (!fhNotifAsked) { fhNotifAsked = true; nativeCall("requestNotifPerm"); }
     nativeCall("notify", "fh" + (tgt.id + dep.tripId + st.shortName), title,
       "Linie " + dep.line + " → " + dep.direction + ", " + st.name + " " + depClock +
-        " – los in " + (losMin > 0 ? losMin + " Min." : "jetzt"), "hinweise");
+        " – " + (losMin > 0 ? "in " + losMin + " Min. losgehen" : "jetzt losgehen") +
+        (w1 != null ? " (Fußweg " + w1 + " min)" : ""), "hinweise");
   }
   fhSignal(tgt.cfg);
   // Dialog mit Mute-Chips im Stil der Abfahrtsanzeigen
