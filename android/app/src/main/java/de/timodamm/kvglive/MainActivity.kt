@@ -353,7 +353,7 @@ class NativeBridge(private val act: Activity) {
             val nm = act.getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
                 val ch = android.app.NotificationChannel(
-                    "weckerliste", "Gestellte Wecker", NotificationManager.IMPORTANCE_DEFAULT)
+                    "weckerliste", "Gestellte Wecker", android.app.NotificationManager.IMPORTANCE_DEFAULT)
                 ch.description = "Uebersicht der gestellten Wecker"
                 ch.setSound(null, null)
                 ch.enableVibration(false)
