@@ -5,6 +5,8 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.10** – Zustands-Export/-Import umfasst jetzt auch die aktuell geöffnete Ansicht: Die Kette aus gewählter Haltestelle und ggf. ausgewählter Bus-/Zuglinie inkl. geöffnetem Fahrtverlauf wird im Zustands-Code mitgesichert und beim Import (z. B. in die Android-App) automatisch wiederhergestellt.
+
 **v1.0.9** – Durchgehendes Läuten: Der Wecker klingelt/vibriert 3 s, pausiert 5 s und wiederholt sich, bis er am ⏰-Symbol gelöscht wird. Gestellte Wecker zeigen ⏰ statt 🔔; Antippen öffnet den Dialog mit „🗑 Wecker löschen“ (beim Läuten beendet der Griff zum ⏰ den Wecker sofort). Der native AlarmReceiver läutet im selben Rhythmus (bei ausgeschaltetem Display), die Seite übernimmt laufende Läut-Ketten via ringingAlarms()-Brücke.
 
 **v1.0.8** – Wecker-Verbesserungen: Im Wecker-Dialog sind jetzt Ton (Wecker/Klingelton/Nachricht) und Lautstärke einstellbar, plus Test-Knopf; die Einstellungen werden gesichert (auch im Zustand-Export). Vibration geht in der App jetzt zusätzlich über die native Brücke (WebView-navigator.vibrate ist unzuverlässig), der AlarmReceiver spielt Klang und Vibration gemäß den Einstellungen (stiller Notification-Channel, Ton über MediaPlayer mit gewählter Lautstärke). Der Schriftgrößen-Regler zoomt die Kopfzeile gegen, sodass der Slider beim Ziehen nicht mehr zuckt.

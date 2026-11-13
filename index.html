@@ -1717,8 +1717,16 @@ function openAlarmDialog(aKey) {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view"];
 function kvgExportState() {
+  // Aktuell geöffnete Ansicht (Kette Haltestelle -> Buslinie -> Fahrtverlauf)
+  // mit in den Export nehmen; sie wird beim Import wiederhergestellt/geöffnet.
+  try {
+    localStorage.setItem("kvg-view", JSON.stringify({
+      sn: currentStop ? currentStop.shortName : null,
+      bus: currentBus ? { sn: currentBus.sn, tripId: currentBus.tripId,
+                          tripOpen: !!currentBus.tripOpen } : null }));
+  } catch (e) {}
   const o = {};
   for (const k of STATE_KEYS) {
     const v = localStorage.getItem(k);
@@ -1746,7 +1754,7 @@ function openStateDialog() {
   wrap.innerHTML =
     '<div class="dlg">' +
     '<div class="dtitle">Zustand übertragen</div>' +
-    '<div class="dlabel">Exportieren (Favoriten, Startadresse, Einstellungen)</div>' +
+    '<div class="dlabel">Exportieren (Favoriten, Startadresse, Einstellungen, geöffnete Haltestelle/Fahrt)</div>' +
     '<textarea class="stata" readonly>' + kvgExportState() + "</textarea>" +
     '<button class="chip stcopy">Code kopieren</button>' +
     '<div class="dlabel">Importieren: Code hier einfügen</div>' +
@@ -2505,6 +2513,29 @@ try {
     addrPos = { lat: ad.lat, lon: ad.lon, label: ad.label };
     renderAddrChip();
     gpsCtl.classList.add("disabled");
+  }
+} catch (e) {}
+
+// Gesicherte Ansicht wiederherstellen: Kette aus Haltestelle und ggf.
+// gewählter Buslinie inkl. Fahrtverlauf öffnen (z. B. nach Zustands-Import).
+try {
+  const sv = JSON.parse(localStorage.getItem("kvg-view") || "null");
+  if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
+    if (sv.bus && sv.bus.tripId) {
+      selectBus(sv.bus.sn, sv.bus.tripId);
+      if (sv.bus.tripOpen) {
+        // Abfahrten der Station abwarten (DB braucht die geplante Zeit der
+        // Fahrt, um den Verlauf eindeutig zuzuordnen), dann Verlauf laden.
+        let tries = 0;
+        const t = setInterval(() => {
+          tries++;
+          if (((viewOf(sv.bus.sn) || {}).deps) || tries > 40) {   // max. ~12 s
+            clearInterval(t);
+            selectTrip(sv.bus.sn, sv.bus.tripId, true);
+          }
+        }, 300);
+      }
+    } else selectStop(sv.sn);
   }
 } catch (e) {}
 
