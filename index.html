@@ -66,6 +66,7 @@
     border: none; background: rgba(0,81,158,0.15); color: #cbd5e1; border-radius: 50%;
     width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
   .addrclr:hover { background: #c0392b; color: #fff; }
+  .stopclr { right: 104px; }
   #addrSearch { padding-right: 36px; }
   #bigAssignDlg { position: fixed; top: 132px; right: 12px; z-index: 84; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px; max-width: 320px; width: 88vw;
@@ -475,6 +476,7 @@
     <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
     <button class="gpsbtn" id="gpsGoBtn" title="GPS-Ortung übernehmen und Haltestellenliste danach sortieren">GPS➜</button>
     <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
+    <button class="addrclr stopclr" id="stopClearBtn" hidden title="Suchfeld leeren – steht die ausgewählte Station drin, wird ihr Reiter geschlossen (mit Wecker-Rückfrage)">✕</button>
     <div class="suggestions" id="suggestions" hidden></div>
   </div>
   <div class="chips" id="stopChip"></div>
@@ -794,7 +796,7 @@ function onPos(pos) {
     }));
   } catch (e) {}
   if (addrPos) {
-    if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✗ hinter der Adresse kehrt zu GPS zurück.");
+    if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✕ im Adressfeld kehrt zum GPS zurück.");
     if (gpsDlgMode === "takeover" && !gpsDlg.hidden && pos.coords.accuracy <= GPS_ACC_AUTOCLOSE_M) { gpsDlg.hidden = true; gpsAdoptDispatch(myPos); }
     return;
   }
@@ -1043,6 +1045,7 @@ accDlgThresh.addEventListener("input", () => {
 // die nächsten Stationen oben nach Abstand einsortieren
 function clearStopSearchOnAddrLogin() {
   search.value = "";
+  updateStopClear();   // ✕ im Haltestellenfeld weg (Feld ist leer)
   if (!sugBox.hidden) { updateSuggestions(); focusFirstRow(sugBox); }
 }
 
@@ -1072,7 +1075,7 @@ function adoptGpsPos(p) {
   positionReset();
   clearStopSearchOnAddrLogin();
   setLocNote("Position übernommen: ±" + Math.round(p.accuracy || 0) +
-    " m · Haltestellen danach sortiert. ✗ kehrt zum Live-GPS zurück.");
+    " m · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum Live-GPS zurück.");
   renderPanels();
 }
 function stopAccWatch() {
@@ -1926,6 +1929,7 @@ sugBox.addEventListener("keydown", handleSugNav);
 let sugTimer = null;
 search.addEventListener("input", () => {
   clearTimeout(sugTimer);
+  updateStopClear();   // ✕ nur zeigen, wenn Text im Feld steht
   sugTimer = setTimeout(updateSuggestions, 120);
 });
 
@@ -2094,6 +2098,7 @@ function selectStop(shortName) {
   if (!stop) return;
   sugBox.hidden = true;
   search.value = stop.name;
+  updateStopClear();   // ✕ im Haltestellenfeld zeigen
   openTab(shortName);   // neuen Reiter öffnen bzw. bestehenden aktivieren
 }
 
@@ -4572,6 +4577,27 @@ document.addEventListener("keydown", e => {
 // ✕ im Adressfeld: Adresse abwählen, zurück zu GPS
 document.getElementById("addrClearBtn").addEventListener("click", clearAddr);
 
+// ✕ im Haltestellen-Suchfeld: Suchtext leeren; steht die Station des aktiven
+// Reiters drin, wird der Reiter geschlossen (mit der bekannten Wecker-Rückfrage).
+function updateStopClear() {
+  const b = document.getElementById("stopClearBtn");
+  if (b) b.hidden = !search.value;
+}
+document.getElementById("stopClearBtn").addEventListener("click", () => {
+  const t = tabs[activeTab];
+  const s = t && stops.find(x => x.shortName === t.sn);
+  const wasStation = !!(s && search.value.trim() === s.name);
+  search.value = "";
+  sugBox.hidden = true;
+  updateStopClear();
+  if (wasStation) {
+    closeTab(activeTab);
+    setLocNote("Station abgewählt – Reiter geschlossen.");
+  } else {
+    setLocNote("Suchfeld geleert.");
+  }
+});
+
 // Taster-Zustand/-Beschriftung initialisieren; Beschriftungen im 15-s-Takt auffrischen
 renderBigToggles();
 renderBigBtns();
@@ -4586,7 +4612,7 @@ alarmTick = function () { _alarmTickPlain(); renderBigBtns(); };
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.1 · Build: 13.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.2 · Build: 13.11.2026</div>
 </div>
 </body>
 </html>
