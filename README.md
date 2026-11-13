@@ -5,7 +5,14 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.7** – App-Fix: In der Gradle-Konfiguration fehlte das Kotlin-Plugin,
+wurde dadurch gar kein Code kompiliert und die APK enthielt eine leere
+classes.dex – die App stürzte sofort nach dem Start ab. Neu:
+`org.jetbrains.kotlin.android` (Root + App-Modul), JVM-Target 17,
+versionCode 7. Bitte alte App deinstallieren und neu installieren (CI
+signiert mit frischem Debug-Key).
 **v1.0.6** – App-Standard-URLs auf das Hosting umgestellt: Seite als
+
 https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html, APK daneben als
 cslk.apk (der relative Download-Link im Wecker-Dialog greift dadurch
 automatisch). "Web-Version übernehmen" schlägt jetzt die eigene Server-URL
