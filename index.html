@@ -44,6 +44,39 @@
   .chip.mini { padding: 1px 6px; font-size: 0.72rem; border-radius: 6px; }
   .chip.mini.dim2 { background: #0b1222; border-color: #1e3a5f; color: #94a3b8; }
   .tname[data-stopopen] { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
+  .bigbtns { display: flex; gap: 8px; margin: 10px 0 2px; }
+  .bigbtn { flex: 1 1 0; min-width: 0; border: none; border-radius: 12px; padding: 9px 4px 7px;
+    font-size: 1.45rem; line-height: 1.15; color: #fff; cursor: pointer; position: relative;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; overflow: hidden; }
+  .bigbtn small { font-size: 0.66rem; font-weight: 600; letter-spacing: 0.02em; max-width: 100%;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bigbtn .bbsym { display: block; }
+  .bigbtn:active { filter: brightness(0.85); }
+  .bigbtn.off { filter: grayscale(0.5) brightness(0.75); }
+  .bigbtn.strike::after { content: ""; position: absolute; left: -8%; right: -8%; top: 42%;
+    height: 4px; background: #7a1010; transform: rotate(-20deg); border-radius: 2px;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.55); }
+  .bigbtn.green { background: linear-gradient(160deg, #2e9e4f, #177a37); }
+  .bigbtn.orange { background: linear-gradient(160deg, #f0a13a, #d97a10); }
+  .bigbtn.blue { background: linear-gradient(160deg, #4d8fd6, #2f6fb3); }
+  .bigbtn.violet { background: linear-gradient(160deg, #9a6fd0, #7048a8); }
+  .bigbtn.teal { background: linear-gradient(160deg, #3aa9a0, #1f837c); }
+  .bigbtn.pink { background: linear-gradient(160deg, #d76fa5, #b34d7f); }
+  .addrclr { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    border: none; background: rgba(0,81,158,0.15); color: #cbd5e1; border-radius: 50%;
+    width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
+  .addrclr:hover { background: #c0392b; color: #fff; }
+  #addrSearch { padding-right: 36px; }
+  #bigAssignDlg { position: fixed; top: 132px; right: 12px; z-index: 84; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 10px; max-width: 320px; width: 88vw;
+    max-height: 60vh; overflow: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+  #bigAssignDlg .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
+    border-bottom: 1px solid #1e293b; cursor: pointer; }
+  #bigAssignDlg .afsrow:hover { background: #273449; border-radius: 6px; }
+  #bigAssignDlg .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #bigAssignDlg .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a;
+    color: #cbd5e1; border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; margin-top: 6px; }
+  #bigAssignDlg .afbtn:hover { background: #334155; }
   #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
   #accDlg[hidden] { display: none; }
@@ -408,6 +441,15 @@
     <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
   </header>
 
+  <div class="bigbtns" id="bigbtns">
+    <button class="bigbtn green" id="bbNear" title="Abfahrten ganz in der Nähe: GPS-Ortung aktivieren und Haltestellenliste nach Entfernung öffnen"><span class="bbsym">🧭</span><small>Nähe</small></button>
+    <button class="bigbtn orange" id="bbAlarm" title="Alle Wecker ein/aus (global)"><span class="bbsym">⏰</span><small>Wecker</small></button>
+    <button class="bigbtn blue" id="bbFh" title="Alle „Finde nach Hause“-Hinweise ein/aus (global)"><span class="bbsym">🏠</span><small>nach Hause</small></button>
+    <button class="bigbtn violet" id="bb0" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
+    <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
+    <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
+  </div>
+
   <div id="addrFavPanel" hidden></div>
 
   <div class="favchiprow">
@@ -416,6 +458,7 @@
   <div class="addrwrap">
     <div class="addrfield">
       <input type="search" id="addrSearch" placeholder="Startadresse, Koordinaten (54.32, 10.13), Locator (JO49sk), Karten-Link …" autocomplete="off" />
+      <button class="addrclr" id="addrClearBtn" hidden title="Adresse abwählen und zu GPS zurückkehren">✕</button>
       <div class="suggestions" id="addrSug" hidden></div>
     </div>
     <button class="gpsbtn" id="posBtn" title="GPS-Ortung übernehmen und als Startpunkt einloggen (Haltestellen danach sortieren)">GPS➜</button>
@@ -1336,7 +1379,7 @@ addrSug.addEventListener("click", e => {
       gpsCtl.classList.add("disabled");
       positionReset();
       clearStopSearchOnAddrLogin();
-      setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+      setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
       renderPanels();
     }
     return;
@@ -1362,7 +1405,7 @@ function selectCoord(loc) {
   gpsCtl.classList.add("disabled");
   positionReset();
   clearStopSearchOnAddrLogin();
-  setLocNote("Aktiv: " + loc.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  setLocNote("Aktiv: " + loc.label + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
   renderPanels();
 }
 
@@ -1400,12 +1443,12 @@ function selectAddr(i) {
   addrPos = { lat: Number(r.lat), lon: Number(r.lon), label: r.label };
   try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
   addrSug.hidden = true;
-  addrSearch.value = "";
+  addrSearch.value = addrPos.label;   // aktive Adresse im Feld zeigen (✕ setzt zurück)
   renderAddrChip();
   gpsCtl.classList.add("disabled");
   positionReset();
   clearStopSearchOnAddrLogin();
-  setLocNote("Adresse aktiv: " + addrPos.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  setLocNote("Adresse aktiv: " + addrPos.label + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
   renderPanels();
 }
 
@@ -1427,14 +1470,13 @@ function clearAddr() {
 }
 
 function renderAddrChip() {
+  const clr = document.getElementById("addrClearBtn");
+  if (clr) clr.hidden = !addrPos;   // ✕ im Adressfeld nur bei aktiver Adresse
   if (!addrPos) { addrChip.innerHTML = ""; return; }
   addrChip.innerHTML =
-    '<span class="chip mini ok" title="Angemeldet (logged-in): diese Adresse ist als Standort aktiv">✓</span>' +
-    '<span class="chip mini dim2" title="Aktiver Standort (logged-in)">' + escapeHtml(addrPos.label) + "</span>" +
+    '<span class="chip mini dim2" title="Aktiver Standort: diese Adresse ist als Startpunkt eingeloggte">' + escapeHtml(addrPos.label) + "</span>" +
     '<a class="chip mini" target="_blank" rel="noopener" id="addrRoute" href="' + routeUrlG(myPos, addrPos) +
-      '" title="Weg von der GPS-Position bzw. dem letzten bekannten Standort zu dieser Adresse im externen Routing (Google Maps, zu Fuß)">🗺</a>' +
-    '<span class="chip mini bad" id="addrClear" title="Zurücksetzen: Adresse abwählen und zu GPS zurückkehren">✗</span>';
-  document.getElementById("addrClear").addEventListener("click", clearAddr);
+      '" title="Weg von der GPS-Position bzw. dem letzten bekannten Standort zu dieser Adresse im externen Routing (Google Maps, zu Fuß)">🗺 Route</a>';
 }
 
 // ---------- Externes Routing & Fußweg zwischen zwei Punkten ----------
@@ -1469,13 +1511,9 @@ function renderStopChip() {
   const s = t && stops.find(x => x.shortName === t.sn);
   if (!s) { stopChip.innerHTML = ""; return; }
   stopChip.innerHTML =
-    '<span class="chip mini ok" title="Angemeldet (logged-in): diese Station ist im Reiter ausgewählt">✓</span>' +
-    '<span class="chip mini dim2" title="Ausgewählte Station (logged-in)">🚏 ' + escapeHtml(s.name) + "</span>" +
+    '<span class="chip mini dim2" title="Station im aktiven Reiter – ✕ am Reiterkopf schließt ihn (Wecker-Rückfrage inklusive)">🚏 ' + escapeHtml(s.name) + "</span>" +
     '<a class="chip mini" target="_blank" rel="noopener" href="' + routeUrlG(getPos(), s) +
-      '" title="Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)">🗺</a>' +
-    '<span class="chip mini bad" id="stopClear" title="Zurücksetzen: Reiter dieser Station schließen (Wecker des Reiters werden mitgelöscht)">✗</span>';
-  const c = document.getElementById("stopClear");
-  if (c) c.addEventListener("click", () => closeTab(activeTab));
+      '" title="Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)">🗺 Route</a>';   // grün/rot entfallen: der Reiter selbst zeigt die Auswahl, sein ✕ schließt ihn
 }
 
 // ---------- Adressfavoriten (oben rechts) ----------
@@ -1594,7 +1632,7 @@ document.getElementById("favDlgOk").addEventListener("click", async () => {
   gpsCtl.classList.add("disabled");
   positionReset();
   clearStopSearchOnAddrLogin();
-  setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
   renderPanels();
 });
 document.getElementById("favDlgCancel").addEventListener("click", () => { favDlg.hidden = true; });
@@ -1665,7 +1703,7 @@ addrFavPanel.addEventListener("click", e => {
     gpsCtl.classList.add("disabled");
     positionReset();
     clearStopSearchOnAddrLogin();
-    setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+    setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
     renderPanels();
     addrFavPanel.hidden = true;
   }
@@ -2550,6 +2588,11 @@ function tripSectionHTML() {
 // unterstützt) und Weckton (im Browser). Bei aktivem Wecker wird die Zeit der
 // Station alle (Auswahlzeit)/2 Minuten neu geprüft.
 const alarms = new Map();       // "tripId|sn" -> {sn, name, dist, leadMin, vib, tone, lastPoll}
+// Globale Taster oben: alle Wecker ein/aus bzw. alle Nach-Hause-Hinweise ein/aus
+let alarmsOff = false;
+try { alarmsOff = localStorage.getItem("kvg-alarms-off") === "1"; } catch (e) {}
+let fhOff = false;
+try { fhOff = localStorage.getItem("kvg-fh-off") === "1"; } catch (e) {}
 const firedAlarms = new Set(); // "tripId|sn" (ausgelöst, im Verlauf als ⏰ sichtbar)
 let audioCtx = null;
 
@@ -2644,6 +2687,7 @@ function stopRinging(aKey) {
   nativeCall("cancelAlarm", aKey);   // ggf. laufende native Läut-Kette stoppen
 }
 function fireAlarm(aKey, a) {
+  if (alarmsOff) return;   // global aus: nicht läuten, Wecker bleibt gestellt
   alarms.delete(aKey);
   nativeCall("cancelAlarm", aKey);   // nativen Wecker mitauslösen (falls in App gestellt)
   firedAlarms.add(aKey);
@@ -2663,7 +2707,7 @@ function fireAlarm(aKey, a) {
 let geoSyncHash = "";
 function syncGeofences() {
   if (!window.KvgNative || typeof window.KvgNative.syncGeofences !== "function") return;
-  const list = [];
+  let list = [];
   for (const [aKey, a] of alarms) {
     if (!a.dist) continue;   // nur Distanz-Wecker; Zeit-Wecker klingelt nativ per AlarmManager
     const stop = stops.find(x => x.shortName === a.sn);
@@ -2672,6 +2716,7 @@ function syncGeofences() {
       name: a.name || a.sn, vib: a.vib !== false, tone: a.tone !== false,
       snd: a.snd || "alarm", vol: a.vol == null ? 1 : a.vol });
   }
+  if (alarmsOff) list = [];   // global aus: keine nativen Geofence-Zäune registrieren
   // nur bei Änderung an die App durchreichen (renderAlarmInd läuft alle 15 s)
   const h = list.map(x => x.key + ":" + x.radius + ":" +
     Math.round(x.lat * 1e5) + "," + Math.round(x.lon * 1e5)).sort().join("|");
@@ -2775,6 +2820,7 @@ function hhmmMin(t) {
 }
 async function fhScan() {
   if (fhScanning) return;
+  if (fhOff) return;   // global aus: nicht suchen
   const pos = getPos();
   if (!pos || gpsState !== "on" || (pos.accuracy != null && pos.accuracy > GPS_ACC_COARSE_M)) return;
   const targets = fhTargets();
@@ -2831,6 +2877,7 @@ async function fhScan() {
 const fhCandidates = new Map();   // candKey -> {line, dir, station, clock, los, until}
 function updateFhNotification() {
   if (!window.KvgNative) return;
+  if (fhOff) { nativeCall("cancelNotify", "fh-scan"); return; }   // global aus: Nachricht weg
   const now = Date.now();
   for (const [k, c] of fhCandidates) if (c.until < now) fhCandidates.delete(k);
   if (!fhCandidates.size) { nativeCall("cancelNotify", "fh-scan"); return; }
@@ -3097,6 +3144,7 @@ async function pollAlarmStop(a) {
 function alarmTick() {
   syncNativeRinging();
   renderAlarmInd();
+  if (alarmsOff) return;   // global aus: nichts auslösen (Wecker bleiben gestellt)
   if (!alarms.size) return;
   const pos = getPos();
   const nowD = new Date();
@@ -3276,7 +3324,7 @@ function openAlarmDialog(tripId, preSn) {
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
       // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
       // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
-      if (selLead) {
+      if (selLead && !alarmsOff) {   // global aus: keinen nativen Wecker planen
         const ms = nativeAlarmEpoch(aKey, selLead);
         if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
           JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
@@ -4328,6 +4376,208 @@ function escapeHtml(s) {
 setStatus(stops.length + " Haltestellen bereit");
 renderStopFavs();
 renderAddrFavs();
+
+// ---------- Große Knopf-Reihe oben: Schnellzugriffe + belegbare Favoriten-Knöpfe ----------
+const bbNear = document.getElementById("bbNear");
+const bbAlarm = document.getElementById("bbAlarm");
+const bbFh = document.getElementById("bbFh");
+const bbBtns = [0, 1, 2].map(i => document.getElementById("bb" + i));
+
+// Belegung der drei rechten Knöpfe: {kind:"addr", name} | {kind:"stop", sn} | null
+let bigAssign = [null, null, null];
+try {
+  const ba = JSON.parse(localStorage.getItem("kvg-bigbtns") || "null");
+  if (Array.isArray(ba)) bigAssign = [ba[0] || null, ba[1] || null, ba[2] || null];
+} catch (e) {}
+function saveBigAssign() { try { localStorage.setItem("kvg-bigbtns", JSON.stringify(bigAssign)); } catch (e) {} }
+
+function renderBigToggles() {
+  bbAlarm.classList.toggle("off", alarmsOff);
+  bbAlarm.classList.toggle("strike", alarmsOff);
+  bbAlarm.title = alarmsOff
+    ? "Wecker global AUS – Antippen stellt alle Wecker wieder scharf"
+    : "Wecker global EIN – Antippen schaltet alle Wecker stumm (sie bleiben gestellt)";
+  bbFh.classList.toggle("off", fhOff);
+  bbFh.classList.toggle("strike", fhOff);
+  bbFh.title = fhOff
+    ? "Nach-Hause-Hinweise global AUS – Antippen schaltet sie wieder ein"
+    : "Nach-Hause-Hinweise global EIN – Antippen schaltet alle „Finde nach Hause“-Hinweise aus";
+}
+
+function renderBigBtns() {
+  bbBtns.forEach((b, i) => {
+    if (!b) return;
+    const a = bigAssign[i];
+    if (!a) {
+      b.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
+      b.title = "Noch frei – langer Druck (oder Antippen) belegt diesen Knopf mit einem Adress- oder Haltestellenfavorit";
+      return;
+    }
+    if (a.kind === "addr") {
+      const f = addrFavs.find(x => x.name === a.name);
+      b.innerHTML = '<span class="bbsym">' + (f ? "📍" : "☆") + "</span><small>" + escapeHtml(a.name.slice(0, 16)) + "</small>";
+      b.title = f
+        ? "Adressfavorit: " + a.name + " – Klick: als Startadresse einsetzen (gespeicherte Koordinaten), langer Druck: neu belegen"
+        : "Favorit fehlt („" + a.name + "“) – langer Druck: neu belegen";
+    } else {
+      const s = stops.find(x => x.shortName === a.sn);
+      b.innerHTML = '<span class="bbsym">' + (s ? "🚏" : "☆") + "</span><small>" + escapeHtml((s ? s.name : a.sn).slice(0, 16)) + "</small>";
+      b.title = s
+        ? "Haltestellenfavorit: " + s.name + " – Klick: Reiter öffnen, langer Druck: neu belegen"
+        : "Favorit fehlt – langer Druck: neu belegen";
+    }
+  });
+}
+
+// 🧭 Abfahrten ganz in der Nähe: GPS an + Haltestellenliste nach Entfernung aufklappen
+bbNear.addEventListener("click", () => {
+  if (gpsState === "off") {
+    gpsStart();
+    setLocNote("GPS wird aktiviert – Haltestellenliste nach Entfernung sortiert.");
+  } else if (gpsState === "on" && myPos) {
+    setLocNote("GPS aktiv (±" + Math.round(myPos.accuracy) + " m) – nächste Haltestellen zuerst.");
+  }
+  if (!stops.length) { setLocNote("Haltestellen werden noch geladen – gleich nochmal antippen."); return; }
+  updateSuggestions();   // leerer Suchtext = Vollliste, nach Position sortiert
+  search.focus();
+  search.scrollIntoView({ block: "nearest" });
+});
+
+// ⏰ Wecker global ein/aus
+bbAlarm.addEventListener("click", () => {
+  alarmsOff = !alarmsOff;
+  try { localStorage.setItem("kvg-alarms-off", alarmsOff ? "1" : "0"); } catch (e) {}
+  if (alarmsOff) {
+    for (const k of [...ringing.keys()]) stopRinging(k);   // laufende Läut-Ketten beenden
+    for (const k of [...alarms.keys()]) nativeCall("cancelAlarm", k);   // native Wecker/Zäune raus
+  } else {
+    syncGeofences();   // Geofence-Zäune wieder registrieren
+    for (const [k, a] of alarms) {
+      if (a.leadMin != null) {   // native Zeit-Wecker wieder planen
+        const ms = nativeAlarmEpoch(k, a.leadMin);
+        if (ms != null) nativeCall("setAlarm", k, String(ms), a.name,
+          JSON.stringify({ lead: a.leadMin, vib: a.vib !== false, tone: a.tone !== false,
+            snd: a.snd || "alarm", vol: a.vol == null ? 1 : a.vol }));
+      }
+    }
+  }
+  renderBigToggles();
+  renderAlarmInd();
+  setLocNote(alarmsOff
+    ? "🔕 Alle Wecker global ausgestellt – gestellt bleiben sie, es klingelt nichts."
+    : "⏰ Wecker wieder scharf – alle gestellten Wecker laufen wieder.");
+});
+
+// 🏠 Alle „Finde nach Hause“-Hinweise ein/aus
+bbFh.addEventListener("click", () => {
+  fhOff = !fhOff;
+  try { localStorage.setItem("kvg-fh-off", fhOff ? "1" : "0"); } catch (e) {}
+  if (fhOff) nativeCall("cancelNotify", "fh-scan");
+  renderBigToggles();
+  setLocNote(fhOff
+    ? "🏠 Alle „Finde nach Hause“-Hinweise aus – es wird nicht mehr gesucht und nicht mehr gemeldet."
+    : "🏠 „Finde nach Hause“ wieder an – laufendes GPS sucht wieder nach direkten Fahrten.");
+});
+
+// Drei belegbare Knöpfe: langer Druck = Belegung, einfacher Klick = Aktion
+let bbPressTimer = null, bbLongFired = false;
+bbBtns.forEach((b, i) => {
+  if (!b) return;
+  b.addEventListener("pointerdown", () => {
+    bbLongFired = false;
+    bbPressTimer = setTimeout(() => { bbLongFired = true; openBigAssignDlg(i); }, 550);
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
+    b.addEventListener(ev, () => clearTimeout(bbPressTimer)));
+  b.addEventListener("click", () => {
+    if (bbLongFired) { bbLongFired = false; return; }   // Aktion nach Langdrücken unterdrücken
+    const a = bigAssign[i];
+    if (!a) { openBigAssignDlg(i); return; }
+    if (a.kind === "addr") {
+      const f = addrFavs.find(x => x.name === a.name);
+      if (!f) { openBigAssignDlg(i); return; }
+      // Adressfavorit als Startadresse einsetzen – immer mit den gespeicherten Koordinaten
+      addrPos = { lat: f.lat, lon: f.lon, label: f.name };
+      try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
+      addrSug.hidden = true;
+      addrSearch.value = f.name;   // Adresse im Feld zeigen (✕ setzt zurück)
+      addrSearch._loc = null;
+      renderAddrChip();
+      gpsCtl.classList.add("disabled");
+      positionReset();
+      setLocNote("Adressfavorit aktiv: " + f.name + " · Listen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
+      renderPanels();
+      if (!sugBox.hidden) updateSuggestions();   // offene Haltestellenliste sofort neu sortieren
+    } else {
+      const s = stops.find(x => x.shortName === a.sn);
+      if (!s) { openBigAssignDlg(i); return; }
+      selectStop(a.sn);   // neuen Stationsreiter anlegen und öffnen
+      setLocNote("Haltestellenfavorit geöffnet: " + s.name);
+    }
+  });
+});
+
+// Belegungs-Dialog: Einträge aus beiden Favoritenlisten (+ Löschen der Belegung)
+function openBigAssignDlg(i) {
+  const old = document.getElementById("bigAssignDlg");
+  if (old) { old.remove(); return; }   // nochmal lange gedrückt: Dialog zu
+  let inner = '<div class="afshead"><span><b>Knopf ' + (i + 1) + ' belegen</b> – Favorit antippen</span></div>';
+  inner += '<div class="afshead"><span class="dim">Adressfavoriten (als Startadresse)</span></div>';
+  if (!addrFavs.length) inner += '<div class="afsrow"><span class="afsname dim">Keine Adressfavoriten gespeichert.</span></div>';
+  addrFavs.forEach(f => {
+    inner += '<div class="afsrow" data-ba="addr:' + escapeHtml(f.name) + '" title="Klick: Adresse übernehmen, Ort auf der Karte im Adressfeld"><span class="afsname">⭐ ' + escapeHtml(f.name) + "</span></div>";
+  });
+  inner += '<div class="afshead" style="margin-top:6px"><span class="dim">Haltestellenfavoriten (öffnet einen Reiter)</span></div>';
+  if (!favs.length) inner += '<div class="afsrow"><span class="afsname dim">Keine Haltestellenfavoriten gespeichert.</span></div>';
+  favs.forEach(sn => {
+    const s = stops.find(x => x.shortName === sn);
+    inner += '<div class="afsrow" data-ba="stop:' + escapeHtml(sn) + '" title="Klick: Haltestelle als Knopf-Ziel"><span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) + "</span></div>";
+  });
+  if (bigAssign[i]) inner += '<button class="afbtn" id="bigAssignClr">✕ Belegung löschen</button>';
+  const wrap = document.createElement("div");
+  wrap.id = "bigAssignDlg";
+  wrap.innerHTML = inner;
+  wrap.addEventListener("click", e => {
+    e.stopPropagation();
+    const row = e.target.closest("[data-ba]");
+    if (row) {
+      const parts = row.dataset.ba.split(":");
+      const kind = parts.shift();
+      bigAssign[i] = kind === "addr" ? { kind: "addr", name: parts.join(":") } : { kind: "stop", sn: parts.join(":") };
+      saveBigAssign();
+      renderBigBtns();
+      wrap.remove();
+      setLocNote("Knopf " + (i + 1) + " belegt mit " + (kind === "addr" ? "Adressfavorit „" : "Haltestellenfavorit „") +
+        escapeHtml(parts.join(":")) + "“ – langer Druck ändert die Belegung.");
+      return;
+    }
+    if (e.target.closest("#bigAssignClr")) {
+      bigAssign[i] = null;
+      saveBigAssign();
+      renderBigBtns();
+      wrap.remove();
+      setLocNote("Knopf " + (i + 1) + " ist wieder frei.");
+    }
+  });
+  document.body.appendChild(wrap);
+}
+document.addEventListener("click", e => {
+  const d = document.getElementById("bigAssignDlg");
+  if (d && !e.target.closest("#bigAssignDlg") && !e.target.closest(".bbx")) d.remove();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { const d = document.getElementById("bigAssignDlg"); if (d) d.remove(); }
+});
+
+// ✕ im Adressfeld: Adresse abwählen, zurück zu GPS
+document.getElementById("addrClearBtn").addEventListener("click", clearAddr);
+
+// Taster-Zustand/-Beschriftung initialisieren; Beschriftungen im 15-s-Takt auffrischen
+renderBigToggles();
+renderBigBtns();
+const _alarmTickPlain = alarmTick;
+alarmTick = function () { _alarmTickPlain(); renderBigBtns(); };
+
 </script>
 
 <div class="apkdl pagefoot">
@@ -4336,7 +4586,7 @@ renderAddrFavs();
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.0 · Build: 13.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.1 · Build: 13.11.2026</div>
 </div>
 </body>
 </html>
