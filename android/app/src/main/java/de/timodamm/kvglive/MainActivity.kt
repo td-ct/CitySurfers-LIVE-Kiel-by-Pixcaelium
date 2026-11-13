@@ -357,6 +357,16 @@ class MainActivity : Activity() {
  */
 class NativeBridge(private val act: Activity) {
 
+    private fun getVibrator(): android.os.Vibrator? {
+        return try {
+            val v = if (Build.VERSION.SDK_INT >= 31)
+                (act.getSystemService(android.os.VibratorManager::class.java))?.defaultVibrator
+            else @Suppress("DEPRECATION")
+                act.getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            if (v == null || !v.hasVibrator()) null else v
+        } catch (e: Exception) { null }
+    }
+
     @JavascriptInterface
     fun vibrate(patternJson: String) {
         try {
@@ -366,16 +376,29 @@ class NativeBridge(private val act: Activity) {
             // 3000 ms Stillstand! Deshalb fuehrende 0 ergaenzen, wenn keine da ist.
             val raw = LongArray(arr.length()) { arr.optLong(it, 0L) }
             val pat = if (raw.isEmpty() || raw[0] != 0L) longArrayOf(0L) + raw else raw
-            // Vibrator besorgen (ab API 31 ueber den VibratorManager)
-            val v = if (Build.VERSION.SDK_INT >= 31)
-                (act.getSystemService(android.os.VibratorManager::class.java))?.defaultVibrator
-            else @Suppress("DEPRECATION")
-                act.getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
-            if (v == null) return
+            val v = getVibrator() ?: return
             if (pat.size <= 1) v.cancel()
             else if (Build.VERSION.SDK_INT >= 26)
                 v.vibrate(android.os.VibrationEffect.createWaveform(pat, -1))
             else @Suppress("DEPRECATION") v.vibrate(pat, -1)
+        } catch (e: Exception) { }
+    }
+
+    /**
+     * Failsafe-Variante: einfacher Ein-Schlag mit Standard-Amplitude (createOneShot
+     * bzw. vibrate(ms)). Die Seite ruft beide Varianten; auf Geraeten, auf denen
+     * das Wellenmuster (z.B. nach WebView-Update) nicht greift, vibriert zumindest
+     * dieser eine lange Schlag zuverlaessig.
+     */
+    @JavascriptInterface
+    fun vibrateLong(msJson: String) {
+        try {
+            val ms = msJson.toLongOrNull() ?: return
+            if (ms <= 0L) return
+            val v = getVibrator() ?: return
+            if (Build.VERSION.SDK_INT >= 26)
+                v.vibrate(android.os.VibrationEffect.createOneShot(ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            else @Suppress("DEPRECATION") v.vibrate(ms)
         } catch (e: Exception) { }
     }
 
@@ -441,9 +464,10 @@ class NativeBridge(private val act: Activity) {
                     setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                     setContentTitle(a.optString("title"))
                     setContentText(a.optString("text"))
+                    setStyle(android.app.Notification.BigTextStyle().bigText(a.optString("text")))
                     setContentIntent(open)
-                    setAutoCancel(false)
-                    setOngoing(true)            // nur per Wecker-Loeschen/App-Ende weg
+                    setAutoCancel(false)         // nur per Wecker-Loeschen/App-Ende weg
+                    setOngoing(true)
                     setOnlyAlertOnce(true)      // Countdown-Updates bleiben still
                     if (Build.VERSION.SDK_INT < 26) {
                         @Suppress("DEPRECATION")
@@ -496,6 +520,7 @@ class NativeBridge(private val act: Activity) {
                 setSmallIcon(android.R.drawable.ic_dialog_map)
                 setContentTitle(title)
                 setContentText(text)
+                setStyle(android.app.Notification.BigTextStyle().bigText(text))
                 setContentIntent(open)
                 setAutoCancel(true)       // mit Antippen weg, oeffnet die App
                 if (Build.VERSION.SDK_INT < 26) {
