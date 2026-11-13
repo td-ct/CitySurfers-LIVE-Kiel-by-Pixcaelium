@@ -30,6 +30,16 @@
   #gpsCtl { position: fixed; top: 6px; right: 12px; z-index: 47; display: flex; align-items: center; gap: 5px;
     background: #0f172ae6; border: 1px solid #334155; border-radius: 999px; padding: 3px 6px; }
   #gpsCtl.disabled .gpsbtn, #gpsCtl.disabled .accbar { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
+  /* Schmale Screens (Handy hoch): GPS-Ecke kompakter, weniger Abstand zum Rand,
+     damit sie den Kopfbereich der Suchfelder nicht überlappt */
+  @media (max-width: 620px) {
+    #gpsCtl { top: 4px; right: 6px; padding: 2px 4px; gap: 3px; }
+    #gpsCtl .gpsbtn { padding: 2px 7px; font-size: 0.78rem; }
+    #gpsCtl .accbar { gap: 1px; }
+    #gpsCtl .accbar i { width: 4px; height: 8px; }
+    #apiInd { top: 42px; right: 6px; gap: 3px; }
+    #alarmList, #addrFavPanel, #stopFavPanel { top: 74px; right: 6px; }
+  }
   #posBtn, #addrGo { flex: none; }
   #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -88,6 +98,7 @@
   /* Zeile 2: Haltestellensuche */
   .searchbox { position: relative; margin-bottom: 6px; }
   #stopSearch { padding-right: 108px; }
+  .kbhint { font-size: 11px; color: #94a3b8; padding: 2px 2px 0; }
   #gpsGoBtn { position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
     font-size: 0.72rem; padding: 7px 8px; border-radius: 8px; white-space: nowrap; }
   .ddbtn {
@@ -570,6 +581,14 @@ const ADDR_MIN_CHARS         = 3;     // Adresssuche: ab so vielen Zeichen wird 
 const SUGGEST_CHUNK_ROWS      = 10;    // Haltestellenliste: so viele Zeilen pro Render-Schritt (Rest beim Scrollen)
 const SUSPECT_REFETCH_MS     = 120000; // GPS-Verdachtsfall: zweite Echtzeitabfrage der Linie nach so langer Zeit
 const RELOAD_DELAY_MS         = 600;   // Zustands-Import: kurze Pause vor dem Neuladen der Seite
+const GPS_DLG_WARN_MS         = 60000; // GPS➜-Dialog: nach so langer Wartezeit ohne besseres Signal Warnung anzeigen
+// --- "Finde nach Hause"-Modus (Fahrplan-Suche nach direkten Fahrten zu Favoriten) ---
+const FH_SCAN_INTERVAL_MS   = 60000; // Such-Takt: alle 60 s nach passenden Fahrten suchen (nur bei laufendem GPS)
+const FH_POS_RADIUS_M       = 500;   // Stationen in diesem Umkreis der eigenen Position werden geprüft
+const FH_MAX_STATIONS       = 4;     // maximal so viele der nächsten Stationen pro Suchlauf prüfen
+const FH_DEPART_WINDOW_MIN  = 15;    // Abfahrten in den nächsten so vielen Minuten gelten als Kandidaten
+const FH_TARGET_RADIUS_M    = 400;   // Ziel erreicht: Fahrtverlauf enthält eine Station in diesem Umkreis des Favoriten
+const FH_TRIP_CACHE_MS      = 300000; // Fahrtverläufe der Kandidaten 5 Minuten cachen
 
 // ---------- Konfiguration ----------
 const API_BASE = "https://kvg-internetservice-proxy.p.networkteam.com/internetservice";
@@ -646,6 +665,7 @@ const gpsDlgState = document.getElementById("gpsDlgState");
 const gpsDlgAcc = document.getElementById("gpsDlgAcc");
 const gpsDlgMsg = document.getElementById("gpsDlgMsg");
 let gpsDlgMode = "takeover";   // "takeover": mit Übernehmen/Abbrechen + Auto-Schließen; "status": reiner Ein-/Aus-Dialog
+let gpsDlgSince = 0;          // Öffnungszeitpunkt: nach GPS_DLG_WARN_MS ohne besseres Signal Warnung anzeigen
 const gpsDlgBar = document.getElementById("gpsDlgBar");
 const locNote = document.getElementById("locNote");
 const gpsCtl = document.getElementById("gpsCtl");
@@ -821,6 +841,11 @@ function updateGpsDlg() {
         : a <= GPS_ACC_AUTOCLOSE_M ? "Sehr gute Ortung – wird übernommen …"
         : a <= GPS_ACC_DIRECT_M ? "Gute Ortung – „Übernehmen“ oder auf ein noch besseres Signal (±" + GPS_ACC_AUTOCLOSE_M + " m) warten."
         : "Ortung noch ungenau – warte auf ein besseres Signal (ab ±" + GPS_ACC_AUTOCLOSE_M + " m automatische Übernahme) …";
+    // Nach GPS_DLG_WARN_MS immer noch kein brauchbares Signal: Warnung anhängen
+    if (gpsDlgMode === "takeover" && gpsDlgSince &&
+        Date.now() - gpsDlgSince > GPS_DLG_WARN_MS &&
+        (gpsState !== "on" || !myPos || (myPos.accuracy || 999) > GPS_ACC_AUTOCLOSE_M))
+      gpsDlgMsg.textContent += " ⚠ Die Ortung bessert sich nicht – ggf. im Freien versuchen oder abbrechen und später erneut.";
   } else {
     gpsDlgAcc.textContent = "–";
     gpsDlgBar.hidden = true;
@@ -855,6 +880,7 @@ function gpsTakeOver() {
 // Ein-/Aus-Schalter und Genauigkeit, ohne Übernehmen/Abbrechen.
 function openGpsDlg(mode) {
   gpsDlgMode = mode;
+  gpsDlgSince = Date.now();   // für die Warnung bei ausbleibender Verbesserung
   document.getElementById("gpsDlgBtns").hidden = mode === "status";
   gpsDlg.hidden = false;   // zuerst öffnen, dann rendern (updateGpsDlg rendert nur im offenen Dialog)
   renderGpsBtn();
@@ -1378,6 +1404,8 @@ function renderAddrFavs() {
     inner += '<div class="afsrow" data-afi="' + i + '" title="Als Startadresse aktivieren">' +
       '<span class="afsname">⭐ ' + escapeHtml(f.name) +
         (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") + '</span>' +
+      '<button class="afbtn" data-fh="addr:' + i + '" title="Finde nach Hause: Hinweise einstellen' +
+        (f.fh && f.fh.on ? ' (aktiv)' : '') + '">' + (f.fh && f.fh.on ? "🏠" : "⌂") + "</button>" +
       '<button class="afbtn" data-afedit="' + i + '" title="Alias und Adresse bearbeiten">✎</button>' +
       '<button class="afbtn" data-afdel="' + i + '" title="Löschen">✗</button>' +
       "</div>";
@@ -1466,6 +1494,12 @@ document.addEventListener("keydown", e => {
 });
 addrFavPanel.addEventListener("click", e => {
   e.stopPropagation();
+  const fhb = e.target.closest("[data-fh]");
+  if (fhb) {
+    const p = fhb.dataset.fh.split(":");
+    openFhDlg(p[0], Number(p[1]));
+    return;
+  }
   const edit = e.target.closest("[data-afedit]");
   const del = e.target.closest("[data-afdel]");
   if (edit) {
@@ -1531,6 +1565,20 @@ addrFavCount.textContent = addrFavs.length;
 const search = document.getElementById("stopSearch");
 const sugBox = document.getElementById("suggestions");
 
+// Einmaliger Hinweis unter den Suchfeldern: Liste ist geöffnet, Tastatur bleibt
+// zu – „erneut tippen, um zu schreiben“. Nach der ersten echten Eingabe dauerhaft weg.
+function kbHint(inp) {
+  if (localStorage.getItem("kvg-kbh")) return;
+  const d = document.createElement("div");
+  d.className = "kbhint";
+  d.textContent = "Erneut tippen, um zu schreiben – Liste ist mit dem ersten Eintrag fokussiert.";
+  try { inp.parentNode.insertBefore(d, inp.nextSibling); } catch (e) { return; }
+  setTimeout(() => { try { d.remove(); } catch (e) {} }, 5000);
+}
+function kbHintDone() { try { localStorage.setItem("kvg-kbh", "1"); } catch (e) {} }
+search.addEventListener("input", kbHintDone, { once: true });
+addrSearch.addEventListener("input", kbHintDone, { once: true });
+
 // Handy: beim ersten Antippen eines Suchfelds die Bildschirm-Tastatur unten lassen
 // (Fokus sofort an den ersten Listeneintrag abgeben, Liste öffnet trotzdem); erst der
 // zweite Tipp ins Feld öffnet die Tastatur. Gilt auch fürs programmatische Öffnen.
@@ -1540,7 +1588,7 @@ search.addEventListener("focus", () => {
   if (!searchFocusArmed) {
     searchFocusArmed = true;
     setTimeout(() => {
-      if (!search.value) { search.blur(); focusFirstRow(sugBox); }
+      if (!search.value) { search.blur(); focusFirstRow(sugBox); kbHint(search); }
     }, 60);
   }
 });
@@ -1551,7 +1599,7 @@ let addrFocusArmed = false;
 addrSearch.addEventListener("focus", () => {
   if (!addrFocusArmed) {
     addrFocusArmed = true;
-    setTimeout(() => { if (!addrSearch.value) addrSearch.blur(); }, 60);
+    setTimeout(() => { if (!addrSearch.value) { addrSearch.blur(); kbHint(addrSearch); } }, 60);
   }
 });
 addrSearch.addEventListener("blur", () => {
@@ -1938,9 +1986,21 @@ function renderBusPanel() {
   } else {
     meta = "";
   }
+  // Zustands-Wecker dieser Fahrt (für die Glocke im Linienkopf): gesetzt/ausgelöst?
+  let bArm = false, bFire = false;
+  const tPfx = String(currentBus.tripId) + "|";
+  for (const k of alarms.keys()) if (k.indexOf(tPfx) === 0) { bArm = true; break; }
+  if (!bArm) for (const k of ringing.keys()) if (k.indexOf(tPfx) === 0) { bFire = true; break; }
+  if (!bFire) for (const k of firedAlarms) if (typeof k === "string" && k.indexOf(tPfx) === 0) { bFire = true; break; }
+  const bellCls = bFire ? "abell fired" : bArm ? "abell on" : "abell";
   let inner =
     '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
+    '<button class="' + bellCls + '" data-linalarm="' + escapeHtml(String(currentBus.tripId)) +
+      '" title="' + (bFire ? "Wecker ausgelöst – Dialog öffnen" :
+        bArm ? "Wecker gestellt – antippen zum Ändern/Löschen" :
+        "Wecker für eine Station dieser Linie stellen (lädt nötigenfalls den Fahrtverlauf)") + '">' +
+      (bArm || bFire ? "⏰" : "🔔") + "</button>" +
     '<button class="rowref" data-ref="' + escapeHtml(currentBus.sn) +
       '" title="Diese Haltestelle neu abfragen">↻</button></div>';
   // Jeder Block ist unabhängig auf-/zuklappbar; ein zugeklappter Block wird
@@ -2216,7 +2276,7 @@ function tripSectionHTML() {
     currentTrip.progressIdx = Math.max(currentTrip.progressIdx, currentTrip.atIdx);
     currentTrip.atIdx = null;
   }
-  if (atIdx != null) currentTrip.atIdx = atIdx;
+  if (atIdx != null) { currentTrip.atIdx = atIdx; notifyTripProgress(tstops[atIdx]); }
   // Eine Glocke für die ganze Fahrt: Zustand = irgendein Wecker dieser Fahrt
   const tKeys = tstops.map(x => currentTrip.tripId + "|" + x.shortName);
   const tRing = tKeys.some(k => ringing.has(k));
@@ -2442,6 +2502,252 @@ function pollGeofenceEvents() {
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGeofenceEvents(); });
 
+// ---------- Finde nach Hause: direkte Fahrten zu Favoriten-Zielen finden ----------
+// Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im Umkreis
+// FH_POS_RADIUS_M eine Abfahrt in den nächsten FH_DEPART_WINDOW_MIN Minuten hat,
+// deren Fahrtverlauf eine Station im Umkreis FH_TARGET_RADIUS_M eines als 🏠
+// markierten Favoriten enthält (ohne Umsteigen). Treffer werden live geprüft und
+// dann gemeldet: Dialog im Stil der Abfahrtsanzeigen + Hinweiston/Vibration
+// (konfigurierbar wie beim Wecker) + Android-System-Benachrichtigung (Kanal
+// "hinweise"). Hinweise lassen sich im Dialog pro Linie oder für das ganze Ziel
+// stummschalten (30 min / 1 Std. / 6 Std. / 1 Tag / Nie).
+const fhStopCfg = JSON.parse(localStorage.getItem("kvg-fhstop") || "{}"); // sn -> cfg
+function saveFhStopCfg() { try { localStorage.setItem("kvg-fhstop", JSON.stringify(fhStopCfg)); } catch (e) {} }
+const FH_MUTES = [["30 Minuten", 30], ["1 Std.", 60], ["6 Std.", 360], ["1 Tag", 1440], ["Nie", Infinity]];
+const fhTripCache = new Map();   // tripId -> { ts, stops: [{sn, name, time}] }
+const fhSeen = new Map();        // "cfgId|route|tripId|sn" -> Ablaufzeit (Meldung nur 1x)
+let fhScanning = false;
+let fhNotifAsked = false;
+
+function fhTargets() {
+  const ts = [];
+  addrFavs.forEach((f, i) => {
+    if (f.fh && f.fh.on && f.lat != null)
+      ts.push({ id: "a" + i, name: f.label || f.name, lat: f.lat, lon: f.lon, cfg: f.fh });
+  });
+  for (const sn in fhStopCfg) {
+    const c = fhStopCfg[sn];
+    if (!c || !c.on) continue;
+    const s = stops.find(x => x.shortName === sn);
+    if (s) ts.push({ id: "s" + sn, name: s.name, lat: s.lat, lon: s.lon, cfg: c });
+  }
+  return ts;
+}
+function fhMuted(cfg, route) {
+  const now = Date.now();
+  if (cfg.allMutedUntil != null && (cfg.allMutedUntil === Infinity || cfg.allMutedUntil > now)) return true;
+  const m = cfg.muted && cfg.muted[route];
+  return m != null && (m === Infinity || m > now);
+}
+async function fhTripStops(tripId) {
+  const c = fhTripCache.get(tripId);
+  if (c && Date.now() - c.ts < FH_TRIP_CACHE_MS) return c.stops;
+  try {
+    const res = await apiFetch("kvg", TRIP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tripId=" + encodeURIComponent(tripId)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const arr = (data.actual || []).map(p => ({ sn: p.stop.shortName, name: p.stop.name, time: p.actualTime }));
+    fhTripCache.set(tripId, { ts: Date.now(), stops: arr });
+    return arr;
+  } catch (e) { return null; }
+}
+// Minuten-Wert "HH:MM" -> Minuten seit Mitternacht; -1 wenn unlesbar
+function hhmmMin(t) {
+  if (!t) return -1;
+  const [h, m] = String(t).split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? h * 60 + m : -1;
+}
+async function fhScan() {
+  if (fhScanning) return;
+  const pos = getPos();
+  if (!pos || gpsState !== "on" || (pos.accuracy != null && pos.accuracy > GPS_ACC_COARSE_M)) return;
+  const targets = fhTargets();
+  if (!targets.length) return;
+  fhScanning = true;
+  try {
+    // 1) nächste Stationen um die eigene Position
+    const near = stops
+      .filter(s => !isDB(s.shortName) && dist(pos, s) <= FH_POS_RADIUS_M)
+      .sort((a, b) => dist(pos, a) - dist(pos, b))
+      .slice(0, FH_MAX_STATIONS);
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    for (const st of near) {
+      const deps = await getDepartures(st.shortName) || [];
+      // 2) Abfahrten im Zeitfenster (Sollzeit = Offline-Fahrplan)
+      for (const d of deps) {
+        if (isDB(st.shortName) || String(d.tripId).indexOf("DB:") === 0) continue; // erst nur KVG-Busse
+        const pMin = hhmmMin(d.plannedTime);
+        if (pMin < 0 || pMin < nowMin - 1 || pMin > nowMin + FH_DEPART_WINDOW_MIN) continue;
+        const route = d.line + "→" + d.direction;
+        const tStops = await fhTripStops(d.tripId);
+        if (!tStops) continue;
+        // 3) fährt die Fahrt an einem Ziel-Favoriten vorbei?
+        for (const tgt of targets) {
+          if (fhMuted(tgt.cfg, route)) continue;
+          const hit = tStops.some(ts2 => {
+            const s2 = stops.find(x => x.shortName === ts2.sn);
+            return s2 && dist(tgt, s2) <= FH_TARGET_RADIUS_M;
+          });
+          if (!hit) continue;
+          // 4) Live-Prüfung: Abfahrt noch da? Ist-Zeit holen
+          depCache.delete(st.shortName);
+          const live = await getDepartures(st.shortName) || [];
+          const ld = live.find(x => x.tripId === d.tripId);
+          if (!ld) continue;   // schon weg oder nicht mehr gelistet
+          const aMin = hhmmMin(ld.actualTime || ld.plannedTime);
+          if (aMin < 0 || aMin < nowMin) continue;   // abgefahren
+          const seenKey = tgt.id + "|" + route + "|" + d.tripId + "|" + st.shortName;
+          if (fhSeen.has(seenKey)) continue;
+          fhSeen.set(seenKey, (aMin + 5) * 60000 + now.setHours(0, 0, 0, 0)); // bis kurz nach Abfahrt
+          fhNotify(tgt, st, ld, aMin);
+        }
+      }
+    }
+  } finally { fhScanning = false; }
+}
+// Aufräumen: gemeldete Fahrten nach ihrem Ablauf wieder zulassen
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, exp] of fhSeen) if (exp < now) fhSeen.delete(k);
+}, FH_SCAN_INTERVAL_MS);
+setInterval(fhScan, FH_SCAN_INTERVAL_MS);
+
+// ---------- Fortschritt im aktiven Fahrtverlauf als Android-Benachrichtigung ----------
+// Steht das GPS im Radius einer Station eines offenen Fahrtverlaufs, erscheint
+// einmal pro Station (pro Sitzung) eine System-Benachrichtigung auf Kanal
+// "fahrtverlauf" – auch wenn die App gerade im Hintergrund ist.
+const tripProgressSeen = new Set();   // "tripId|sn", Dedupe nur für diese Sitzung
+function notifyTripProgress(s) {
+  if (!window.KvgNative || !currentTrip) return;
+  const key = currentTrip.tripId + "|" + s.shortName;
+  if (tripProgressSeen.has(key)) return;
+  tripProgressSeen.add(key);
+  nativeCall("notify", "tp" + key,
+    "🚌 Linie " + currentTrip.route + ": an Station " + (s.name || s.shortName),
+    "Fahrtverlauf " + currentTrip.route + " → " + currentTrip.direction, "fahrtverlauf");
+}
+function fhSignal(cfg) {
+  if (cfg.tone !== false) alarmBeep(cfg.vol == null ? 1 : cfg.vol, cfg.snd || "notif", 5);
+  if (cfg.vib !== false) vibratePattern([3000]);
+}
+function fhNotify(tgt, st, dep, aMin) {
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const losMin = aMin - nowMin;
+  const depClock = String(Math.floor(aMin / 60)).padStart(2, "0") + ":" + String(aMin % 60).padStart(2, "0");
+  const title = "🏠 Mögliche Fahrt nach " + tgt.name;
+  const lines = '<div class="bl"><span class="dl blink">' + escapeHtml(dep.line) + "</span>" +
+    '<span class="mqwrap"><span class="mqi">' + escapeHtml(dep.direction) + "</span></span></div>" +
+    '<div class="rowinfo">' + escapeHtml(st.name) + " <b>" + depClock + "</b> – los in " +
+    (losMin > 0 ? losMin + " Minuten" : "jetzt") + "</div>";
+  // Android-System-Benachrichtigung (erscheint in der Nachrichtenliste)
+  if (window.KvgNative) {
+    if (!fhNotifAsked) { fhNotifAsked = true; nativeCall("requestNotifPerm"); }
+    nativeCall("notify", "fh" + (tgt.id + dep.tripId + st.shortName), title,
+      "Linie " + dep.line + " → " + dep.direction + ", " + st.name + " " + depClock +
+        " – los in " + (losMin > 0 ? losMin + " Min." : "jetzt"), "hinweise");
+  }
+  fhSignal(tgt.cfg);
+  // Dialog mit Mute-Chips im Stil der Abfahrtsanzeigen
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const route = dep.line + "→" + dep.direction;
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">' + title + "</div>" + lines +
+    '<div class="dlabel">Diese Linie nicht mehr melden</div>' +
+    '<div class="achips">' + FH_MUTES.map(m =>
+      '<button class="achip" data-mute="' + m[1] + '" title="Hinweise zu Linie ' + escapeHtml(dep.line) + " " + escapeHtml(m[0]) + ' ausblenden">' + m[0] + "</button>").join("") + "</div>" +
+    '<div class="dlabel">Alle Hinweise zu „' + escapeHtml(tgt.name) + "“ nicht mehr melden</div>" +
+    '<div class="achips">' + FH_MUTES.map(m =>
+      '<button class="achip" data-muteall="' + m[1] + '">' + m[0] + "</button>").join("") + "</div>" +
+    '<div class="dbtns"><button class="aok fhclose">OK</button></div></div>';
+  document.body.appendChild(wrap);
+  const close = () => { try { wrap.remove(); } catch (e) {} };
+  wrap.addEventListener("click", e => {
+    const b = e.target.closest("[data-mute],[data-muteall]");
+    if (b) {
+      const mins = Number(b.dataset.mute != null ? b.dataset.mute : b.dataset.muteall);
+      const ts = mins === Infinity ? Infinity : Date.now() + mins * 60000;
+      if (b.dataset.mute != null) { (tgt.cfg.muted = tgt.cfg.muted || {})[route] = ts; }
+      else tgt.cfg.allMutedUntil = ts;
+      if (tgt.id.charAt(0) === "a") saveAddrFavs(); else saveFhStopCfg();
+      close();
+      setLocNote("🔕 Hinweise " + (b.dataset.mute != null ? "zu Linie " + dep.line : "zu „" + tgt.name + "“") + " ausgeschaltet.");
+      return;
+    }
+    if (e.target.closest(".fhclose") || e.target === wrap) close();
+  });
+}
+// Einstellungs-Dialog für einen Favoriten (Adressfavorit oder Haltestellenfavorit)
+function openFhDlg(kind, id) {
+  let cfg, name;
+  if (kind === "addr") {
+    const f = addrFavs[id];
+    if (!f) return;
+    f.fh = f.fh || { on: false };
+    cfg = f.fh;
+    name = f.label || f.name;
+  } else {
+    const s = stops.find(x => x.shortName === id);
+    if (!s) return;
+    fhStopCfg[id] = fhStopCfg[id] || { on: false };
+    cfg = fhStopCfg[id];
+    name = s.name;
+  }
+  cfg.muted = cfg.muted || {};
+  const acfg = alarmCfg();
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">🏠 Finde nach Hause: ' + escapeHtml(name) + "</div>" +
+    '<div class="rowinfo">Sucht bei laufendem GPS alle ' + Math.round(FH_SCAN_INTERVAL_MS / 60000) +
+      " min nach Bussen, die von einer Haltestelle bis " + FH_POS_RADIUS_M + " m Entfernung in den nächsten " +
+      FH_DEPART_WINDOW_MIN + " Minuten direkt in Richtung dieses Ziels fahren (Ziel-Umkreis " + FH_TARGET_RADIUS_M + " m, ohne Umsteigen).</div>" +
+    '<label class="dstage"><input type="checkbox" class="fhon"' + (cfg.on ? " checked" : "") + "> Hinweise aktiv</label>" +
+    '<label class="dstage"><input type="checkbox" class="fhvib"' + (cfg.vib !== false ? " checked" : "") + "> Vibration</label>" +
+    '<label class="dstage"><input type="checkbox" class="fhtone"' + (cfg.tone !== false ? " checked" : "") + "> Hinweiston</label>" +
+    '<label class="dstage">Ton <select class="fhsnd">' +
+      ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === (cfg.snd || acfg.snd) ? " selected" : "") + ">" + x[1] + "</option>").join("") +
+      "</select></label>" +
+    '<label class="dstage">Lautstärke <input type="range" class="fhvol" min="0.1" max="1" step="0.05" value="' + (cfg.vol == null ? acfg.vol : cfg.vol) + '" /></label>' +
+    '<button class="atest" title="Ton und Vibration sofort ausprobieren">▶ Test</button>' +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button><button class="aok fhok">OK</button></div>' +
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser funktionieren Hinweiston und Vibration nicht im Hintergrund. Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a></div>') +
+    "</div>";
+  document.body.appendChild(wrap);
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {
+      const c = { snd: wrap.querySelector(".fhsnd").value, vol: Number(wrap.querySelector(".fhvol").value) };
+      alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".fhvib").checked) vibratePattern([200, 100, 200]);
+      return;
+    }
+    if (e.target.closest(".acancel") || e.target === wrap) { try { wrap.remove(); } catch (err) {} return; }
+    if (e.target.closest(".fhok")) {
+      cfg.on = wrap.querySelector(".fhon").checked;
+      cfg.vib = wrap.querySelector(".fhvib").checked;
+      cfg.tone = wrap.querySelector(".fhtone").checked;
+      cfg.snd = wrap.querySelector(".fhsnd").value;
+      cfg.vol = Number(wrap.querySelector(".fhvol").value);
+      if (kind === "addr") saveAddrFavs(); else saveFhStopCfg();
+      if (cfg.on && window.KvgNative && !fhNotifAsked) {
+        fhNotifAsked = true;
+        nativeCall("requestNotifPerm");   // Freigabe für System-Hinweise (falls noch nicht erteilt)
+      }
+      try { wrap.remove(); } catch (err) {}
+      renderAddrFavs(); renderStopFavs();
+      setLocNote(cfg.on ? "🏠 Finde-nach-Hause für „" + name + "“ aktiviert." : "🏠 Finde-nach-Hause für „" + name + "“ deaktiviert.");
+      if (cfg.on) fhScan();
+    }
+  });
+}
+
 // ---------- Native Brücke (Android-Mini-App) ----------
 // window.KvgNative wird nur von der App eingespritzt; im Browser bleibt es
 // undefiniert und alle Aufrufe sind wirkungslos (Seite läuft unverändert weiter).
@@ -2541,14 +2847,37 @@ function alarmTick() {
 // nur Überschriften, nicht wählbar; gestellt wird erst mit Station und
 // mindestens einer der beiden Bedingungen. Aufruf über die Glocke am "Fahrtverlauf"-Kopf.
 function openAlarmDialog(tripId, preSn) {
+  if (!currentTrip || currentTrip.tripId !== tripId) return;   // nur mit geladenem Fahrtverlauf
   const tstops = (currentTrip && currentTrip.stops || []);
-  // Vorbelegung: angegebene Station, sonst eine mit gestelltem/ausgelöstem Wecker
+  // Vorbelegung-Priorität: läutend > ausgelöst > gestellt; sonst GPS-nahe bzw.
+  // nächste Abfahrts-Station der Fahrt
   let sn = preSn || null;
   if (!sn) {
-    const hit = tstops.find(x => alarms.has(tripId + "|" + x.shortName) ||
-      ringing.has(tripId + "|" + x.shortName) || firedAlarms.has(tripId + "|" + x.shortName));
+    const hit = tstops.find(x => ringing.has(tripId + "|" + x.shortName)) ||
+      tstops.find(x => firedAlarms.has(tripId + "|" + x.shortName)) ||
+      tstops.find(x => alarms.has(tripId + "|" + x.shortName));
     if (hit) sn = hit.shortName;
   }
+  // Marker für die Stationsauswahl: 📍 GPS steht gerade im Radius dieser Station,
+  // ▶ nächste Abfahrtsstation der Fahrt (erste Station mit Zeit ab jetzt)
+  const mPos = getPos();
+  const mR = isDB(currentTrip.sn) ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
+  let gpsSn = null, nextSn = null;
+  if (mPos) {
+    for (const x of tstops) {
+      const st = stops.find(s => s.shortName === x.shortName);
+      if (st && dist(mPos, st) < mR) { gpsSn = x.shortName; break; }
+    }
+  }
+  {
+    const n0 = new Date(), nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+    for (const x of tstops) {
+      const t = x.actualTime || x.time || x.plannedTime || "";
+      const [h, m] = t.split(":").map(Number);
+      if (isFinite(h) && isFinite(m) && h * 60 + m >= nowMin0 - 1) { nextSn = x.shortName; break; }
+    }
+  }
+  if (!sn) sn = gpsSn || nextSn;
   let aKey = null, a = { tripId, sn: "", name: "" }, old = {};
   let selDist = null, selLead = null;
   const cfg = alarmCfg();
@@ -2566,8 +2895,9 @@ function openAlarmDialog(tripId, preSn) {
     '<select class="astop"><option value="">– Station wählen –</option>' +
       tstops.map(x => {
         const t = x.actualTime || x.time || x.plannedTime || "";
+        const mk = x.shortName === gpsSn ? "📍 " : x.shortName === nextSn ? "▶ " : "";
         return '<option value="' + escapeHtml(x.shortName) + '"' + (sn === x.shortName ? " selected" : "") + '>' +
-          escapeHtml((t ? t + "  " : "") + x.name) + "</option>";
+          mk + escapeHtml((t ? t + "  " : "") + x.name) + "</option>";
       }).join("") + "</select>" +
     '<div class="dlabel">Distanz</div>' +
     '<div class="achips">' +
@@ -2693,7 +3023,7 @@ function openAlarmDialog(tripId, preSn) {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop"];
 function kvgExportState() {
   // Aktuell geöffnete Reiter (jeweils Kette Haltestelle -> Buslinie ->
   // Fahrtverlauf) mit in den Export nehmen; sie werden beim Import
@@ -2812,6 +3142,20 @@ busPanel.addEventListener("click", e => {
     }
     return;
   }
+  const bla = e.target.closest("[data-linalarm]");
+  if (bla) {
+    // Glocke im Linienkopf: Fahrtverlauf nötigenfalls nachladen, dann Wecker-Dialog
+    const tid = bla.dataset.linalarm;
+    if (currentTrip && currentTrip.tripId === tid) openAlarmDialog(tid);
+    else {
+      setLocNote("Fahrtverlauf wird geladen, Wecker-Dialog öffnet danach …");
+      selectTrip(currentBus.sn, tid).then(() => {
+        if (currentTrip && currentTrip.tripId === tid) openAlarmDialog(tid);
+        else setLocNote("Fahrtverlauf gerade nicht verfügbar – Wecker-Dialog nicht geöffnet.");
+      });
+    }
+    return;
+  }
   const al = e.target.closest("[data-alarmtrip]");
   if (al) {
     openAlarmDialog(al.dataset.alarmtrip);   // Glocke im Fahrtverlauf: Dialog mit Stationsauswahl
@@ -2839,6 +3183,9 @@ function renderStopFavs() {
     const s = stops.find(x => x.shortName === sn);
     inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
       '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) + "</span>" +
+      '<button class="afbtn" data-fh="stop:' + escapeHtml(sn) + '" title="Finde nach Hause: Hinweise einstellen' +
+        (fhStopCfg[sn] && fhStopCfg[sn].on ? ' (aktiv)' : '') + '">' +
+        (fhStopCfg[sn] && fhStopCfg[sn].on ? "🏠" : "⌂") + "</button>" +
       '<button class="afbtn" data-sfdel="' + escapeHtml(sn) + '" title="Aus Favoriten entfernen">✗</button></div>';
   });
   stopFavPanel.innerHTML = inner;
@@ -2858,6 +3205,12 @@ document.addEventListener("keydown", e => {
 });
 stopFavPanel.addEventListener("click", e => {
   e.stopPropagation();
+  const fhb = e.target.closest("[data-fh]");
+  if (fhb) {
+    const p = fhb.dataset.fh.split(":");
+    openFhDlg(p[0], p[1]);
+    return;
+  }
   const del = e.target.closest("[data-sfdel]");
   if (del) {
     const sn = del.dataset.sfdel;
@@ -2929,6 +3282,13 @@ function renderAlarmInd() {
     }
     entries.push({ aKey: aKey, a: a, cond: cond, when: when });
   }
+  // Läutende Wecker (ausgelöst, evtl. nativ im Hintergrund) zusätzlich anzeigen:
+  // dort beendet 🔕 das Läuten, ohne den Reiter wechseln zu müssen
+  for (const [aKey, r] of ringing) {
+    if (alarms.has(aKey)) continue;
+    entries.push({ aKey: aKey, a: { name: r.name || "Wecker", tabSn: "" },
+      cond: "läutet jetzt", when: "", ring: true });
+  }
   // In der App: Benachrichtigungsleiste synchron halten (auch leer: alle löschen).
   // Aktualisiert sich mit jedem Tick (Countdown) und bei jedem Wecker-Ändern.
   if (window.KvgNative) {
@@ -2945,7 +3305,9 @@ function renderAlarmInd() {
   if (!alarms.size) { alarmList.hidden = true; return; }
   alarmList.innerHTML = entries.map(en =>
     '<div class="alrow" data-akey="' + escapeHtml(en.aKey) + '" title="Zum Reiter wechseln">' +
-    '<span class="afsname">⏰ ' + escapeHtml(en.a.name) + " – " + en.cond + en.when + "</span></div>"
+    '<span class="afsname">⏰ ' + escapeHtml(en.a.name) + " – " + en.cond + en.when + "</span>" +
+    '<button class="afbtn" data-amute="' + escapeHtml(en.aKey) + '" title="' +
+      (en.ring ? "Läuten sofort beenden" : "Wecker entfernen") + '">🔕</button></div>'
   ).join("");
 }
 alarmInd.addEventListener("click", e => {
@@ -2958,6 +3320,25 @@ document.addEventListener("click", e => {
     alarmList.hidden = true;
 });
 alarmList.addEventListener("click", e => {
+  const mute = e.target.closest("[data-amute]");
+  if (mute) {
+    e.stopPropagation();
+    const k = mute.dataset.amute;
+    const nm = (ringing.get(k) && ringing.get(k).name) || (alarms.get(k) && alarms.get(k).name) || "Wecker";
+    if (ringing.has(k)) {
+      stopRinging(k);           // beendet Läuten + native Kette
+      firedAlarms.delete(k);
+      setLocNote("🔕 Läuten beendet: " + nm);
+    } else if (alarms.has(k)) {
+      alarms.delete(k);         // gestellten Wecker direkt aus der Liste entfernen
+      nativeCall("cancelAlarm", k);
+      setLocNote("🔕 Wecker entfernt: " + nm);
+    }
+    renderAlarmInd();
+    renderTabs();
+    if (currentBus) renderBusPanel();
+    return;
+  }
   const row = e.target.closest("[data-akey]");
   if (!row) return;
   const a = alarms.get(row.dataset.akey);
