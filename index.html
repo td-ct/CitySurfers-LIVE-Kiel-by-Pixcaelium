@@ -237,6 +237,35 @@
   #apiInd { position: fixed; top: 8px; right: 12px; z-index: 45; display: flex; gap: 5px;
     pointer-events: none; }
   #apiInd .ind { pointer-events: auto; cursor: pointer; }
+  #alarmInd { --c: #f59e0b; color: #f59e0b; font-size: 0.8rem; border: 1px solid #b45309;
+    border-radius: 999px; padding: 2px 7px; background: rgba(245,158,11,.12); }
+  #alarmInd::before { display: none; }
+  #alarmInd[hidden] { display: none; }
+  #tabsbar[hidden] { display: none; }
+  #alarmList { position: fixed; top: 38px; right: 12px; z-index: 52; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
+    min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
+  #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
+  #stopFavPanel { position: fixed; z-index: 50; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
+    min-width: 250px; max-width: 340px; box-shadow: 0 8px 22px #000000cc; margin: 4px 0 8px; }
+  #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
+  .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
+    border-radius: 6px; padding: 2px 7px; font-size: 0.75rem; }
+  .afbtn:hover { background: #334155; }
+  #tabsbar { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; margin-top: 6px; }
+  #tabsbar .tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #1e3a5f;
+    border-radius: 10px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
+    color: #cbd5e1; background: #0f172a; font-size: 0.85rem; user-select: none; }
+  #tabsbar .tab.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
+  #tabsbar .tab.dragging { opacity: .4; }
+  #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
+  #tabsbar .tabx:hover { color: #f87171; }
+  #tabsbar .tabal { color: #f59e0b; font-size: 0.95em; }
+  .stopfavrow { display: flex; justify-content: flex-start; margin-top: 10px; }
   #apiStats { position: fixed; top: 38px; right: 12px; z-index: 56; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
     min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
@@ -267,11 +296,13 @@
 </head>
 <body>
 <div id="apiInd" aria-hidden="true">
+  <button class="ind" id="alarmInd" hidden title="Gestellte Wecker anzeigen">⏰</button>
   <span class="ind" data-ind="db" title="Deutsche Bahn / NAH.SH (Zugabfahrten)">DB</span>
   <span class="ind" data-ind="kvg" title="KVG (Busabfahrten)">KVG</span>
   <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
   <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
 </div>
+<div id="alarmList" hidden></div>
 <div id="apiStats" hidden></div>
 <div class="wrap">
   <header>
@@ -301,16 +332,20 @@
   <div class="chips" id="addrChip"></div>
   <div class="locnote" id="locNote"></div>
 
+  <div class="stopfavrow">
+    <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
+  </div>
+  <div id="stopFavPanel" hidden></div>
   <div class="searchbox">
     <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
     <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
     <div class="suggestions" id="suggestions" hidden></div>
   </div>
 
+  <div id="tabsbar" hidden></div>
   <div class="panel" id="stationPanel" hidden></div>
   <div class="panel" id="busPanel" hidden></div>
 
-  <div class="chips" id="favorites"></div>
   <div class="alerts" id="alerts"></div>
 
   <footer>
@@ -1017,24 +1052,145 @@ document.addEventListener("click", e => {
   if (!e.target.closest(".searchbox")) sugBox.hidden = true;
 });
 
+// ---------- Reiter: mehrere Haltestellen (+Abfahrten, +Fahrtverlauf) parallel ----------
+// Unterhalb der Suchfelder lässt sich jede angeschaute Haltestelle als eigener
+// Reiter offen halten. Reiter lassen sich verschieben (Drag) und schließen (✕);
+// beim Schließen mit gestelltem Wecker gibt es eine Warnung, der Wecker wird
+// dann mitgelöscht (und aus dem Wecker-Indikator entfernt).
+const tabsbar = document.getElementById("tabsbar");
+const tabs = [];        // { sn, bus, trip }  pro Reiter: Haltestelle, Auswahl, Fahrtverlauf
+let activeTab = -1;
+
+// Fahrtverlauf unabhängig vom aktiven Reiter finden (für Wecker in Hintergrund-Reitern)
+function tripById(tripId) {
+  if (currentTrip && currentTrip.tripId === tripId) return currentTrip;
+  for (const t of tabs) if (t.trip && t.trip.tripId === tripId) return t.trip;
+  return null;
+}
+function tabAlarmCount(sn) {
+  let n = 0;
+  for (const [, a] of alarms) if (a.tabSn === sn) n++;
+  return n;
+}
+function renderTabs() {
+  if (!tabs.length) { tabsbar.hidden = true; tabsbar.innerHTML = ""; return; }
+  tabsbar.hidden = false;
+  tabsbar.innerHTML = tabs.map((t, i) => {
+    const s = stops.find(x => x.shortName === t.sn);
+    const nAl = tabAlarmCount(t.sn);
+    return '<div class="tab' + (i === activeTab ? " on" : "") + '" draggable="true" data-ti="' + i +
+      '" title="' + escapeHtml(s ? s.name : t.sn) + '">' +
+      escapeHtml(s ? s.name : t.sn) +
+      (nAl ? ' <span class="tabal" title="' + nAl + ' Wecker aktiv">⏰ ' + nAl + "</span>" : "") +
+      ' <button class="tabx" data-tx="' + i + '" title="Reiter schließen">✕</button></div>';
+  }).join("");
+}
+// Zustand des aktiven Reiters in sein Reiter-Objekt sichern (vor dem Wechseln)
+function saveActiveTab() {
+  const t = tabs[activeTab];
+  if (!t) return;
+  t.sn = currentStop ? currentStop.shortName : t.sn;
+  t.bus = currentBus;
+  if (currentTrip && currentBus && currentTrip.tripId === currentBus.tripId) t.trip = currentTrip;
+}
+function activateTab(i, refetch) {
+  saveActiveTab();
+  activeTab = i;
+  const t = tabs[i];
+  const stop = t ? stops.find(s => s.shortName === t.sn) : null;
+  currentStop = stop || null;
+  currentBus = t ? (t.bus || null) : null;
+  currentTrip = t ? (t.trip || null) : null;
+  stationPanelOpen = true;      // Einfrier-Zustand gehört zum vorherigen Reiter
+  stationPanelCache = "";
+  if (stop) { search.value = stop.name; sugBox.hidden = true; }
+  renderTabs();
+  renderPanels();
+  if (stop && refetch !== false) refetchStop(t.sn, true);
+  renderAlarmInd();
+}
+function openTab(sn) {
+  const i = tabs.findIndex(t => t.sn === sn);
+  if (i >= 0) { activateTab(i); return; }
+  tabs.push({ sn: sn, bus: null, trip: null });
+  activateTab(tabs.length - 1);
+}
+function closeTab(i) {
+  const t = tabs[i];
+  if (!t) return;
+  // Wecker dieses Reiters: Warnung, dann mitlöschen (auch aus dem Indikator)
+  const tabAlarms = [...alarms].filter(([, a]) => a.tabSn === t.sn);
+  if (tabAlarms.length) {
+    const nam = (stops.find(s => s.shortName === t.sn) || {}).name || t.sn;
+    if (!confirm("Für den Reiter „" + nam + "“ ist" +
+        (tabAlarms.length > 1 ? " sind " + tabAlarms.length + " Wecker" : " ist ein Wecker") +
+        " gestellt. Beim Schließen wird " + (tabAlarms.length > 1 ? "werden sie" : "wird er") +
+        " gelöscht. Reiter trotzdem schließen?")) return;
+    for (const [k] of tabAlarms) { alarms.delete(k); stopRinging(k); firedAlarms.delete(k); }
+  }
+  tabs.splice(i, 1);
+  if (activeTab === i) {
+    activeTab = -1;
+    currentStop = null; currentBus = null; currentTrip = null;
+    if (tabs.length) activateTab(Math.min(i, tabs.length - 1), false);
+  } else if (activeTab > i) activeTab--;
+  renderTabs();
+  renderPanels();
+  renderAlarmInd();
+}
+tabsbar.addEventListener("click", e => {
+  const x = e.target.closest(".tabx");
+  if (x) { closeTab(Number(x.dataset.tx)); return; }
+  const tb = e.target.closest(".tab");
+  if (tb && Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
+});
+// Reiter verschieben: Drag & Drop innerhalb der Reiterleiste
+let dragTi = -1;
+tabsbar.addEventListener("dragstart", e => {
+  const tb = e.target.closest(".tab");
+  if (!tb) return;
+  dragTi = Number(tb.dataset.ti);
+  tb.classList.add("dragging");
+  try { e.dataTransfer.effectAllowed = "move"; } catch (err) {}
+});
+tabsbar.addEventListener("dragend", e => {
+  const tb = e.target.closest(".tab");
+  if (tb) tb.classList.remove("dragging");
+});
+tabsbar.addEventListener("dragover", e => e.preventDefault());
+tabsbar.addEventListener("drop", e => {
+  e.preventDefault();
+  const tb = e.target.closest(".tab");
+  if (!tb || dragTi < 0 || dragTi >= tabs.length) { dragTi = -1; return; }
+  const to = Number(tb.dataset.ti);
+  if (to !== dragTi) {
+    const [moved] = tabs.splice(dragTi, 1);
+    tabs.splice(to, 0, moved);
+    if (activeTab === dragTi) activeTab = to;
+    else if (dragTi < activeTab && to >= activeTab) activeTab--;
+    else if (dragTi > activeTab && to <= activeTab) activeTab++;
+    renderTabs();
+  }
+  dragTi = -1;
+});
+
 function selectStop(shortName) {
   const stop = stops.find(s => s.shortName === shortName);
   if (!stop) return;
-  currentStop = stop;
-  currentBus = null;
   sugBox.hidden = true;
   search.value = stop.name;
-  renderFavs();
-  renderAddFav();
-  renderPanels();
-  refetchStop(shortName, true); // Panel braucht Live-Daten, auch wenn Zeile nie sichtbar war
+  openTab(shortName);   // neuen Reiter öffnen bzw. bestehenden aktivieren
 }
 
 function selectBus(sn, tripId) {
+  const i = tabs.findIndex(t => t.sn === sn);
+  if (i < 0) openTab(sn);                       // Reiter fehlt: öffnen
+  else if (i !== activeTab) activateTab(i, false);
   currentBus = { sn, tripId, stationOpen: true, tripOpen: false };
   if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
   const stop = stops.find(s => s.shortName === sn);
   if (stop) currentStop = stop;
+  renderTabs();
   renderPanels();
 }
 
@@ -1499,6 +1655,8 @@ function fireAlarm(aKey, a) {
   firedAlarms.add(aKey);
   startRinging(aKey, a);   // klingelt/vibriert im 3 s/5 s-Rhythmus bis weggeklickt
   setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab! Zum Beenden ⏰ antippen.");
+  renderTabs();
+  renderAlarmInd();
   if (currentBus) renderBusPanel();
 }
 
@@ -1512,13 +1670,13 @@ function nativeCall(fn, ...args) {
 function nativeVibrate(pat) { nativeCall("vibrate", JSON.stringify(pat)); }
 // Weckzeit (Epoch-ms) = geplante/aktuelle Abfahrt minus Vorlauf, inkl. Tagesumbruch
 function nativeAlarmEpoch(aKey, leadMin) {
-  if (!currentTrip) return null;
-  const i = aKey.indexOf("|");
-  const sn = aKey.slice(i + 1);
-  const s = (currentTrip.stops || []).find(x => x.shortName === sn);
+  const trip = tripById(aKey.slice(0, aKey.indexOf("|")));
+  if (!trip) return null;
+  const sn = aKey.slice(aKey.indexOf("|") + 1);
+  const s = (trip.stops || []).find(x => x.shortName === sn);
   if (!s) return null;
-  const key = s.key || (sn + "|" + currentTrip.tripId);
-  const dl = currentTrip.delay[key] || {};
+  const key = s.key || (sn + "|" + trip.tripId);
+  const dl = trip.delay[key] || {};
   const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
   const [h, m] = t.split(":").map(Number);
   if (!isFinite(h) || !isFinite(m)) return null;
@@ -1532,8 +1690,9 @@ function nativeAlarmEpoch(aKey, leadMin) {
 
 // Abfahrtszeit (Minuten des Tages) der Wecker-Station aus dem aktuellen Fahrtverlauf
 function alarmDepMin(a) {
-  if (!currentTrip || currentTrip.tripId !== a.tripId) return null;
-  const s = (currentTrip.stops || []).find(x => x.shortName === a.sn);
+  const trip = tripById(a.tripId);
+  if (!trip) return null;
+  const s = (trip.stops || []).find(x => x.shortName === a.sn);
   if (!s) return null;
   const key = s.key || (a.sn + "|" + a.tripId);
   const dl = currentTrip.delay[key] || {};
@@ -1572,6 +1731,7 @@ async function pollAlarmStop(a) {
 }
 function alarmTick() {
   syncNativeRinging();
+  renderAlarmInd();
   if (!alarms.size) return;
   const pos = getPos();
   const nowD = new Date();
@@ -1678,6 +1838,8 @@ function openAlarmDialog(aKey) {
       alarms.delete(aKey);
       stopRinging(aKey);
       wrap.remove();
+      renderAlarmInd();
+      renderTabs();
       setLocNote("🔕 Wecker gelöscht: " + a.name);
       if (currentBus) renderBusPanel();
       return;
@@ -1691,6 +1853,7 @@ function openAlarmDialog(aKey) {
       const useTone = wrap.querySelector(".atone").checked;
       firedAlarms.delete(aKey);       // ggf. alten Auslöse-Zustand zurücksetzen
       alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
+        tabSn: currentBus ? currentBus.sn : (currentStop ? currentStop.shortName : null),
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
       // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
@@ -1701,6 +1864,8 @@ function openAlarmDialog(aKey) {
           JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
       }
       wrap.remove();
+      renderAlarmInd();
+      renderTabs();
       setLocNote("🔔 Wecker gestellt: " + a.name +
         (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
         (selDist && selLead ? " oder " : "") +
@@ -1719,13 +1884,16 @@ function openAlarmDialog(aKey) {
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
 const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view"];
 function kvgExportState() {
-  // Aktuell geöffnete Ansicht (Kette Haltestelle -> Buslinie -> Fahrtverlauf)
-  // mit in den Export nehmen; sie wird beim Import wiederhergestellt/geöffnet.
+  // Aktuell geöffnete Reiter (jeweils Kette Haltestelle -> Buslinie ->
+  // Fahrtverlauf) mit in den Export nehmen; sie werden beim Import
+  // wiederhergestellt/geöffnet.
   try {
+    saveActiveTab();
     localStorage.setItem("kvg-view", JSON.stringify({
-      sn: currentStop ? currentStop.shortName : null,
-      bus: currentBus ? { sn: currentBus.sn, tripId: currentBus.tripId,
-                          tripOpen: !!currentBus.tripOpen } : null }));
+      tabs: tabs.map(t => ({ sn: t.sn,
+        bus: t.bus ? { sn: t.bus.sn, tripId: t.bus.tripId,
+                        tripOpen: !!t.bus.tripOpen } : null })),
+      active: Math.max(0, activeTab) }));
   } catch (e) {}
   const o = {};
   for (const k of STATE_KEYS) {
@@ -1841,39 +2009,62 @@ busPanel.addEventListener("click", e => {
   if (ref) refetchStop(ref.dataset.ref, true);
 });
 
-// ---------- Favoriten ----------
-function renderFavs() {
-  const box = document.getElementById("favorites");
-  if (!favs.length) { box.innerHTML = ""; renderAddFav(); return; }
-  const names = favs.map(sn => {
-    const s = stops.find(x => x.shortName === sn);
-    return s ? s.name : null;
-  });
-  box.innerHTML = favs.map((sn, i) =>
-    '<span class="chip' + (currentStop && currentStop.shortName === sn ? " sel" : "") +
-    '" data-sn="' + escapeHtml(sn) + '">' + escapeHtml(names[i] || sn) + " ✕</span>").join("");
-  renderAddFav();
-}
-
-document.getElementById("favorites").addEventListener("click", e => {
-  const chip = e.target.closest(".chip");
-  if (!chip || chip.id === "addFav") return;
-  const sn = chip.dataset.sn;
-  const remove = e.offsetX > chip.offsetWidth - 24;
-  if (remove) {
-    favs = favs.filter(f => f !== sn);
-    localStorage.setItem("kvg-favs", JSON.stringify(favs));
-    renderFavs();
-  } else if (stops.length) {
-    selectStop(sn);
+// ---------- Haltestellenfavoriten (Liste, wie bei den Adressen) ----------
+const stopFavBtn = document.getElementById("stopFavBtn");
+const stopFavPanel = document.getElementById("stopFavPanel");
+const stopFavCount = document.getElementById("stopFavCount");
+function renderStopFavs() {
+  if (stopFavCount) stopFavCount.textContent = favs.length;
+  if (stopFavPanel.hidden) return;
+  let inner = "";
+  if (!favs.length) {
+    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Haltestellenfavoriten. ' +
+      "★ an einer Haltestelle antippen, um sie hier zu sichern.</span></div>";
   }
+  favs.forEach(sn => {
+    const s = stops.find(x => x.shortName === sn);
+    inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
+      '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) + "</span>" +
+      '<button class="afbtn" data-sfdel="' + escapeHtml(sn) + '" title="Aus Favoriten entfernen">✗</button></div>';
+  });
+  stopFavPanel.innerHTML = inner;
+}
+stopFavBtn.addEventListener("click", e => {
+  e.stopPropagation();
+  stopFavPanel.hidden = !stopFavPanel.hidden;
+  renderStopFavs();
+});
+document.addEventListener("click", e => {
+  if (!stopFavPanel.hidden && !e.target.closest("#stopFavPanel") && !e.target.closest("#stopFavBtn"))
+    stopFavPanel.hidden = true;
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !stopFavPanel.hidden) stopFavPanel.hidden = true;
+});
+stopFavPanel.addEventListener("click", e => {
+  e.stopPropagation();
+  const del = e.target.closest("[data-sfdel]");
+  if (del) {
+    const sn = del.dataset.sfdel;
+    const s = stops.find(x => x.shortName === sn);
+    if (confirm("Haltestelle „" + (s ? s.name : sn) + "“ aus den Favoriten entfernen?")) {
+      favs = favs.filter(f => f !== sn);
+      try { localStorage.setItem("kvg-favs", JSON.stringify(favs)); } catch (err) {}
+      document.querySelectorAll("[data-star]").forEach(b =>
+        b.classList.toggle("off", !favs.includes(b.dataset.star)));
+      renderStopFavs();
+    }
+    return;
+  }
+  const row = e.target.closest("[data-sfi]");
+  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; }
 });
 
 function toggleFavSn(sn) {
   if (favs.includes(sn)) favs = favs.filter(f => f !== sn);
   else { favs.unshift(sn); favs = favs.slice(0, 8); }
   localStorage.setItem("kvg-favs", JSON.stringify(favs));
-  renderFavs();
+  renderStopFavs();
   // alle Sterne dieser Station überall aktualisieren
   document.querySelectorAll("[data-star]").forEach(b => {
     b.classList.toggle("off", !favs.includes(b.dataset.star));
@@ -1883,26 +2074,68 @@ function starHTML(sn) {
   return '<button class="star' + (favs.includes(sn) ? "" : " off") +
     '" data-star="' + escapeHtml(sn) + '" title="Favorit">★</button>';
 }
-function toggleFav() {
-  if (!currentStop) return;
-  toggleFavSn(currentStop.shortName);
-  renderPanels();
-}
 
-function renderAddFav() {
-  const box = document.getElementById("favorites");
-  const add = currentStop && !favs.includes(currentStop.shortName);
-  let btn = document.getElementById("addFav");
-  if (!btn) {
-    btn = document.createElement("span");
-    btn.id = "addFav";
-    btn.className = "chip";
-    btn.textContent = "☆ Merken";
-    btn.addEventListener("click", toggleFav);
-    box.appendChild(btn);
-  }
-  btn.style.display = add ? "" : "none";
+// ---------- Wecker-Indikator (oben neben den Aktivitäts-Indikatoren) ----------
+// Zeigt alle gestellten Wecker mit Bedingung, Läut-Zeit und Restzeit; ein Klick
+// auf einen Eintrag wechselt in den Reiter des Weckers. Ohne Wecker unsichtbar.
+const alarmInd = document.getElementById("alarmInd");
+const alarmList = document.getElementById("alarmList");
+function alarmRingEpoch(a) {
+  if (a.leadMin == null) return null;
+  const trip = tripById(a.tripId);
+  if (!trip) return null;
+  const s = (trip.stops || []).find(x => x.shortName === a.sn);
+  if (!s) return null;
+  const key = s.key || (a.sn + "|" + trip.tripId);
+  const dl = (trip.delay || {})[key] || {};
+  const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+  const [h, m] = t.split(":").map(Number);
+  if (!isFinite(h) || !isFinite(m)) return null;
+  const now = new Date();
+  let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
+  if (depMs < Date.now() - 60000) depMs += 86400000;   // nachts: nächster Tag
+  return depMs - a.leadMin * 60000;
 }
+function renderAlarmInd() {
+  alarmInd.hidden = !alarms.size;
+  if (alarmList.hidden) return;
+  if (!alarms.size) { alarmList.hidden = true; return; }
+  let inner = "";
+  for (const [aKey, a] of alarms) {
+    const cond = a.leadMin != null
+      ? a.leadMin + " min vor Abfahrt"
+      : (a.dist >= 1000 ? a.dist / 1000 + " km" : a.dist + " m") + " Entfernung";
+    const ep = alarmRingEpoch(a);
+    let when = "";
+    if (ep != null) {
+      const d = new Date(ep);
+      const mins = Math.round((ep - Date.now()) / 60000);
+      const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
+      when = " · klingelt " + hh + ":" + mm + " (in " + (mins > 0 ? mins + " min" : "jetzt") + ")";
+    }
+    inner += '<div class="alrow" data-akey="' + escapeHtml(aKey) + '" title="Zum Reiter wechseln">' +
+      '<span class="afsname">⏰ ' + escapeHtml(a.name) + " – " + cond + when + "</span></div>";
+  }
+  alarmList.innerHTML = inner;
+}
+alarmInd.addEventListener("click", e => {
+  e.stopPropagation();
+  alarmList.hidden = !alarmList.hidden;
+  renderAlarmInd();
+});
+document.addEventListener("click", e => {
+  if (!alarmList.hidden && !e.target.closest("#alarmList") && !e.target.closest("#alarmInd"))
+    alarmList.hidden = true;
+});
+alarmList.addEventListener("click", e => {
+  const row = e.target.closest("[data-akey]");
+  if (!row) return;
+  const a = alarms.get(row.dataset.akey);
+  if (!a) return;
+  const i = tabs.findIndex(t => t.sn === a.tabSn);
+  if (i >= 0) activateTab(i, false);
+  alarmList.hidden = true;
+});
 
 // ---------- Entfernung & Fußweg-Routing ----------
 const walkCache = JSON.parse(localStorage.getItem("kvg-walk2") || "{}"); // sn -> {m,lat,lon,ts}
@@ -2516,26 +2749,33 @@ try {
   }
 } catch (e) {}
 
-// Gesicherte Ansicht wiederherstellen: Kette aus Haltestelle und ggf.
-// gewählter Buslinie inkl. Fahrtverlauf öffnen (z. B. nach Zustands-Import).
+// Gesicherte Reiter wiederherstellen: pro Reiter die Kette aus Haltestelle
+// und ggf. gewählter Buslinie inkl. Fahrtverlauf öffnen (z. B. nach Import).
 try {
   const sv = JSON.parse(localStorage.getItem("kvg-view") || "null");
-  if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
-    if (sv.bus && sv.bus.tripId) {
-      selectBus(sv.bus.sn, sv.bus.tripId);
-      if (sv.bus.tripOpen) {
+  const openOne = (sn, bus) => {
+    if (bus && bus.tripId) {
+      selectBus(sn, bus.tripId);
+      if (bus.tripOpen) {
         // Abfahrten der Station abwarten (DB braucht die geplante Zeit der
         // Fahrt, um den Verlauf eindeutig zuzuordnen), dann Verlauf laden.
         let tries = 0;
         const t = setInterval(() => {
           tries++;
-          if (((viewOf(sv.bus.sn) || {}).deps) || tries > 40) {   // max. ~12 s
+          if (((viewOf(sn) || {}).deps) || tries > 40) {   // max. ~12 s
             clearInterval(t);
-            selectTrip(sv.bus.sn, sv.bus.tripId, true);
+            if (currentBus && currentBus.sn === sn && currentBus.tripId === bus.tripId)
+              selectTrip(sn, bus.tripId, true);
           }
         }, 300);
       }
-    } else selectStop(sv.sn);
+    } else selectStop(sn);
+  };
+  if (sv && Array.isArray(sv.tabs) && sv.tabs.length) {
+    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus); });
+    if (tabs.length) activateTab(Math.min(sv.active || 0, tabs.length - 1), false);
+  } else if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
+    openOne(sv.sn, sv.bus);   // altes Format (einzelner Reiter, v1.0.10)
   }
 } catch (e) {}
 
@@ -2549,7 +2789,7 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 setStatus(stops.length + " Haltestellen bereit");
-renderFavs();
+renderStopFavs();
 </script>
 </body>
 </html>
