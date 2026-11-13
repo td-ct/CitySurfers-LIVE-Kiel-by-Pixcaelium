@@ -26,12 +26,25 @@
 
   /* Zeile 1: GPS-Kontrolle + Adresse */
   .addrwrap { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
-  #gpsCtl { display: flex; align-items: center; gap: 5px; }   /* im Header, ganz rechts */
+  /* GPS an/aus: feste Ecke oben rechts (unabhängig vom Header-Umbruch) */
+  #gpsCtl { position: fixed; top: 6px; right: 12px; z-index: 47; display: flex; align-items: center; gap: 5px;
+    background: #0f172ae6; border: 1px solid #334155; border-radius: 999px; padding: 3px 6px; }
   #gpsCtl.disabled .gpsbtn, #gpsCtl.disabled .accbar { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
   #posBtn, #addrGo { flex: none; }
   #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
   #accDlg[hidden] { display: none; }
+  #gpsDlg, #favDlg { position: fixed; inset: 0; z-index: 82; background: rgba(2,6,23,.65);
+    display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #gpsDlg[hidden], #favDlg[hidden] { display: none; }
+  .gpsdlg-row { display: flex; align-items: center; gap: 10px; }
+  .accbox input[type="text"] { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+  .favfield { display: flex; flex-direction: column; gap: 4px; }
+  .favfield label { font-size: 0.8rem; color: #94a3b8; }
+  #favDlgAddr { flex: 1; }
+  .sugsep { border: none; border-top: 1px solid #334155; margin: 4px 0; }
+  #addrSug .favhit .atype { color: #f59e0b; }
   .accbox { background: #1e293b; border: 1px solid #334155; border-radius: 12px;
     padding: 16px; max-width: 360px; display: flex; flex-direction: column; gap: 10px; font-size: 0.95rem; }
   .accbox b { color: #4ade80; }
@@ -74,7 +87,9 @@
 
   /* Zeile 2: Haltestellensuche */
   .searchbox { position: relative; margin-bottom: 6px; }
-  #stopSearch { padding-right: 40px; }
+  #stopSearch { padding-right: 108px; }
+  #gpsGoBtn { position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+    font-size: 0.72rem; padding: 7px 8px; border-radius: 8px; white-space: nowrap; }
   .ddbtn {
     position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
     background: none; border: none; color: #94a3b8; font-size: 1rem;
@@ -145,7 +160,7 @@
 
   footer { margin-top: 24px; font-size: 0.8rem; color: #475569; line-height: 1.5; }
   footer a { color: #64748b; }
-  #addrFavPanel { position: fixed; top: 60px; right: 12px; z-index: 50; background: #1e293b;
+  #addrFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
     max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   #addrFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
@@ -246,8 +261,8 @@
   .trip .lupe:hover { transform: scale(1.2); }
   .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-  /* API-Indikatoren (rechte obere Ecke) */
-  #apiInd { position: fixed; top: 8px; right: 12px; z-index: 45; display: flex; gap: 5px;
+  /* API-Indikatoren (unterhalb der GPS-Ecke oben rechts) */
+  #apiInd { position: fixed; top: 48px; right: 12px; z-index: 45; display: flex; gap: 5px;
     pointer-events: none; }
   #apiInd .ind { pointer-events: auto; cursor: pointer; }
   #alarmInd { --c: #f59e0b; color: #f59e0b; font-size: 0.8rem; border: 1px solid #b45309;
@@ -255,12 +270,12 @@
   #alarmInd::before { display: none; }
   #alarmInd[hidden] { display: none; }
   #tabsbar[hidden] { display: none; }
-  #alarmList { position: fixed; top: 38px; right: 12px; z-index: 52; background: #1e293b;
+  #alarmList { position: fixed; top: 82px; right: 12px; z-index: 52; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
-  #stopFavPanel { position: fixed; z-index: 50; background: #1e293b;
+  #stopFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
     min-width: 250px; max-width: 340px; box-shadow: 0 8px 22px #000000cc; margin: 4px 0 8px; }
   #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
@@ -278,8 +293,7 @@
   #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
   #tabsbar .tabx:hover { color: #f87171; }
   #tabsbar .tabal { color: #f59e0b; font-size: 0.95em; }
-  .stopfavrow { display: flex; justify-content: flex-start; margin-top: 10px; }
-  #apiStats { position: fixed; top: 38px; right: 12px; z-index: 56; background: #1e293b;
+  #apiStats { position: fixed; top: 82px; right: 12px; z-index: 56; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
     min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
   #apiStats .ashdr { font-weight: 700; color: #e2e8f0; margin-bottom: 5px; }
@@ -308,6 +322,10 @@
 </style>
 </head>
 <body>
+<div id="gpsCtl">
+  <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
+  <button class="gpsbtn" id="locBtn" title="GPS aktivieren">◎</button>
+</div>
 <div id="apiInd" aria-hidden="true">
   <button class="ind" id="alarmInd" hidden title="Gestellte Wecker anzeigen">⏰</button>
   <span class="ind" data-ind="db" title="Deutsche Bahn / NAH.SH (Zugabfahrten)">DB</span>
@@ -329,6 +347,36 @@
     </div>
   </div>
 </div>
+<div id="gpsDlg" hidden>
+  <div class="accbox">
+    <div><b>GPS-Ortung für die Haltestellenliste</b></div>
+    <div class="gpsdlg-row">
+      <button class="gpsbtn" id="gpsDlgBtn" title="GPS ein- bzw. ausschalten">◎</button>
+      <span id="gpsDlgState">GPS aus</span>
+      <span class="accbar" id="gpsDlgBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+    <div>Aktuelle Genauigkeit: <b id="gpsDlgAcc">–</b></div>
+    <div id="gpsDlgMsg">GPS wird eingeschaltet – warte auf Positionsdaten …</div>
+    <div class="acbtns">
+      <button class="chip bad" id="gpsDlgCancel">Abbrechen</button>
+      <button class="chip ok" id="gpsDlgOk">Übernehmen</button>
+    </div>
+  </div>
+</div>
+<div id="favDlg" hidden>
+  <div class="accbox">
+    <div><b>Adressfavorit bearbeiten</b></div>
+    <div class="favfield"><label for="favDlgName">Alias-Name</label>
+      <input type="text" id="favDlgName" autocomplete="off" placeholder="z. B. Zuhause, Arbeit, Oma" /></div>
+    <div class="favfield"><label for="favDlgAddr">Adresse</label>
+      <input type="text" id="favDlgAddr" autocomplete="off" placeholder="Straße Nr., PLZ Ort oder Koordinaten" /></div>
+    <div id="favDlgMsg" class="dim"></div>
+    <div class="acbtns">
+      <button class="chip bad" id="favDlgCancel">Abbrechen</button>
+      <button class="chip ok" id="favDlgOk">Übernehmen</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <header>
     <h1>CitySurfers <span class="live">● LIVE</span><span class="kiel">@ Kiel</span> <span class="by">by Pixcaelium</span></h1>
@@ -339,11 +387,8 @@
       A
     </span>
     <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
+    <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
     <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
-    <span id="gpsCtl">
-      <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
-      <button class="gpsbtn" id="locBtn" title="GPS aktivieren">◎</button>
-    </span>
   </header>
 
   <div id="addrFavPanel" hidden></div>
@@ -359,12 +404,10 @@
   <div class="chips" id="addrChip"></div>
   <div class="locnote" id="locNote"></div>
 
-  <div class="stopfavrow">
-    <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
-  </div>
   <div id="stopFavPanel" hidden></div>
   <div class="searchbox">
     <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
+    <button class="gpsbtn" id="gpsGoBtn" title="GPS-Ortung übernehmen und Haltestellenliste danach sortieren">GPS➜</button>
     <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
     <div class="suggestions" id="suggestions" hidden></div>
   </div>
@@ -572,6 +615,12 @@ sortStops();
 
 // ---------- GPS-Steuerung ----------
 const locBtn = document.getElementById("locBtn");
+const gpsDlgBtn = document.getElementById("gpsDlgBtn");
+const gpsDlg = document.getElementById("gpsDlg");
+const gpsDlgState = document.getElementById("gpsDlgState");
+const gpsDlgAcc = document.getElementById("gpsDlgAcc");
+const gpsDlgMsg = document.getElementById("gpsDlgMsg");
+const gpsDlgBar = document.getElementById("gpsDlgBar");
 const locNote = document.getElementById("locNote");
 const gpsCtl = document.getElementById("gpsCtl");
 const accBar = document.getElementById("accBar");
@@ -644,14 +693,25 @@ function onPos(pos) {
   } catch (e) {}
   if (addrPos) {
     if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✗ hinter der Adresse kehrt zu GPS zurück.");
+    if (!gpsDlg.hidden && pos.coords.accuracy <= 20) { gpsDlg.hidden = true; gpsAdoptForStops(myPos); }
     return;
   }
-  if (firstFix || moved) {
+  // Ortung wird für die Sortierung der Listen höchstens alle 30 s neu angewendet
+  const sortDue = !lastGpsSortTs || Date.now() - lastGpsSortTs >= 30000;
+  if (!gpsDlg.hidden && myPos.accuracy <= 20) {   // Dialog: ab ±20 m automatisch übernehmen
+    gpsDlg.hidden = true;
+    lastGpsSortTs = Date.now();
+    gpsAdoptForStops(myPos);
+    return;
+  }
+  if (firstFix || (moved && sortDue)) {
+    lastGpsSortTs = Date.now();
     positionReset();
     setLocNote("GPS aktiv · Positionen kommen laufend (±" + Math.round(myPos.accuracy) +
       " m) · " + stops.length + " Haltestellen nach Entfernung.");
   }
 }
+let lastGpsSortTs = 0;
 
 function onGpsErr(err) {
   if (gpsState === "off") return;
@@ -674,13 +734,25 @@ function onGpsErr(err) {
   }
 }
 
+let gpsSuspect = false;
 function renderGpsBtn() {
-  locBtn.classList.toggle("busy", gpsState === "searching");
-  locBtn.classList.toggle("active", gpsState === "on");
-  locBtn.textContent = gpsState === "on" ? "◉" : "◎";
-  locBtn.title = gpsState === "on" ? "GPS aktiv (läuft laufend) – klicken zum Deaktivieren"
-    : gpsState === "searching" ? "GPS-Suche läuft – klicken zum Abbrechen"
-    : "GPS aktivieren";
+  for (const b of [locBtn, gpsDlgBtn]) {
+    if (!b) continue;
+    b.classList.toggle("busy", gpsState === "searching");
+    b.classList.toggle("active", gpsState === "on");
+    if (b === gpsDlgBtn) continue;   // im Dialog nur Zustand, kein Verdachts-Blinken
+    b.classList.toggle("suspect", gpsSuspect);
+    b.textContent = gpsState === "on" ? "◉" : "◎";
+    b.title = gpsState === "on" ? "GPS aktiv (läuft laufend) – klicken zum Deaktivieren"
+      : gpsState === "searching" ? "GPS-Suche läuft – klicken zum Abbrechen"
+      : "GPS aktivieren";
+  }
+  if (gpsDlgBtn) {
+    gpsDlgBtn.textContent = gpsState === "on" ? "◉ GPS aus" : gpsState === "searching" ? "◎ … abbrechen" : "◎ GPS ein";
+    gpsDlgState.textContent = gpsState === "on" ? "GPS an (läuft laufend)"
+      : gpsState === "searching" ? "GPS wird eingeschaltet …" : "GPS aus";
+  }
+  updateGpsDlg();
 }
 
 function renderAcc() {
@@ -693,7 +765,69 @@ function renderAcc() {
   } else {
     accBar.hidden = true;
   }
+  updateGpsDlg();
 }
+
+// ---------- GPS-Dialog an der Haltestellensuche (Knopf „GPS➜") ----------
+// Gute Ortung (<= 100 m): sofort übernehmen, Liste öffnen, ohne Dialog.
+// Schlechte Ortung: Dialog wartet auf besseres Signal, schließt automatisch bei <= 20 m.
+// Übernehmen/Suche übernimmt die Position frühestens alle 30 s neu in die Listen.
+function updateGpsDlg() {
+  if (!gpsDlg || gpsDlg.hidden) return;
+  if (myPos && gpsState !== "off") {
+    const a = Math.round(myPos.accuracy || 0);
+    gpsDlgAcc.textContent = "±" + a + " m";
+    const seg = a <= 10 ? 5 : a <= 25 ? 4 : a <= 50 ? 3 : a <= 100 ? 2 : 1;
+    [...gpsDlgBar.children].forEach((el, i) => el.classList.toggle("on", i < seg));
+    gpsDlgBar.hidden = false;
+    gpsDlgBar.title = "GPS-Genauigkeit ±" + a + " m";
+    gpsDlgMsg.textContent = gpsState === "searching" ? "GPS wird eingeschaltet – warte auf Positionsdaten …"
+      : a <= 20 ? "Sehr gute Ortung – wird übernommen …"
+      : a <= 100 ? "Gute Ortung – „Übernehmen“ oder auf ein noch besseres Signal (±20 m) warten."
+      : "Ortung noch ungenau – warte auf ein besseres Signal (ab ±20 m automatische Übernahme) …";
+  } else {
+    gpsDlgAcc.textContent = "–";
+    gpsDlgBar.hidden = true;
+    gpsDlgMsg.textContent = gpsState === "searching" ? "GPS wird eingeschaltet – warte auf Positionsdaten …"
+      : "GPS aus – oben im Dialog einschalten.";
+  }
+}
+function gpsAdoptForStops(p) {
+  if (!p) return;
+  adoptGpsPos(p);   // übernimmt Position, sortiert, meldet
+  search.value = "";
+  searchIndex = 0;
+  updateSuggestions();
+  focusFirstRow(sugBox);
+}
+function gpsTakeOver() {
+  if (!("geolocation" in navigator) || !isSecure()) {
+    setLocNote("GPS nicht verfügbar – Adresse, Koordinaten oder Locator eintippen oder als Karten-Link senden.");
+    return;
+  }
+  // GPS an und gute Ortung: kein Dialog, direkt für die Sortierung übernehmen
+  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= 100)) {
+    gpsAdoptForStops(myPos);
+    return;
+  }
+  // sonst: Dialog (schaltet GPS nötigenfalls ein, wartet auf besseres Signal)
+  if (gpsState === "off") gpsStart();
+  renderGpsBtn();
+  updateGpsDlg();
+  gpsDlg.hidden = false;
+}
+gpsDlgBtn.addEventListener("click", gpsToggle);
+document.getElementById("gpsGoBtn").addEventListener("click", gpsTakeOver);
+document.getElementById("gpsDlgOk").addEventListener("click", () => {
+  if (!myPos || gpsState !== "on") {
+    gpsDlgMsg.textContent = "Noch keine Position – kurz warten und erneut drücken oder GPS oben einschalten.";
+    return;
+  }
+  gpsDlg.hidden = true;
+  gpsAdoptForStops(myPos);
+});
+document.getElementById("gpsDlgCancel").addEventListener("click", () => { gpsDlg.hidden = true; });
+gpsDlg.addEventListener("keydown", e => { if (e.key === "Escape") gpsDlg.hidden = true; });
 
 function setLocNote(t) { locNote.textContent = t; }
 locBtn.addEventListener("click", gpsToggle);
@@ -705,7 +839,6 @@ renderGpsBtn();
 // Dann: kleiner runder GPS-Knopf rot aufblinken lassen, genau in dem Moment sowie
 // noch mal 2 Minuten später die Echtzeitdaten der Linie abfragen; danach wird der
 // alte Zustand des GPS-Knopfes wiederhergestellt (falls nicht neu gesetzt).
-let gpsSuspect = false;
 function renderGpsSuspect() {
   locBtn.classList.toggle("suspect", gpsSuspect);
 }
@@ -747,8 +880,20 @@ accDlgThresh.addEventListener("input", () => {
 // die nächsten Stationen oben nach Abstand einsortieren
 function clearStopSearchOnAddrLogin() {
   search.value = "";
-  searchIndex = -1;
-  if (!sugBox.hidden) updateSuggestions();
+  if (!sugBox.hidden) { updateSuggestions(); focusFirstRow(sugBox); }
+}
+
+// Liste mit Fokus auf dem ersten Eintrag öffnen (statt auf die Texteingabe):
+// mobil bleibt die Bildschirm-Tastatur damit unten, Pfeiltasten/Enter gehen
+// direkt an die Liste.
+function focusFirstRow(box) {
+  if (!box || box.hidden) return;
+  const first = box.querySelector("div[data-sn], div[data-addr], div[data-favsel], div[data-coord]");
+  if (!first) return;
+  first.setAttribute("tabindex", "-1");
+  [...box.querySelectorAll(".active")].forEach(el => el.classList.remove("active"));
+  first.classList.add("active");
+  first.focus({ preventScroll: false });
 }
 
 function adoptGpsPos(p) {
@@ -1005,12 +1150,23 @@ async function searchAddress(q) {
       }
     } catch (e) {}
   }
-  if (!addrResults.length) {
+  // Favoriten (Alias und Adresse) mit durchsuchen: Treffer oben, vor den allgemeinen Orten
+  const ql = q.toLowerCase();
+  const favHits = addrFavs.filter(f =>
+    (f.name || "").toLowerCase().includes(ql) || (f.label || "").toLowerCase().includes(ql));
+  if (!addrResults.length && !favHits.length) {
     addrSug.innerHTML = '<div><span>keine passende Adresse gefunden</span></div>';
     addrSug.hidden = false;
     return;
   }
-  addrSug.innerHTML = addrResults.map((r, i) => {
+  let html = favHits.map(f => {
+    const i = addrFavs.indexOf(f);
+    return '<div data-favsel="' + i + '" class="favhit" title="Adressfavorit als Standort übernehmen">' +
+      '<span>⭐ ' + escapeHtml(f.name) + '</span>' +
+      '<span class="atype">' + escapeHtml(f.label || "") + '</span></div>';
+  }).join("");
+  if (favHits.length && addrResults.length) html += '<hr class="sugsep" />';
+  html += addrResults.map((r, i) => {
     const isFav = addrFavs.some(f =>
       f.label === r.label && f.lat === Number(r.lat) && f.lon === Number(r.lon));
     return '<div data-addr="' + i + '"><span>' + escapeHtml(r.label) + "</span>" +
@@ -1018,6 +1174,7 @@ async function searchAddress(q) {
       '" title="Adresse als Favorit speichern bzw. entfernen">★</button>' +
       '<span class="atype">' + escapeHtml(r.type) + "</span></div>";
   }).join("");
+  addrSug.innerHTML = html;
   addrSug.hidden = false;
 }
 
@@ -1039,8 +1196,31 @@ addrSug.addEventListener("click", e => {
   }
   const coord = e.target.closest("[data-coord]");
   if (coord && addrSearch._loc) { selectCoord(addrSearch._loc); return; }
+  const favRow = e.target.closest("[data-favsel]");
+  if (favRow) {
+    const f = addrFavs[Number(favRow.dataset.favsel)];
+    if (f) {
+      addrPos = { lat: f.lat, lon: f.lon, label: f.label || f.name };
+      try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (err) {}
+      addrSug.hidden = true;
+      addrSearch.value = f.name;
+      renderAddrChip();
+      gpsCtl.classList.add("disabled");
+      positionReset();
+      clearStopSearchOnAddrLogin();
+      setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+      renderPanels();
+    }
+    return;
+  }
   const div = e.target.closest("div[data-addr]");
   if (div) selectAddr(Number(div.dataset.addr));
+});
+addrSug.addEventListener("keydown", e => {
+  if (e.key === "Escape") { addrSug.hidden = true; return; }
+  if (e.key !== "Enter") return;
+  const row = e.target.closest("div[data-addr], div[data-favsel], div[data-coord]");
+  if (row) row.click();
 });
 
 // Koordinaten/Locator als Standort aktivieren
@@ -1148,8 +1328,9 @@ function renderAddrFavs() {
   }
   addrFavs.forEach((f, i) => {
     inner += '<div class="afsrow" data-afi="' + i + '" title="Als Startadresse aktivieren">' +
-      '<span class="afsname">📍 ' + escapeHtml(f.name) + '</span>' +
-      '<button class="afbtn" data-afedit="' + i + '" title="Umbenennen">✎</button>' +
+      '<span class="afsname">⭐ ' + escapeHtml(f.name) +
+        (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") + '</span>' +
+      '<button class="afbtn" data-afedit="' + i + '" title="Alias und Adresse bearbeiten">✎</button>' +
       '<button class="afbtn" data-afdel="' + i + '" title="Löschen">✗</button>' +
       "</div>";
   });
@@ -1157,8 +1338,73 @@ function renderAddrFavs() {
   const saveBtn = document.getElementById("addrFavSave");
   if (saveBtn) saveBtn.disabled = !getPos();
 }
+
+// ---------- Maske: Alias-Name und Adresse eines Adressfavoriten zusammen bearbeiten ----------
+const favDlg = document.getElementById("favDlg");
+const favDlgName = document.getElementById("favDlgName");
+const favDlgAddr = document.getElementById("favDlgAddr");
+const favDlgMsg = document.getElementById("favDlgMsg");
+let favDlgIdx = -1;
+function openFavDlg(i) {
+  const f = addrFavs[i];
+  if (!f) return;
+  favDlgIdx = i;
+  favDlgName.value = f.name || "";
+  favDlgAddr.value = f.label || "";
+  favDlgMsg.textContent = "";
+  favDlg.hidden = false;
+  favDlgName.focus();
+}
+// Adresse freigeben (ohne die Trefferliste der Suchzeile anzufassen)
+async function geocodeOne(q) {
+  try {
+    const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
+      "&format=jsonv2&limit=1&accept-language=de&countrycodes=de");
+    if (res.ok) {
+      const list = await res.json();
+      if (list && list[0]) return {
+        lat: Number(list[0].lat), lon: Number(list[0].lon),
+        label: String(list[0].display_name || "").split(",").map(s => s.trim()).slice(0, 3).join(", ")
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+document.getElementById("favDlgOk").addEventListener("click", async () => {
+  const f = addrFavs[favDlgIdx];
+  if (!f) { favDlg.hidden = true; return; }
+  const name = favDlgName.value.trim();
+  const addrText = favDlgAddr.value.trim();
+  if (name) f.name = name;
+  if (addrText && addrText !== (f.label || "")) {   // neue Adresse: freigeben und übernehmen
+    favDlgMsg.textContent = "Prüfe Adresse …";
+    let resolved = parseLocText(addrText);
+    if (!resolved) resolved = await geocodeOne(addrText);
+    if (!resolved) { favDlgMsg.textContent = "Adresse nicht gefunden – bitte ändern."; return; }
+    f.lat = resolved.lat; f.lon = resolved.lon; f.label = resolved.label;
+  } else if (!f.label) {
+    f.label = f.name;   // ältere Einträge ohne Adresse: Alias als Adresse führen
+  }
+  saveAddrFavs();
+  favDlg.hidden = true;
+  renderAddrFavs();
+  // geänderte Adresse zugleich als neue Adresse einloggen
+  addrPos = { lat: f.lat, lon: f.lon, label: f.label || f.name };
+  try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (err) {}
+  addrSug.hidden = true;
+  addrSearch.value = f.name;
+  renderAddrChip();
+  gpsCtl.classList.add("disabled");
+  positionReset();
+  clearStopSearchOnAddrLogin();
+  setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  renderPanels();
+});
+document.getElementById("favDlgCancel").addEventListener("click", () => { favDlg.hidden = true; });
+favDlg.addEventListener("keydown", e => { if (e.key === "Escape") favDlg.hidden = true; });
 function toggleAddrFavPanel() {
   addrFavPanel.hidden = !addrFavPanel.hidden;
+  if (!addrFavPanel.hidden) stopFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderAddrFavs();
 }
 addrFavBtn.addEventListener("click", e => { e.stopPropagation(); toggleAddrFavPanel(); });
@@ -1175,10 +1421,7 @@ addrFavPanel.addEventListener("click", e => {
   const edit = e.target.closest("[data-afedit]");
   const del = e.target.closest("[data-afdel]");
   if (edit) {
-    const i = Number(edit.dataset.afedit);
-    const name = prompt("Adressfavorit umbenennen:", addrFavs[i].name);
-    if (name && name.trim()) { addrFavs[i].name = name.trim(); saveAddrFavs(); }
-    renderAddrFavs();
+    openFavDlg(Number(edit.dataset.afedit));
     return;
   }
   if (del) {
@@ -1193,11 +1436,10 @@ addrFavPanel.addEventListener("click", e => {
     const pos = getPos();
     if (!pos) return;
     const def = pos.label || ("Standort " + pos.lat.toFixed(4) + ", " + pos.lon.toFixed(4));
-    const name = prompt("Name für diese Position:", def);
-    if (!name || !name.trim()) return;
-    addrFavs.push({ name: name.trim(), lat: pos.lat, lon: pos.lon, label: pos.label || "" });
+    addrFavs.push({ name: def, lat: pos.lat, lon: pos.lon, label: pos.label || "" });
     saveAddrFavs();
     renderAddrFavs();
+    openFavDlg(addrFavs.length - 1);   // Alias und Adresse direkt in der Maske bearbeitbar
     return;
   }
   const row = e.target.closest("[data-afi]");
@@ -1241,24 +1483,37 @@ addrFavCount.textContent = addrFavs.length;
 const search = document.getElementById("stopSearch");
 const sugBox = document.getElementById("suggestions");
 
-// Handy: beim ersten Antippen des Suchfelds die Bildschirm-Tastatur unten lassen
-// (Fokus sofort wieder abgeben, Liste öffnet trotzdem); erst der zweite Tipp ins
-// Feld öffnet die Tastatur. Gilt auch fürs programmatische Öffnen (z.B. Adresse).
+// Handy: beim ersten Antippen eines Suchfelds die Bildschirm-Tastatur unten lassen
+// (Fokus sofort an den ersten Listeneintrag abgeben, Liste öffnet trotzdem); erst der
+// zweite Tipp ins Feld öffnet die Tastatur. Gilt auch fürs programmatische Öffnen.
 let searchFocusArmed = false;
 search.addEventListener("focus", () => {
   updateSuggestions();
   if (!searchFocusArmed) {
     searchFocusArmed = true;
-    setTimeout(() => { if (!search.value) search.blur(); }, 60);
+    setTimeout(() => {
+      if (!search.value) { search.blur(); focusFirstRow(sugBox); }
+    }, 60);
   }
 });
 search.addEventListener("blur", () => {
   if (sugBox.hidden) searchFocusArmed = false;   // Liste zu: beim nächsten Öffnen wieder ohne Tastatur
 });
+let addrFocusArmed = false;
+addrSearch.addEventListener("focus", () => {
+  if (!addrFocusArmed) {
+    addrFocusArmed = true;
+    setTimeout(() => { if (!addrSearch.value) addrSearch.blur(); }, 60);
+  }
+});
+addrSearch.addEventListener("blur", () => {
+  if (addrSug.hidden) addrFocusArmed = false;
+});
 document.getElementById("ddBtn").addEventListener("click", () => {
   if (!sugBox.hidden) { sugBox.hidden = true; return; }
-  search.focus();
+  search.blur();
   updateSuggestions();
+  focusFirstRow(sugBox);
 });
 
 // ---------- Haltestellensuche: ab 1 Buchstabe, Wortanfang, Tippfehler-Toleranz ----------
@@ -1338,7 +1593,9 @@ function updateSuggestions() {
   if (pos) enrichVisible(false);   // auch während der Suche laden
 }
 
-search.addEventListener("keydown", e => {
+// Tastatursteuerung der Haltestellenliste – gilt für Fokus im Suchfeld
+// oder Fokus auf einem Listeneintrag (mobiles Öffnen ohne Tastatur)
+function handleSugNav(e) {
   const items = [...sugBox.querySelectorAll("div[data-sn]")];
   if (sugBox.hidden || !items.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -1347,13 +1604,17 @@ search.addEventListener("keydown", e => {
       ? Math.min(searchIndex + 1, items.length - 1)
       : Math.max(searchIndex - 1, 0);
     items.forEach((el, i) => el.classList.toggle("active", i === searchIndex));
+    items[searchIndex].focus({ preventScroll: false });
     items[searchIndex].scrollIntoView({ block: "nearest" });
-  } else if (e.key === "Enter" && searchIndex >= 0) {
-    selectStop(items[searchIndex].dataset.sn);
+  } else if (e.key === "Enter") {
+    const el = searchIndex >= 0 ? items[searchIndex] : items[0];
+    if (el) selectStop(el.dataset.sn);
   } else if (e.key === "Escape") {
     sugBox.hidden = true;
   }
-});
+}
+search.addEventListener("keydown", handleSugNav);
+sugBox.addEventListener("keydown", handleSugNav);
 
 // Klick-Auswertung: Einzel-↻ > Buslinie (Detail) > Station (Panel)
 sugBox.addEventListener("click", e => {
@@ -2516,6 +2777,7 @@ function renderStopFavs() {
 stopFavBtn.addEventListener("click", e => {
   e.stopPropagation();
   stopFavPanel.hidden = !stopFavPanel.hidden;
+  if (!stopFavPanel.hidden) addrFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderStopFavs();
 });
 document.addEventListener("click", e => {
