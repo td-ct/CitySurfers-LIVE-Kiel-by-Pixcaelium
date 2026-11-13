@@ -1902,6 +1902,17 @@ function kvgExportState() {
   }
   return btoa(unescape(encodeURIComponent(JSON.stringify(o))));
 }
+// Von der Android-App aufgerufen: Sprung aus einer Wecker-Benachrichtigung
+// direkt in den Reiter des Weckers (aus MainActivity, Intent-Extra "tab").
+window.kvgGotoTab = function (sn) {
+  try {
+    if (!sn) return "err";
+    const i = tabs.findIndex(t => t.sn === sn);
+    if (i >= 0) { activateTab(i, false); alarmList.hidden = true; return "ok"; }
+    return "nofound";
+  } catch (e) { return "err"; }
+};
+
 window.kvgImportState = function (code) {
   try {
     const o = JSON.parse(decodeURIComponent(escape(atob(String(code).trim()))));
@@ -2097,10 +2108,9 @@ function alarmRingEpoch(a) {
   return depMs - a.leadMin * 60000;
 }
 function renderAlarmInd() {
-  alarmInd.hidden = !alarms.size;
-  if (alarmList.hidden) return;
-  if (!alarms.size) { alarmList.hidden = true; return; }
-  let inner = "";
+  // Einträge einmal berechnen: für die Weckerliste und für die Android-
+  // Benachrichtigungen (eine je Wecker, mit Sprung zum passenden Reiter)
+  const entries = [];
   for (const [aKey, a] of alarms) {
     const cond = a.leadMin != null
       ? a.leadMin + " min vor Abfahrt"
@@ -2113,10 +2123,25 @@ function renderAlarmInd() {
       const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
       when = " · klingelt " + hh + ":" + mm + " (in " + (mins > 0 ? mins + " min" : "jetzt") + ")";
     }
-    inner += '<div class="alrow" data-akey="' + escapeHtml(aKey) + '" title="Zum Reiter wechseln">' +
-      '<span class="afsname">⏰ ' + escapeHtml(a.name) + " – " + cond + when + "</span></div>";
+    entries.push({ aKey: aKey, a: a, cond: cond, when: when });
   }
-  alarmList.innerHTML = inner;
+  // In der App: Benachrichtigungsleiste synchron halten (auch leer: alle löschen).
+  // Aktualisiert sich mit jedem Tick (Countdown) und bei jedem Wecker-Ändern.
+  if (window.KvgNative) {
+    nativeCall("syncAlarms", JSON.stringify(entries.map(en => ({
+      key: en.aKey,
+      title: "⏰ " + en.a.name,
+      text: en.cond + en.when + (en.a.tabSn ? "" : ""),
+      tab: en.a.tabSn || ""
+    }))));
+  }
+  alarmInd.hidden = !alarms.size;
+  if (alarmList.hidden) return;
+  if (!alarms.size) { alarmList.hidden = true; return; }
+  alarmList.innerHTML = entries.map(en =>
+    '<div class="alrow" data-akey="' + escapeHtml(en.aKey) + '" title="Zum Reiter wechseln">' +
+    '<span class="afsname">⏰ ' + escapeHtml(en.a.name) + " – " + en.cond + en.when + "</span></div>"
+  ).join("");
 }
 alarmInd.addEventListener("click", e => {
   e.stopPropagation();

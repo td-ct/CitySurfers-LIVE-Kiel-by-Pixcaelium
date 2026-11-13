@@ -5,6 +5,8 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.12** – Wecker-Benachrichtigungen in Android: Für jeden gestellten Wecker liegt eine Nachricht in der Benachrichtigungsleiste (eigener Kanal „Gestellte Wecker“, still). Sie zeigt Station, Bedingung, Läut-Zeit und Countdown, aktualisiert sich laufend und verschwindet, sobald der Wecker gelöscht oder auslöst bzw. wenn die App beendet wird. Antippen öffnet die App direkt im Reiter des Weckers.
+
 **v1.0.11** – Reiter-System und Wecker-Übersicht: Unterhalb der Suchfelder lassen sich mehrere Haltestellen (mit Abfahrtsübersicht und Fahrtverlauf) als horizontale Reiter offen halten; Reiter sind verschiebbar (Drag) und per ✕ schließbar. Hat ein Reiter einen Wecker, warnt das Schließen und löscht den Wecker mit. Neu: Wecker-Symbol ⏰ oben neben den Aktivitäts-Indikatoren listet alle gestellten Wecker mit Bedingung, Läut-Zeit und Countdown; ein Klick springt in den Reiter. Haltestellenfavoriten gibt es jetzt als Liste (⭐-Knopf über der Haltestellensuche) wie bei den Adressen; der „Merken“-Knopf ist entfallen. Der Zustands-Export sichert alle offenen Reiter.
 
 **v1.0.10** – Zustands-Export/-Import umfasst jetzt auch die aktuell geöffnete Ansicht: Die Kette aus gewählter Haltestelle und ggf. ausgewählter Bus-/Zuglinie inkl. geöffnetem Fahrtverlauf wird im Zustands-Code mitgesichert und beim Import (z. B. in die Android-App) automatisch wiederhergestellt.

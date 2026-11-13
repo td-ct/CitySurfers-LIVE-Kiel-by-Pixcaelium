@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private var geoCallback: GeolocationPermissions.Callback? = null
     private var geoOrigin: String? = null
+    private var pendingTab: String? = null   // Reiter-Sprung aus Wecker-Benachrichtigung
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +70,16 @@ class MainActivity : Activity() {
                     }
                 } else false
             }
+            override fun onPageFinished(view: WebView, url: String) {
+                // Sprung aus einer Wecker-Benachrichtigung, falls die Seite
+                // beim Klick noch nicht fertig geladen war
+                val t = pendingTab
+                if (t != null) {
+                    pendingTab = null
+                    view.evaluateJavascript(
+                        "window.kvgGotoTab(${JSONObject.quote(t)})", null)
+                }
+            }
         }
         web.webChromeClient = object : WebChromeClient() {
             override fun onGeolocationPermissionsShowPrompt(
@@ -87,6 +98,35 @@ class MainActivity : Activity() {
         requestPerms()
         // Start: übernommene Web-Version (falls vorhanden), sonst gebündelte Seite
         web.loadUrl(currentTarget())
+        takeTabFrom(intent)
+    }
+
+    // ---------- Wecker-Benachrichtigungen: Sprung zum Reiter ----------
+
+    /** Tab-Extra ("tab" = Haltestellen-ShortName) aus einem Benachrichtigungs-Tap. */
+    private fun takeTabFrom(intent: Intent?) {
+        val t = intent?.getStringExtra("tab") ?: return
+        if (t.isEmpty()) return
+        pendingTab = t
+        // läuft die Seite schon, sofort wechseln; sonst übernimmt onPageFinished
+        try {
+            web.evaluateJavascript("window.kvgGotoTab(${JSONObject.quote(t)})", null)
+        } catch (e: Exception) { }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeTabFrom(intent)
+    }
+
+    override fun onDestroy() {
+        // App beendet: Wecker-Benachrichtigungen mit verschwinden lassen
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            for (id in NativeBridge.alarmNotifs.toList()) nm.cancel(id)
+            NativeBridge.alarmNotifs.clear()
+        } catch (e: Exception) { }
+        super.onDestroy()
     }
 
     // ---------- Seiten-Stand: gebündelt vs. übernommene Web-Version ----------
@@ -256,7 +296,11 @@ class MainActivity : Activity() {
 /**
  * JS-Brücke: window.KvgNative in der Seite.
  * vibrate(patternJson), setAlarm(key, epochMs, name, cfgJson), cancelAlarm(key),
- * ringingAlarms() -> JSON-Array der gerade nativ läutenden Wecker-Keys
+ * ringingAlarms() -> JSON-Array der gerade nativ läutenden Wecker-Keys,
+ * syncAlarms(listJson) -> eine Benachrichtigung je gestelltem Wecker in der
+ *   Android-Benachrichtigungsleiste (Kanal "weckerliste", still, ohne Ton);
+ *   Tap oeffnet die App und springt direkt in den Reiter des Weckers.
+ *   listJson: [{key, title, text, tab}]
  * cfgJson: {"lead":int, "vib":bool, "tone":bool, "snd":"alarm|ring|notif", "vol":0..1}
  */
 class NativeBridge(private val act: Activity) {
@@ -303,6 +347,59 @@ class NativeBridge(private val act: Activity) {
     }
 
     @JavascriptInterface
+    fun syncAlarms(listJson: String) {
+        try {
+            val act = this.act
+            val nm = act.getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) {
+                val ch = android.app.NotificationChannel(
+                    "weckerliste", "Gestellte Wecker", NotificationManager.IMPORTANCE_DEFAULT)
+                ch.description = "Uebersicht der gestellten Wecker"
+                ch.setSound(null, null)
+                ch.enableVibration(false)
+                nm.createNotificationChannel(ch)
+            }
+            val arr = JSONArray(listJson)
+            val seen = HashSet<Int>()
+            for (i in 0 until arr.length()) {
+                val a = arr.optJSONObject(i) ?: continue
+                val key = a.optString("key")
+                if (key.isEmpty()) continue
+                val id = key.hashCode()
+                seen.add(id)
+                val tabSn = a.optString("tab")
+                val open = android.app.PendingIntent.getActivity(
+                    act, id,
+                    Intent(act, MainActivity::class.java).putExtra("tab", tabSn),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                    android.app.PendingIntent.FLAG_IMMUTABLE)
+                val b = if (Build.VERSION.SDK_INT >= 26)
+                    android.app.Notification.Builder(act, "weckerliste")
+                else @Suppress("DEPRECATION") android.app.Notification.Builder(act)
+                b.apply {
+                    setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                    setContentTitle(a.optString("title"))
+                    setContentText(a.optString("text"))
+                    setContentIntent(open)
+                    setAutoCancel(false)
+                    setOngoing(true)            // nur per Wecker-Loeschen/App-Ende weg
+                    setOnlyAlertOnce(true)      // Countdown-Updates bleiben still
+                    if (Build.VERSION.SDK_INT < 26) {
+                        @Suppress("DEPRECATION")
+                        setPriority(android.app.Notification.PRIORITY_DEFAULT)
+                    }
+                }
+                try { nm.notify(id, b.build()); alarmNotifs.add(id) } catch (e: Exception) { }
+            }
+            // geloeschte Wecker: Benachrichtigung entfernen
+            for (id in alarmNotifs.toList()) if (id !in seen) {
+                try { nm.cancel(id) } catch (e: Exception) { }
+                alarmNotifs.remove(id)
+            }
+        } catch (e: Exception) { }
+    }
+
+    @JavascriptInterface
     fun ringingAlarms(): String {
         val arr = org.json.JSONArray()
         for (k in AlarmReceiver.Ringing) arr.put(k)
@@ -324,5 +421,9 @@ class NativeBridge(private val act: Activity) {
     companion object {
         private const val VIBRATOR_SERVICE = android.content.Context.VIBRATOR_SERVICE
         private const val ALARM_SERVICE = android.content.Context.ALARM_SERVICE
+        private const val NOTIFICATION_SERVICE = android.content.Context.NOTIFICATION_SERVICE
+        /** IDs der Wecker-Benachrichtigungen (zum Aufraeumen bei App-Ende). */
+        val alarmNotifs: MutableSet<Int> =
+            java.util.Collections.synchronizedSet(HashSet<Int>())
     }
 }
