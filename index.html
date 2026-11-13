@@ -38,7 +38,7 @@
     #gpsCtl .accbar { gap: 1px; }
     #gpsCtl .accbar i { width: 4px; height: 8px; }
     #apiInd { top: 42px; right: 6px; gap: 3px; }
-    #alarmList { top: 74px; right: 6px; }
+    #alarmList, #addrFavPanel, #stopFavPanel { top: 74px; right: 6px; }
   }
   #posBtn, #addrGo { flex: none; }
   #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
@@ -171,10 +171,9 @@
 
   footer { margin-top: 24px; font-size: 0.8rem; color: #475569; line-height: 1.5; }
   footer a { color: #64748b; }
-  #addrFavPanel { background: #1e293b;
-    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 100%;
-    width: fit-content; margin: 6px 0 8px auto;
-    max-height: 45vh; overflow-y: auto; }
+  #addrFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
+    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   #addrFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
   #addrFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
@@ -183,6 +182,7 @@
     border-radius: 6px; padding: 1px 7px; font-size: 0.9rem; }
   #addrFavPanel .afbtn:hover { background: #334155; }
   #addrFavPanel .afsave { width: 100%; margin-bottom: 6px; }
+  .favchiprow { display: flex; justify-content: flex-end; gap: 6px; margin: 6px 0 -2px; }
   .afshead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
   .afshead .dim { font-size: 0.72rem; }
   .pagefoot .verline { margin-top: 8px; opacity: 0.75; }
@@ -291,10 +291,9 @@
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
-  #stopFavPanel { background: #1e293b;
+  #stopFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
-    min-width: 250px; max-width: 100%; width: fit-content; margin: 4px 0 8px auto;
-    max-height: 45vh; overflow-y: auto; }
+    min-width: 250px; max-width: 340px; box-shadow: 0 8px 22px #000000cc; }
   #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -403,13 +402,14 @@
       <input type="range" id="fontSlider" min="0.85" max="1.5" step="0.05" value="1" title="Textgröße" />
       A
     </span>
-    <button class="chip" id="addrFavBtn" title="Adressfavoritenliste ein-/ausklappen">⭐ Adressen <span id="addrFavCount">0</span></button>
-    <button class="chip" id="stopFavBtn" title="Haltestellenfavoritenliste ein-/ausklappen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
     <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
   </header>
 
-  <div id="addrFavPanel"></div>
+  <div id="addrFavPanel" hidden></div>
 
+  <div class="favchiprow">
+    <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
+  </div>
   <div class="addrwrap">
     <button class="gpsbtn" id="posBtn" title="Aktuelle GPS-Position als Startpunkt übernehmen">⤓ GPS</button>
     <div class="addrfield">
@@ -421,7 +421,10 @@
   <div class="chips" id="addrChip"></div>
   <div class="locnote" id="locNote"></div>
 
-  <div id="stopFavPanel"></div>
+  <div id="stopFavPanel" hidden></div>
+  <div class="favchiprow">
+    <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
+  </div>
   <div class="searchbox">
     <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
     <button class="gpsbtn" id="gpsGoBtn" title="GPS-Ortung übernehmen und Haltestellenliste danach sortieren">GPS➜</button>
@@ -1487,6 +1490,7 @@ function saveAddrFavs() {
 }
 function renderAddrFavs() {
   addrFavCount.textContent = addrFavs.length;
+  if (addrFavPanel.hidden) return;
   const origin = sortGpsOrigin("addrFav");   // hinterlegter GPS-Standort oder aktuelle Position
   let inner = '<div class="afshead">' +
     '<button class="chip afbtn" id="addrFavGps" title="GPS-Standort für diese Liste übernehmen und Adressfavoriten nach Abstand sortieren">📍 GPS➜</button>' +
@@ -1586,9 +1590,18 @@ document.getElementById("favDlgCancel").addEventListener("click", () => { favDlg
 favDlg.addEventListener("keydown", e => { if (e.key === "Escape") favDlg.hidden = true; });
 function toggleAddrFavPanel() {
   addrFavPanel.hidden = !addrFavPanel.hidden;
+  if (!addrFavPanel.hidden) stopFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderAddrFavs();
 }
 addrFavBtn.addEventListener("click", e => { e.stopPropagation(); toggleAddrFavPanel(); });
+document.addEventListener("click", e => {
+  if (!addrFavPanel.hidden && !e.target.closest("#addrFavPanel") && !e.target.closest("#addrFavBtn")) {
+    addrFavPanel.hidden = true;
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !addrFavPanel.hidden) addrFavPanel.hidden = true;
+});
 addrFavPanel.addEventListener("click", e => {
   e.stopPropagation();
   if (e.target.closest("#addrFavGps")) { gpsTakeOverFor("addrFav"); return; }
@@ -3331,6 +3344,7 @@ const stopFavPanel = document.getElementById("stopFavPanel");
 const stopFavCount = document.getElementById("stopFavCount");
 function renderStopFavs() {
   if (stopFavCount) stopFavCount.textContent = favs.length;
+  if (stopFavPanel.hidden) return;
   const origin = sortGpsOrigin("stopFav");   // hinterlegter GPS-Standort oder aktuelle Position
   let inner = '<div class="afshead">' +
     '<button class="chip afbtn" id="stopFavGps" title="GPS-Standort für diese Liste übernehmen und Haltestellenfavoriten nach Abstand sortieren">📍 GPS➜</button>' +
@@ -3364,7 +3378,15 @@ function renderStopFavs() {
 stopFavBtn.addEventListener("click", e => {
   e.stopPropagation();
   stopFavPanel.hidden = !stopFavPanel.hidden;
+  if (!stopFavPanel.hidden) addrFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderStopFavs();
+});
+document.addEventListener("click", e => {
+  if (!stopFavPanel.hidden && !e.target.closest("#stopFavPanel") && !e.target.closest("#stopFavBtn"))
+    stopFavPanel.hidden = true;
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !stopFavPanel.hidden) stopFavPanel.hidden = true;
 });
 stopFavPanel.addEventListener("click", e => {
   e.stopPropagation();
@@ -3396,7 +3418,7 @@ stopFavPanel.addEventListener("click", e => {
     return;
   }
   const row = e.target.closest("[data-sfi]");
-  if (row) selectStop(row.dataset.sfi);
+  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; }
 });
 
 function toggleFavSn(sn) {
@@ -4189,7 +4211,7 @@ renderAddrFavs();
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.0.22 · Build: 13.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.0.23 · Build: 13.11.2026</div>
 </div>
 </body>
 </html>
