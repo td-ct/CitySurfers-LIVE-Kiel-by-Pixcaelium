@@ -45,7 +45,10 @@
   .gpsbtn:hover { color: #e2e8f0; }
   .gpsbtn.active { color: #4ade80; border-color: #4ade80; }
   .gpsbtn.busy { animation: pulse 1.2s ease-in-out infinite; color: #4d8fd6; border-color: #4d8fd6; }
+  .gpsbtn.suspect { animation: pulse 0.9s ease-in-out infinite; color: #f87171; border-color: #f87171; }
   @keyframes pulse { 50% { opacity: 0.35; } }
+  @keyframes taktblink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0.2; } }
+  .trip .takt.blinkclock { color: #4ade80; animation: taktblink 1.1s infinite; }
   .accbar { display: inline-flex; gap: 1px; align-items: flex-end; height: 10px; }
   .accbar i { width: 3px; background: #334155; border-radius: 1px; display: inline-block; }
   .accbar i.on { background: #4ade80; }
@@ -695,6 +698,28 @@ function renderAcc() {
 function setLocNote(t) { locNote.textContent = t; }
 locBtn.addEventListener("click", gpsToggle);
 renderGpsBtn();
+
+// ---------- Unplausible GPS-Nähe: GPS-Knopf blinkt rot, Linie echtzeit-nachfragen ----------
+// Steht das GPS im Stationsradius, obwohl die Abfahrtszeit der Linie dort (erweitertes
+// Fenster ± 2 min) gar nicht zur Systemzeit passt, kann die Fahrt dort gar nicht sein.
+// Dann: kleiner runder GPS-Knopf rot aufblinken lassen, genau in dem Moment sowie
+// noch mal 2 Minuten später die Echtzeitdaten der Linie abfragen; danach wird der
+// alte Zustand des GPS-Knopfes wiederhergestellt (falls nicht neu gesetzt).
+let gpsSuspect = false;
+function renderGpsSuspect() {
+  locBtn.classList.toggle("suspect", gpsSuspect);
+}
+function triggerSuspectRefetch(sn, tripId) {
+  if (gpsSuspect) return;   // Ereignis triggert nur einmal
+  gpsSuspect = true;
+  renderGpsSuspect();
+  refetchTripRealtime(sn, tripId);   // Echtzeitabfrage der Linie sofort …
+  setTimeout(() => {
+    refetchTripRealtime(sn, tripId);   // … und noch mal 2 Minuten später
+    gpsSuspect = false;               // alter Zustand des GPS-Knopfes wiederherstellen
+    renderGpsSuspect();
+  }, 120000);
+}
 
 // ---------- Position übernehmen (Knopf am Adressfeld) ----------
 const posBtn = document.getElementById("posBtn");
@@ -1691,6 +1716,43 @@ function stationSectionHTML() {
 let currentTrip = null;   // { tripId, sn, stops:[{shortName,name,time,status,seq}], route, direction, delay:{}, progressIdx, loading }
 const tripDelayCache = new Map();   // "sn|tripId" -> { plannedTime, actualTime, delayMin, ts }
 
+// Echtzeitabfrage einer Linie (Fahrtverlauf) ohne kompletten Neuaufbau:
+// tripPassages neu laden, Ist-Zeiten und Verspätungen in den bestehenden
+// Fahrtverlauf einschmelzen (Soll-Zeiten bleiben stehen).
+async function refetchTripRealtime(sn, tripId) {
+  const t = tripById(tripId);
+  if (!t || !t.tripId || t.tripId !== tripId) return;
+  if (isDB(sn)) {
+    // Züge: komplette Neuanfrage der Fahrt (mit geplanter Abfahrtszeit)
+    if (currentBus && currentBus.tripId === tripId) selectTrip(sn, tripId, true);
+    return;
+  }
+  try {
+    const res = await apiFetch("kvg", TRIP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tripId=" + encodeURIComponent(tripId)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const passages = (data.old || []).concat(data.actual || []);
+    for (const p of passages) {
+      const s = (t.stops || []).find(x => x.shortName === (p.stop && p.stop.shortName));
+      if (!s) continue;
+      if (p.actualTime) s.time = p.actualTime;
+      const key = s.key || (s.shortName + "|" + tripId);
+      const planned = (t.delay[key] && t.delay[key].plannedTime) || s.plannedTime || "";
+      const [ah, am] = (p.actualTime || "").split(":").map(Number);
+      const [ph, pm] = planned.split(":").map(Number);
+      if (isFinite(ah) && isFinite(am) && isFinite(ph) && isFinite(pm)) {
+        t.delay[key] = { plannedTime: planned, actualTime: p.actualTime,
+          delayMin: (ah * 60 + am) - (ph * 60 + pm), ts: Date.now() };
+      }
+    }
+  } catch (e) {}
+  renderPanels();
+}
+
 async function selectTrip(sn, tripId, force) {
   if (currentTrip && currentTrip.tripId === tripId && !force) {
     // erneut angeklickt: nur Ansicht öffnen
@@ -1808,19 +1870,44 @@ function tripSectionHTML() {
   // Fortschritt: GPS nahe an einer Station der Fahrt -> alle bis dahin ausgrauen.
   // Radius: 75 m bei Bussen, 250 m bei Zügen/Schienenersatz (größere Halteflächen)
   const gpsR = isDB(currentTrip.sn) ? 250 : 75;
-  let gpsKey = null;   // Station im Radius: dort live Ist-Abfahrt füllen
+  let gpsKey = null;   // Station im Radius (plausibel): dort live Ist-Abfahrt füllen
+  let atIdx = null;    // Index der Station, in deren Radius das GPS gerade steht
   if (pos) {
     for (let i = 0; i < tstops.length; i++) {
       const s = tstops[i];
       const stop = stops.find(x => x.shortName === s.shortName);
       if (!stop) continue;
-      if (dist(pos, stop) < gpsR) {
-        currentTrip.progressIdx = Math.max(currentTrip.progressIdx, i);
-        gpsKey = s.key || (s.shortName + "|" + currentTrip.tripId);
-        break;
+      if (dist(pos, stop) >= gpsR) continue;
+      // Station im Radius. Plausibilitätsprüfung: Kann die Fahrt hier wirklich gerade
+      // sein? Maßstab ist die Abfahrtszeit dieser Fahrt an der Station (Ist-Zeit, falls
+      // schon abgefragt, sonst Soll), erweitertes Fenster ± 2 Minuten um die Systemzeit.
+      const key0 = s.key || (s.shortName + "|" + currentTrip.tripId);
+      const dl0 = currentTrip.delay[key0];
+      const depStr = (dl0 && dl0.actualTime) || s.time || s.plannedTime || "";
+      const [dh0, dm0] = depStr.split(":").map(Number);
+      if (isFinite(dh0) && isFinite(dm0)) {
+        const n0 = new Date();
+        const nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+        const depMin0 = dh0 * 60 + dm0;
+        if (nowMin0 < depMin0 - 2 || nowMin0 > depMin0 + 2) {
+          // Systemzeit passt nicht ins erweiterte Fenster: Die Fahrt kann hier gar nicht
+          // sein -> Fortschritt NICHT setzen, GPS-Knopf rot aufblinken lassen und die
+          // Linie genau jetzt sowie noch mal 2 Minuten später echtzeit-abfragen.
+          triggerSuspectRefetch(currentTrip.sn, currentTrip.tripId);
+          break;
+        }
       }
+      atIdx = i;        // plausibel: gerade an dieser Station
+      gpsKey = key0;    // dort laufend die aktuelle Uhrzeit als Ist-Abfahrt füllen
+      break;
     }
   }
+  // Radius erst VERLASSEN: dann durchstreichen/ausgrauen, solange davor: Uhrzeit blinkt
+  if (atIdx == null && currentTrip.atIdx != null) {
+    currentTrip.progressIdx = Math.max(currentTrip.progressIdx, currentTrip.atIdx);
+    currentTrip.atIdx = null;
+  }
+  if (atIdx != null) currentTrip.atIdx = atIdx;
   html += '<div class="thead"><span class="pname">Fahrtverlauf Linie ' +
     escapeHtml(currentTrip.route) + " → " + escapeHtml(currentTrip.direction) + "</span>" +
     '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
@@ -1863,11 +1950,12 @@ function tripSectionHTML() {
     const armed = alarms.has(aKey);
     const fired = firedAlarms.has(aKey) || ringing.has(aKey);
     const bells = ringing.has(aKey) ? " abell fired ring" : fired ? " abell fired" : armed ? " abell on" : " abell";
-    const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
+    const hereIdx = atIdx != null ? atIdx : done;
+    const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
-      '<span class="takt">' + escapeHtml(actual || "–") + "</span>" +
+      '<span class="takt' + (i === atIdx ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
       delayHtml +
       '<span class="tname">' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
       '<button class="' + bells + '" data-alarm="' + escapeHtml(aKey) + '" title="' +
