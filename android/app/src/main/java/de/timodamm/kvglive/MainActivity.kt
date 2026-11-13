@@ -31,8 +31,9 @@ class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_URL = "file:///android_asset/index.html"
+        // gehostete Seite (eigener Server); dort liegt auch cslk.apk zum Download
         const val DEFAULT_WEB_URL =
-            "https://raw.githubusercontent.com/td-ct/CitySurvers-LIVE-Kiel-by-Pixcaelium/main/index.html"
+            "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html"
         private const val REQ_PERMS = 41
     }
 
@@ -54,11 +55,18 @@ class MainActivity : Activity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
         web.webViewClient = object : WebViewClient() {
-            // externe Links (z. B. nah.sh) im Browser öffnen, App-Inhalt im WebView behalten
+            // externe Links (z. B. nah.sh) im Browser öffnen, App-Inhalt im WebView behalten.
+            // cslk.apk (Download neben der Seite) bewusst ebenfalls im Browser/Downloader,
+            // damit der Download-Dialog des Systems erscheint.
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
                 val u = req.url
                 return if (u.scheme == "http" || u.scheme == "https") {
-                    try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
+                    val s = u.toString()
+                    if (s.endsWith(".apk")) {
+                        try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
+                    } else {
+                        try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
+                    }
                 } else false
             }
         }
@@ -90,7 +98,7 @@ class MainActivity : Activity() {
         return if (f.exists()) Uri.fromFile(f).toString() else DEFAULT_URL
     }
 
-    /** Aktuelle index.html von einer URL laden und dauerhaft in die App übernehmen. */
+    /** Aktuelle Seite von einer URL laden und dauerhaft in die App übernehmen. */
     private fun adoptWebVersion(url: String) {
         Toast.makeText(this, "Lade aktuelle Web-Version …", Toast.LENGTH_SHORT).show()
         thread {
@@ -201,7 +209,7 @@ class MainActivity : Activity() {
             // aktuellen Seiten-Stand direkt in die App übertragen
             2 -> pasteDialog(
                 "Web-Version übernehmen",
-                "https://…/index.html",
+                "https://…/cslk.html",
             ) { u ->
                 if (u.isNotBlank()) {
                     getSharedPreferences("kvglive", MODE_PRIVATE)

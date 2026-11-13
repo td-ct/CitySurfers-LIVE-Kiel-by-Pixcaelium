@@ -5,6 +5,12 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.6** – App-Standard-URLs auf das Hosting umgestellt: Seite als
+https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html, APK daneben als
+cslk.apk (der relative Download-Link im Wecker-Dialog greift dadurch
+automatisch). "Web-Version übernehmen" schlägt jetzt die eigene Server-URL
+vor; APK-Links in der App öffnen den System-Download.
+
 **v1.0.5** – Zustandsübertragung: Die gewählte Startadresse wird jetzt
 gesichert (localStorage) und beim Start wiederhergestellt. Neuer Knopf
 "⇅ Zustand" exportiert Favoriten (Haltestellen + Adressen), Startadresse,
