@@ -26,8 +26,18 @@
 
   /* Zeile 1: GPS-Kontrolle + Adresse */
   .addrwrap { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
-  #gpsCtl { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  #gpsCtl { display: flex; align-items: center; gap: 5px; }   /* im Header, ganz rechts */
   #gpsCtl.disabled .gpsbtn, #gpsCtl.disabled .accbar { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
+  #posBtn, #addrGo { flex: none; }
+  #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
+    display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #accDlg[hidden] { display: none; }
+  .accbox { background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    padding: 16px; max-width: 360px; display: flex; flex-direction: column; gap: 10px; font-size: 0.95rem; }
+  .accbox b { color: #4ade80; }
+  .accbox input[type="number"] { width: 90px; padding: 6px 8px; border-radius: 8px;
+    border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+  .acbtns { display: flex; gap: 8px; justify-content: flex-end; }
   .gpsbtn {
     background: #1e293b; border: 1px solid #334155; color: #94a3b8; border-radius: 10px;
     padding: 9px 11px; cursor: pointer; font-size: 1.1rem; line-height: 1;
@@ -304,6 +314,18 @@
 </div>
 <div id="alarmList" hidden></div>
 <div id="apiStats" hidden></div>
+<div id="accDlg" hidden>
+  <div class="accbox">
+    <div><b>GPS-Position übernehmen</b></div>
+    <div id="accDlgMsg">Position wird bestimmt …</div>
+    <div>Aktuelle Genauigkeit: <b id="accDlgAcc">–</b></div>
+    <label>Automatisch übernehmen ab <input type="number" id="accDlgThresh" min="5" max="500" step="5" value="50" /> m</label>
+    <div class="acbtns">
+      <button class="chip bad" id="accDlgCancel">Abbrechen</button>
+      <button class="chip ok" id="accDlgOk">OK (jetzt übernehmen)</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <header>
     <h1>CitySurfers <span class="live">● LIVE</span><span class="kiel">@ Kiel</span> <span class="by">by Pixcaelium</span></h1>
@@ -315,19 +337,21 @@
     </span>
     <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
     <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
+    <span id="gpsCtl">
+      <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
+      <button class="gpsbtn" id="locBtn" title="GPS aktivieren">◎</button>
+    </span>
   </header>
 
   <div id="addrFavPanel" hidden></div>
 
   <div class="addrwrap">
-    <span id="gpsCtl">
-      <button class="gpsbtn" id="locBtn" title="GPS aktivieren">◎</button>
-      <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
-    </span>
+    <button class="gpsbtn" id="posBtn" title="Aktuelle GPS-Position als Startpunkt übernehmen">⤓ GPS</button>
     <div class="addrfield">
-      <input type="search" id="addrSearch" placeholder="Startadresse (statt GPS) suchen, z. B. Holtenauer Straße 100 …" autocomplete="off" />
+      <input type="search" id="addrSearch" placeholder="Startadresse, Koordinaten (54.32, 10.13), Locator (JO49sk), Karten-Link …" autocomplete="off" />
       <div class="suggestions" id="addrSug" hidden></div>
     </div>
+    <button class="gpsbtn" id="addrGo" title="Eingegebene Adresse, Koordinaten oder Locator übernehmen (Einloggen)">➜</button>
   </div>
   <div class="chips" id="addrChip"></div>
   <div class="locnote" id="locNote"></div>
@@ -353,7 +377,8 @@
     kvg-internetservice-proxy.p.networkteam.com) – dieselbe Quelle, die kvg-kiel.de für
     seine Echtzeitabfahrten nutzt (CORS freigegeben). Fußwege: OSRM-Fußprofil auf
     OpenStreetMap-Wegenetz (6 km/h). Adressen: Photon/OpenStreetMap (Fallback: Nominatim).
-    Kein Scraping, aber ohne Garantien. Offizielle Alternative: <a href="https://www.nah.sh">NAH.SH</a>.
+    Kein Scraping, aber ohne Garantien. Koordinaten, Locator und Karten-Links werden
+    lokal erkannt. Offizielle Alternative: <a href="https://www.nah.sh">NAH.SH</a>.
 
     <details class="legal">
       <summary>Impressum</summary>
@@ -671,6 +696,99 @@ function setLocNote(t) { locNote.textContent = t; }
 locBtn.addEventListener("click", gpsToggle);
 renderGpsBtn();
 
+// ---------- Position übernehmen (Knopf am Adressfeld) ----------
+const posBtn = document.getElementById("posBtn");
+const accDlg = document.getElementById("accDlg");
+const accDlgMsg = document.getElementById("accDlgMsg");
+const accDlgAcc = document.getElementById("accDlgAcc");
+const accDlgThresh = document.getElementById("accDlgThresh");
+let accWatch = null;
+let accFix = null;
+
+// Schwellenwert (m), ab dem eine Ortung automatisch übernommen wird (bleibt gespeichert)
+function getAccThresh() {
+  let t = Number(localStorage.getItem("kvg-accthresh"));
+  if (!isFinite(t) || t < 5 || t > 500) t = 50;
+  return t;
+}
+accDlgThresh.value = getAccThresh();
+accDlgThresh.addEventListener("input", () => {
+  const v = Number(accDlgThresh.value);
+  if (isFinite(v)) { try { localStorage.setItem("kvg-accthresh", String(v)); } catch (e) {} }
+  updateAccDlg();
+});
+
+// Adress-/Positions-Login: laufende Haltestellen-Suche löschen,
+// die nächsten Stationen oben nach Abstand einsortieren
+function clearStopSearchOnAddrLogin() {
+  search.value = "";
+  searchIndex = -1;
+  if (!sugBox.hidden) updateSuggestions();
+}
+
+function adoptGpsPos(p) {
+  if (!p) return;
+  addrPos = { lat: p.lat, lon: p.lon,
+    label: "GPS-Position (±" + Math.round(p.accuracy || 0) + " m)" };
+  try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
+  addrSearch.value = "";
+  addrSug.hidden = true;
+  renderAddrChip();
+  gpsCtl.classList.add("disabled");
+  positionReset();
+  clearStopSearchOnAddrLogin();
+  setLocNote("Position übernommen: ±" + Math.round(p.accuracy || 0) +
+    " m · Haltestellen danach sortiert. ✗ kehrt zum Live-GPS zurück.");
+  renderPanels();
+}
+function stopAccWatch() {
+  if (accWatch != null) navigator.geolocation.clearWatch(accWatch);
+  accWatch = null;
+}
+function updateAccDlg() {
+  if (!accFix) { accDlgAcc.textContent = "–"; return; }
+  const a = Math.round(accFix.accuracy || 0);
+  accDlgAcc.textContent = "±" + a + " m";
+  accDlgMsg.textContent = a <= getAccThresh()
+    ? "Gute Ortung – wird übernommen …"
+    : "Ortung noch ungenau – warte auf ein besseres Signal …";
+}
+function posTakeOver() {
+  if (!("geolocation" in navigator) || !isSecure()) {
+    setLocNote("GPS nicht verfügbar – Adresse, Koordinaten oder Locator eintippen oder als Karten-Link senden.");
+    return;
+  }
+  const thresh = getAccThresh();
+  // bereits gute Ortung: direkt ohne Dialog übernehmen
+  if (myPos && (myPos.accuracy == null || myPos.accuracy <= thresh)) { adoptGpsPos(myPos); return; }
+  // sehr schlechte/keine Ortung: Dialog mit Genauigkeit + Schwellenwert
+  accFix = myPos ? { lat: myPos.lat, lon: myPos.lon, accuracy: myPos.accuracy } : null;
+  updateAccDlg();
+  accDlg.hidden = false;
+  stopAccWatch();
+  accWatch = navigator.geolocation.watchPosition(p => {
+    accFix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
+    if (accFix.accuracy <= getAccThresh()) {   // Schwellenwert erreicht: automatisch übernehmen
+      stopAccWatch();
+      accDlg.hidden = true;
+      adoptGpsPos(accFix);
+    } else updateAccDlg();
+  }, err => {
+    accDlgMsg.textContent = "Kein GPS-Empfang (" + err.message + ") – im Freien hilft es.";
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 });
+}
+document.getElementById("accDlgOk").addEventListener("click", () => {
+  if (!accFix) { accDlgMsg.textContent = "Noch keine Position – kurz warten und erneut drücken."; return; }
+  stopAccWatch();
+  accDlg.hidden = true;
+  adoptGpsPos(accFix);
+});
+document.getElementById("accDlgCancel").addEventListener("click", () => {
+  stopAccWatch();
+  accDlg.hidden = true;
+});
+posBtn.addEventListener("click", posTakeOver);
+
 // ---------- Adresssuche (Alternative ohne GPS) ----------
 const addrSearch = document.getElementById("addrSearch");
 const addrSug = document.getElementById("addrSug");
@@ -681,16 +799,149 @@ let addrResults = [];
 addrSearch.addEventListener("input", () => {
   clearTimeout(addrTimer);
   const q = addrSearch.value.trim();
+  addrSearch._loc = null;
   if (q.length < 3) { addrSug.hidden = true; return; }
+  // Koordinaten/Locator/Karten-Link: lokal erkannt, keine Adressabfrage nötig
+  const loc = parseLocText(q);
+  if (loc) {
+    addrSearch._loc = loc;
+    addrResults = [];
+    addrSug.innerHTML = '<div data-coord="1"><span>📍 ' + escapeHtml(loc.label) + "</span>" +
+      '<span class="atype">erkannt – Enter oder ➜ übernimmt als Standort</span></div>';
+    addrSug.hidden = false;
+    return;
+  }
   addrTimer = setTimeout(() => searchAddress(q), 400);
 });
 addrSearch.addEventListener("keydown", e => {
   if (e.key === "Escape") addrSug.hidden = true;
-  if (e.key === "Enter" && addrResults.length && !addrSug.hidden) selectAddr(0);
+  if (e.key === "Enter") {
+    if (addrSearch._loc) { selectCoord(addrSearch._loc); return; }
+    if (addrResults.length && !addrSug.hidden) selectAddr(0);
+    else loginAddr();
+  }
 });
 document.addEventListener("click", e => {
   if (!e.target.closest(".addrfield")) addrSug.hidden = true;
 });
+
+// ---------- Koordinaten, Locator & Karten-Links erkennen (viele Formate) ----------
+// Akzeptiert: Dezimalgrad (54.32, 10.13 / 54,3232 10,135 / N54.32 E10.13),
+// Grad/Minuten/Sekunden (54°19'18"N 10°08'06"E), Maidenhead-/QTH-Locator (JO49sk),
+// Plus Codes (OLC, auch kurz mit Kiel-Bezug), geo:-URIs sowie Links von Google Maps,
+// Apple Karten, Bing, OpenStreetMap, HERE und Yandex.
+function mkPos(lat, lon, label) {
+  lat = Number(lat); lon = Number(lon);
+  if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon, label: label + " " + lat.toFixed(5) + ", " + lon.toFixed(5) };
+}
+function dmsVal(d, m, s) {
+  return Number(d) + (Number(m) || 0) / 60 + (Number(s) || 0) / 3600;
+}
+function decodeMaidenhead(mh) {
+  const s = mh.toUpperCase();
+  if (!/^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(s)) return null;
+  const A = c => c.charCodeAt(0) - 65;
+  let lon = A(s[0]) * 20 - 180, lat = A(s[1]) * 10 - 90;
+  lon += Number(s[2]) * 2; lat += Number(s[3]);
+  if (s.length >= 6) { lon += (s.charCodeAt(4) - 65) * 5 / 60; lat += (s.charCodeAt(5) - 65) * 2.5 / 60; }
+  if (s.length === 8) { lon += Number(s[6]) * 5 / 1440; lat += Number(s[7]) * 2.5 / 1440; }
+  // Mittelpunkt des Rasters
+  if (s.length === 4) { lon += 1; lat += 0.5; }
+  else if (s.length === 6) { lon += 5 / 120; lat += 2.5 / 120; }
+  else { lon += 5 / 2880; lat += 2.5 / 2880; }
+  return { lat, lon, label: "Locator " + s };
+}
+function decodeOLC(code) {
+  const base = "23456789CFGHJMPQRVWX";
+  let c = code.toUpperCase().replace(/\s/g, "");
+  const plus = c.indexOf("+");
+  if (plus < 0) return null;
+  c = c.replace(/\+/g, "");
+  if (c.length < 2 || c.length % 2 || c.length > 10) return null;
+  // kurzer Code (z. B. "84V2+XQ"): Bezug Kiel (9F6G …) voranstellen
+  if (plus < 8) c = "9F6G".slice(0, 8 - plus) + c;
+  const res = [20, 1, 0.05, 0.0025, 0.000125];
+  let lat = -90, lon = -180;
+  const pairs = c.length / 2;
+  for (let i = 0; i < pairs; i++) {
+    const dl = base.indexOf(c[2 * i]), dg = base.indexOf(c[2 * i + 1]);
+    if (dl < 0 || dg < 0) return null;
+    lat += dl * res[i]; lon += dg * res[i];
+  }
+  return { lat: lat + res[pairs - 1] / 2, lon: lon + res[pairs - 1] / 2,
+           label: "Plus Code " + code.trim() };
+}
+function parseCoordPair(t) {
+  // Grad/Minuten/Sekunden, gemischt mit Dezimalminuten/-sekunden
+  const dms = t.match(/^\s*([NSns])?\s*(\d{1,3})(?:[°d:\s]+(\d{1,2}(?:[.,]\d+)?))?(?:['m′\s:]+(\d{1,2}(?:[.,]\d+)?))?["s″]?\s*([NSns])?\s*[,;\/]?\s*([EWew])?\s*(\d{1,3})(?:[°d:\s]+(\d{1,2}(?:[.,]\d+)?))?(?:['m′\s:]+(\d{1,2}(?:[.,]\d+)?))?["s″]?\s*([EWew])?\s*$/);
+  if (dms) {
+    let lat = dmsVal(dms[2], dms[3], dms[4]);
+    let lon = dmsVal(dms[7], dms[8], dms[9]);
+    if ((dms[1] || dms[5] || "").toUpperCase() === "S") lat = -lat;
+    if ((dms[6] || dms[10] || "").toUpperCase() === "W") lon = -lon;
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const x = lat; lat = lon; lon = x; }
+    return mkPos(lat, lon, "Koordinaten");
+  }
+  // Dezimalgrad-Paar mit Komma/Semikolon/Leerzeichen oder Himmelsrichtung
+  const dec = t.match(/^\s*([NSns])?\s*(-?\d{1,3}[.,]\d+)\s*°?\s*([NSns])?\s*[,;\/\s]\s*([EWew])?\s*(-?\d{1,3}[.,]\d+)\s*°?\s*([EWew])?\s*$/);
+  if (dec) {
+    let lat = Number(dec[2].replace(",", "."));
+    let lon = Number(dec[5].replace(",", "."));
+    if ((dec[1] || dec[3] || "").toUpperCase() === "S") lat = -lat;
+    if ((dec[4] || dec[6] || "").toUpperCase() === "W") lon = -lon;
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const x = lat; lat = lon; lon = x; }
+    return mkPos(lat, lon, "Koordinaten");
+  }
+  return null;
+}
+function parseMapsUrl(t) {
+  if (!/https?:\/\/|\bwww\./i.test(t)) return null;
+  t = t.replace(/%2C/gi, ",");   // URL-kodiertes Komma (z. B. Yandex ll=)
+  const n = "(-?\\d{1,3}\\.\\d+)";
+  const yandex = /yandex\./i.test(t);
+  const pats = [
+    [new RegExp("[?&]q=" + n + "\\s*,\\s*" + n), false],         // Google ?q=lat,lng
+    [new RegExp("[?&]ll=" + n + "\\s*,\\s*" + n), yandex],       // Apple ll=lat,lng / Yandex ll=lon,lat
+    [new RegExp("[?&]cp=" + n + "\\s*~\\s*" + n), false],        // Bing cp=lat~lng
+    [new RegExp("[?&]mlat=" + n + "[^0-9-]+mlon=" + n), false],  // OSM mlat/mlon
+    [/#map=\d+\/(-?\d{1,3}\.\d+)\/(-?\d{1,3}\.\d+)/, false],     // OSM #map=z/lat/lon
+    [new RegExp("[?&]map=" + n + "\\s*,\\s*" + n), false],       // HERE map=lat,lng
+    [/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/, false],           // Google !3dlat!4dlng
+    [/@(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)/, false],            // Google/Apple @lat,lng
+    [new RegExp(n + "\\s*,\\s*" + n), false],                    // generisch: erstes Zahlenpaar
+  ];
+  for (const [re, swapped] of pats) {
+    const m = t.match(re);
+    if (!m) continue;
+    const a = Number(m[1]), b = Number(m[2]);
+    let lat = swapped ? b : a, lon = swapped ? a : b;
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const x = lat; lat = lon; lon = x; }
+    return mkPos(lat, lon, "Karten-Link");
+  }
+  return null;
+}
+function parseLocText(raw) {
+  const t = (raw || "").trim();
+  if (t.length < 3 || t.length > 2000) return null;
+  // geo:-URI
+  const geo = t.match(/^geo:(-?\d{1,3}(?:[.,]\d+)?),(-?\d{1,3}(?:[.,]\d+)?)/i);
+  if (geo) {
+    const p = mkPos(geo[1].replace(",", "."), geo[2].replace(",", "."), "geo:");
+    if (p) return p;
+  }
+  // Maidenhead-/QTH-Locator (JO49, JO49sk, JO49sk55)
+  const mh = t.match(/^\s*([A-Ra-r]{2}\d{2}(?:[A-Xa-x]{2}(?:\d{2})?)?)\s*$/);
+  if (mh) { const d = decodeMaidenhead(mh[1]); if (d) return mkPos(d.lat, d.lon, d.label); }
+  // Plus Code / OLC ("9FCGJ3V2+XQ" oder kurz "J3V2+XQ", Bezug Kiel)
+  const olc = t.match(/\b([23456789CFGHJMPQRVWXcfghjmpqrvwx]{2,8}\+[23456789CFGHJMPQRVWXcfghjmpqrvwx]{0,6})\b/);
+  if (olc) { const d = decodeOLC(olc[1]); if (d) return mkPos(d.lat, d.lon, d.label); }
+  // Karten-Links (Google, Apple, Bing, OSM, HERE, Yandex)
+  const url = parseMapsUrl(t);
+  if (url) return url;
+  // Koordinatenpaar (Dezimal oder Grad/Min/Sek)
+  return parseCoordPair(t);
+}
 
 async function searchAddress(q) {
   addrResults = [];
@@ -761,9 +1012,54 @@ addrSug.addEventListener("click", e => {
     if (!addrFavPanel.hidden) renderAddrFavs();
     return;
   }
+  const coord = e.target.closest("[data-coord]");
+  if (coord && addrSearch._loc) { selectCoord(addrSearch._loc); return; }
   const div = e.target.closest("div[data-addr]");
   if (div) selectAddr(Number(div.dataset.addr));
 });
+
+// Koordinaten/Locator als Standort aktivieren
+function selectCoord(loc) {
+  addrPos = { lat: loc.lat, lon: loc.lon, label: loc.label };
+  try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
+  addrSug.hidden = true;
+  addrSearch.value = loc.label;
+  addrSearch._loc = null;
+  renderAddrChip();
+  gpsCtl.classList.add("disabled");
+  positionReset();
+  clearStopSearchOnAddrLogin();
+  setLocNote("Aktiv: " + loc.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
+  renderPanels();
+}
+
+// Einloggen-Knopf: eingegebene Adresse/Koordinaten/Locator prüfen und übernehmen
+const addrGo = document.getElementById("addrGo");
+async function loginAddr() {
+  const q = addrSearch.value.trim();
+  if (!q) { setLocNote("Bitte Adresse, Koordinaten, Locator oder Karten-Link eingeben."); return; }
+  const loc = parseLocText(q);
+  if (loc) { selectCoord(loc); return; }
+  setLocNote("Prüfe Adresse …");
+  await searchAddress(q);
+  if (addrResults.length) selectAddr(0);
+  else setLocNote("Ungültige Adresse oder Koordinaten – bitte ändern.");
+}
+addrGo.addEventListener("click", loginAddr);
+
+// Senden-Ziel (Android-Share/Teilen): Text im Adressfeld eintragen und prüfen
+window.kvgImportLocation = function (text) {
+  try {
+    if (!text) return "empty";
+    addrSearch.value = String(text).trim().slice(0, 500);
+    addrSearch._loc = null;
+    addrSug.hidden = true;
+    const loc = parseLocText(addrSearch.value);
+    if (loc) { selectCoord(loc); return "ok"; }
+    loginAddr();   // als Adresse prüfen (asynchron), erstes Ergebnis wird übernommen
+    return "pending";
+  } catch (e) { return "error"; }
+};
 
 function selectAddr(i) {
   const r = addrResults[i];
@@ -775,6 +1071,7 @@ function selectAddr(i) {
   renderAddrChip();
   gpsCtl.classList.add("disabled");
   positionReset();
+  clearStopSearchOnAddrLogin();
   setLocNote("Adresse aktiv: " + addrPos.label + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
   renderPanels();
 }
@@ -889,6 +1186,7 @@ addrFavPanel.addEventListener("click", e => {
     renderAddrChip();
     gpsCtl.classList.add("disabled");
     positionReset();
+    clearStopSearchOnAddrLogin();
     setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✗ kehrt zum GPS zurück.");
     renderPanels();
     addrFavPanel.hidden = true;
@@ -971,6 +1269,31 @@ function searchHits(q) {
   return [...startHits, ...subHits, ...typoHits];
 }
 
+// Liste in 10er-Schritten rendern: erst die nächsten/vordersten Stationen,
+// weitere Zeilen entstehen erst beim Scrollen (spart Renderzeit und Abfragen)
+let sugHits = [], sugRendered = 0;
+function rowHTML(s, pos) {
+  const air = pos ? dist(pos, s) * 1.3 : 0;
+  const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
+  return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
+    '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
+    '<span class="smeta">' + meta + "</span>" +
+    starHTML(s.shortName) +
+    '<button class="rowref" data-ref="' + escapeHtml(s.shortName) +
+      '" title="Nur diese Haltestelle neu abfragen">↻</button></div>' +
+    '<small class="rowinfo dim" data-sn="' + escapeHtml(s.shortName) + '">Daten werden beim Sichtbarwerden geladen …</small>' +
+    "</div>";
+}
+function renderMoreRows(n) {
+  if (sugRendered >= sugHits.length) return;
+  const pos = getPos();
+  const end = Math.min(sugRendered + (n || 10), sugHits.length);
+  let html = "";
+  for (let i = sugRendered; i < end; i++) html += rowHTML(sugHits[i], pos);
+  sugBox.insertAdjacentHTML("beforeend", html);
+  sugRendered = end;
+}
+
 function updateSuggestions() {
   searchIndex = -1;
   if (!stops.length) { sugBox.hidden = true; return; }
@@ -981,20 +1304,12 @@ function updateSuggestions() {
   if (pos && !q.length) {
     hits = hits.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
   }
-  sugBox.innerHTML = hits.map(s => {
-    const air = pos ? dist(pos, s) * 1.3 : 0;
-    const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
-    return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
-      '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
-      '<span class="smeta">' + meta + "</span>" +
-      starHTML(s.shortName) +
-      '<button class="rowref" data-ref="' + escapeHtml(s.shortName) +
-        '" title="Nur diese Haltestelle neu abfragen">↻</button></div>' +
-      '<small class="rowinfo dim" data-sn="' + escapeHtml(s.shortName) + '">Daten werden beim Sichtbarwerden geladen …</small>' +
-      "</div>";
-  }).join("");
+  sugHits = hits;
+  sugRendered = 0;
+  sugBox.innerHTML = "";
   sugBox.hidden = false;
   sugBox.scrollTop = 0;
+  renderMoreRows(10);   // die zehn nächsten Treffer zuerst
   if (pos) enrichVisible(false);   // auch während der Suche laden
 }
 
@@ -1260,7 +1575,9 @@ function renderStationPanel() {
     marqueeify(stationPanel);
   }
   stationPanel.hidden = false;
-  if (v && v.meters == null && getPos()) {
+  // Kein Fußweg-Routing, solange der Fahrtverlauf offen ist: Luftlinie reicht
+  // (spart Abfragen); im reinen Stations-Panel bleibt das exakte Routing aktiv.
+  if (v && v.meters == null && getPos() && !(currentBus && currentBus.tripOpen)) {
     walkMeters(currentStop).then(m => { if (m != null) { v.meters = m; renderStationPanel(); } });
   }
 }
@@ -1330,7 +1647,12 @@ function stationSectionHTML() {
     const ageSec = (Date.now() - v.fetchTs) / 1000;
     const dep = v.deps.find(d => d.tripId === currentBus.tripId);
     if (dep) {
-      const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
+      // kein Weg-Routing mehr im Fahrtverlauf: Luftlinie × 1,3 genügt als Schätzung
+      const stopObj = stops.find(x => x.shortName === currentBus.sn);
+      const posNow = getPos();
+      const metersNow = v.meters || (stopObj && posNow ? dist(posNow, stopObj) * 1.3 : 0);
+      const estAir = !v.meters && metersNow;
+      const walkSec = metersNow ? metersNow / (WALK_SPEED_KMH * 1000 / 3600) : 0;
       const rel = dep.actualRelativeTime - ageSec;
       const losMin = Math.round((rel - walkSec) / 60);
       const plat = v.platforms && v.platforms[dep.tripId];
@@ -1350,8 +1672,10 @@ function stationSectionHTML() {
         (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
         "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
         (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")<br>" +
-        (v.meters
-          ? 'Fußweg <b>' + Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min</b> · "
+        (metersNow
+          ? "Fußweg <b>" + (estAir ? "~" : "") +
+            Math.ceil(metersNow / (WALK_SPEED_KMH * 1000 / 60)) + " min</b>" +
+            (estAir ? " (Luftlinie)" : "") + " · "
           : "") +
         '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
         "los in " + losMin + " min</span></div>";
@@ -2681,6 +3005,14 @@ function enrichVisible(force) {
       const v = viewOf(sn);
       if (v && v.meters && !force) { renderView(sn, el); continue; }
       enrichRow(stop, false).then(() => renderView(sn, el));
+    }
+    // Ende der Liste in Sichtnähe: nächste 10 Stationen anhängen
+    if (sugRendered < sugHits.length) {
+      const last = rows[rows.length - 1];
+      if (last) {
+        const r = last.getBoundingClientRect();
+        if (r.bottom < (innerHeight || 800) + 300) renderMoreRows(10);
+      }
     }
   }, 60);
 }

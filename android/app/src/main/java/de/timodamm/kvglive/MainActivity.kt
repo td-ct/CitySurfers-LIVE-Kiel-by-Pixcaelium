@@ -41,6 +41,7 @@ class MainActivity : Activity() {
     private var geoCallback: GeolocationPermissions.Callback? = null
     private var geoOrigin: String? = null
     private var pendingTab: String? = null   // Reiter-Sprung aus Wecker-Benachrichtigung
+    private var pendingShare: String? = null // geteilter Text (Adresse/Koordinaten/Link)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,6 +80,13 @@ class MainActivity : Activity() {
                     view.evaluateJavascript(
                         "window.kvgGotoTab(${JSONObject.quote(t)})", null)
                 }
+                // geteilter Text (Senden-Ziel), der vor dem Laden der Seite ankam
+                val s = pendingShare
+                if (s != null) {
+                    pendingShare = null
+                    view.evaluateJavascript(
+                        "window.kvgImportLocation(${JSONObject.quote(s)})", null)
+                }
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -99,6 +107,26 @@ class MainActivity : Activity() {
         // Start: übernommene Web-Version (falls vorhanden), sonst gebündelte Seite
         web.loadUrl(currentTarget())
         takeTabFrom(intent)
+        takeShareFrom(intent)
+    }
+
+    // ---------- Senden-Ziel: geteilter Text (Adresse/Koordinaten/Locator/Link) ----------
+
+    /** ACTION_SEND-Text ins Adressfeld der Seite übernehmen und prüfen lassen. */
+    private fun takeShareFrom(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val type = intent.type ?: return
+        if (!type.startsWith("text/")) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+            ?: intent.getStringExtra(Intent.EXTRA_TITLE)
+            ?: return
+        if (text.isBlank()) return
+        pendingShare = text
+        // läuft die Seite schon, sofort übernehmen; sonst übernimmt onPageFinished
+        try {
+            web.evaluateJavascript(
+                "window.kvgImportLocation(${JSONObject.quote(text)})", null)
+        } catch (e: Exception) { }
     }
 
     // ---------- Wecker-Benachrichtigungen: Sprung zum Reiter ----------
@@ -117,6 +145,7 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         takeTabFrom(intent)
+        takeShareFrom(intent)
     }
 
     override fun onDestroy() {
