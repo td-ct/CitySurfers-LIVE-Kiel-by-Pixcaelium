@@ -1,6 +1,3 @@
-type: "text/html"
----
-
 <!doctype html>
 <html lang="de">
 <head>
@@ -182,6 +179,12 @@ type: "text/html"
   .doder { text-align: center; color: #7dd3fc; font-weight: 600; margin: 6px 0; }
   .dstages { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
   .dstage { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+  .dstage select { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
+    border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
+  .dstage input[type="range"] { width: 90px; accent-color: #4d8fd6; }
+  .atest { border: 1px solid #1e3a5f; border-radius: 999px; padding: 4px 10px;
+    background: none; color: #cbd5e1; cursor: pointer; font-size: .85rem;
+    align-self: flex-start; }
   .dbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
   .dbtns button { background: none; border: 1px solid #1e3a5f; border-radius: 8px;
     padding: 6px 12px; cursor: pointer; color: #cbd5e1; font-size: .85rem; }
@@ -1402,32 +1405,56 @@ const alarms = new Map();       // "tripId|sn" -> {sn, name, dist, leadMin, vib,
 const firedAlarms = new Set(); // "tripId|sn" (ausgelöst, im Verlauf als ⏰ sichtbar)
 let audioCtx = null;
 
-function alarmBeep() {
+// Wecker-Klang einstellbar: Ton (Geräteklang in der App, Klangmuster im Browser)
+// und Lautstärke (0..1). Gesichert unter "kvg-alarmcfg" (auch im Zustand-Export).
+const ALARM_SOUNDS = [
+  ["alarm", "Wecker"],        // Standard-Alarmton des Geräts
+  ["ring", "Klingelton"],
+  ["notif", "Nachricht"]];
+function alarmCfg() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem("kvg-alarmcfg") || "{}") || {}; } catch (e) {}
+  return {
+    snd: ALARM_SOUNDS.some(s => s[0] === o.snd) ? o.snd : "alarm",
+    vol: isFinite(o.vol) ? Math.min(1, Math.max(0.1, Number(o.vol))) : 1
+  };
+}
+function saveAlarmCfg(c) {
+  try { localStorage.setItem("kvg-alarmcfg", JSON.stringify(c)); } catch (e) {}
+}
+// Im Browser: Klangmuster je Tonart (Frequenzen in Hz), Lautstärke über Gain
+const BEEP_FREQ = { alarm: [660, 880], ring: [950, 1250], notif: [740, 990] };
+function alarmBeep(vol, snd) {
   try {
+    const cfg = alarmCfg();
+    const v = vol != null ? vol : cfg.vol;
+    const s = snd || cfg.snd;
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") audioCtx.resume();
     const t0 = audioCtx.currentTime;
     for (let i = 0; i < 4; i++) {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.type = "sine"; o.frequency.value = i % 2 ? 880 : 660;
+      o.type = "sine"; o.frequency.value = (BEEP_FREQ[s] || BEEP_FREQ.alarm)[i % 2];
       g.gain.setValueAtTime(0.001, t0 + i * 0.6);
-      g.gain.exponentialRampToValueAtTime(0.4, t0 + i * 0.6 + 0.05);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.02, 0.4 * v), t0 + i * 0.6 + 0.05);
       g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.6 + 0.5);
       o.connect(g); g.connect(audioCtx.destination);
       o.start(t0 + i * 0.6); o.stop(t0 + i * 0.6 + 0.55);
     }
   } catch (e) {}
 }
+// Vibration: im WebView existiert navigator.vibrate evtl. nicht (oder greift
+// nicht); deshalb in der App ZUSÄTZLICH über die native Brücke schwingen lassen.
+function vibratePattern(pat) {
+  if (navigator.vibrate) { try { navigator.vibrate(pat); } catch (e) {} }
+  if (window.KvgNative) nativeVibrate(pat);
+}
 function fireAlarm(aKey, a) {
   alarms.delete(aKey);
   nativeCall("cancelAlarm", aKey);   // nativen Wecker mitauslösen (falls in App gestellt)
   firedAlarms.add(aKey);
-  if (a.vib) {
-    const pat = [400, 200, 400, 200, 800];
-    if (navigator.vibrate) { try { navigator.vibrate(pat); } catch (e) {} }
-    else nativeVibrate(pat);   // Android-App ohne navigator.vibrate (WebView)
-  }
-  if (a.tone) alarmBeep();
+  if (a.vib) vibratePattern([400, 200, 400, 200, 800]);
+  if (a.tone) alarmBeep(a.vol, a.snd);
   setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!");
   if (currentBus) renderBusPanel();
 }
@@ -1534,6 +1561,9 @@ function openAlarmDialog(aKey) {
   const old = alarms.get(aKey) || {};
   let selDist = old.dist || null, selLead = old.leadMin || null;
   const vib = old.vib !== false, tone = old.tone !== false;
+  const cfg = alarmCfg();
+  // In der App vibriert die native Brücke auch ohne navigator.vibrate (WebView)
+  const hasVib = !!(navigator.vibrate || window.KvgNative);
   const wrap = document.createElement("div");
   wrap.className = "dlgwrap";
   const chip = (label, val, group) =>
@@ -1550,9 +1580,14 @@ function openAlarmDialog(aKey) {
     '<div class="achips">' +
       chip("2 min", 2, "t") + chip("5 min", 5, "t") + chip("10 min", 10, "t") + chip("20 min", 20, "t") + "</div>" +
     '<div class="dstages">' +
-      '<label class="dstage"><input type="checkbox" class="avib"' + (vib ? " checked" : "") + (navigator.vibrate ? "" : " disabled") +
-        "> Vibration" + (navigator.vibrate ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
+      '<label class="dstage"><input type="checkbox" class="avib"' + (vib ? " checked" : "") + (hasVib ? "" : " disabled") +
+        "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
       '<label class="dstage"><input type="checkbox" class="atone"' + (tone ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage">Ton <select class="asnd">' +
+        ALARM_SOUNDS.map(s => '<option value="' + s[0] + '"' + (s[0] === cfg.snd ? " selected" : "") + ">" + s[1] + "</option>").join("") +
+        "</select></label>" +
+      '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cfg.vol + '" title="Weckton-Lautstärke" /></label>' +
+      '<button class="atest" title="Weckton und Vibration sofort ausprobieren">▶ Test</button>' +
     "</div>" +
     '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
     '<button class="aok" disabled>Wecker stellen</button></div>' +
@@ -1577,6 +1612,14 @@ function openAlarmDialog(aKey) {
     okBtn.disabled = !(selDist || selLead);   // erst mit mindestens einer Bedingung stellbar
   };
   wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {   // Test: aktueller Ton + Lautstärke + Vibration
+      const c = { snd: wrap.querySelector(".asnd").value,
+                  vol: Number(wrap.querySelector(".avol").value) };
+      saveAlarmCfg(c);
+      if (wrap.querySelector(".atone").checked) alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".avib").checked && hasVib) vibratePattern([200, 100, 200]);
+      return;
+    }
     const c = e.target.closest(".achip");
     if (c) {
       const v = Number(c.dataset.v);
@@ -1587,15 +1630,20 @@ function openAlarmDialog(aKey) {
     }
     if (e.target.closest(".acancel")) { wrap.remove(); return; }
     if (e.target.closest(".aok") && (selDist || selLead)) {
+      const snd = wrap.querySelector(".asnd").value;
+      const vol = Number(wrap.querySelector(".avol").value);
+      saveAlarmCfg({ snd: snd, vol: vol });   // Klang/Lautstärke künftig merken
+      const useVib = hasVib && wrap.querySelector(".avib").checked;
+      const useTone = wrap.querySelector(".atone").checked;
       alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
         dist: selDist, leadMin: selLead,
-        vib: wrap.querySelector(".avib").checked,
-        tone: wrap.querySelector(".atone").checked, lastPoll: 0 });
+        vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
       // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
       // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
       if (selLead) {
         const ms = nativeAlarmEpoch(aKey, selLead);
-        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name, String(selLead));
+        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
+          JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
       }
       wrap.remove();
       setLocNote("🔔 Wecker gestellt: " + a.name +
@@ -1614,7 +1662,7 @@ function openAlarmDialog(aKey) {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg"];
 function kvgExportState() {
   const o = {};
   for (const k of STATE_KEYS) {
@@ -2373,17 +2421,24 @@ function marqueeify(container) {
 }
 
 // ---------- Schriftgrößen-Regler ----------
+// zoom skaliert die gesamte App einheitlich (auch px-Größen). Die Kopfzeile
+// (und damit der Slider selbst) wird gegenzoomt: Der Regler behält während
+// des Ziehens seine Größe und Position bei und zuckt nicht unter dem Finger.
 const fontSlider = document.getElementById("fontSlider");
+const applyFontScale = v => {
+  document.body.style.zoom = String(v);
+  const h = document.querySelector(".wrap > header");
+  if (h) h.style.zoom = String(1 / v);
+};
 fontSlider.addEventListener("input", () => {
-  // zoom skaliert die gesamte App einheitlich (auch px-Größen), nicht nur einzelne Texte
-  document.body.style.zoom = String(Number(fontSlider.value));
+  applyFontScale(Number(fontSlider.value));
   try { localStorage.setItem("kvg-font", fontSlider.value); } catch (e) {}
 });
 try {
   const saved = localStorage.getItem("kvg-font");
   if (saved) {
     fontSlider.value = saved;
-    document.body.style.zoom = String(Number(saved));
+    applyFontScale(Number(saved));
   }
 } catch (e) {}
 

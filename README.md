@@ -5,6 +5,8 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 (OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+**v1.0.8** – Wecker-Verbesserungen: Im Wecker-Dialog sind jetzt Ton (Wecker/Klingelton/Nachricht) und Lautstärke einstellbar, plus Test-Knopf; die Einstellungen werden gesichert (auch im Zustand-Export). Vibration geht in der App jetzt zusätzlich über die native Brücke (WebView-navigator.vibrate ist unzuverlässig), der AlarmReceiver spielt Klang und Vibration gemäß den Einstellungen (stiller Notification-Channel, Ton über MediaPlayer mit gewählter Lautstärke). Der Schriftgrößen-Regler zoomt die Kopfzeile gegen, sodass der Slider beim Ziehen nicht mehr zuckt.
+
 **v1.0.7** – App-Fix: In der Gradle-Konfiguration fehlte das Kotlin-Plugin,
 wurde dadurch gar kein Code kompiliert und die APK enthielt eine leere
 classes.dex – die App stürzte sofort nach dem Start ab. Neu:

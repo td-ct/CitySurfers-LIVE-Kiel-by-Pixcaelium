@@ -255,7 +255,8 @@ class MainActivity : Activity() {
 
 /**
  * JS-Brücke: window.KvgNative in der Seite.
- * vibrate(patternJson), setAlarm(key, epochMs, name, leadMin), cancelAlarm(key)
+ * vibrate(patternJson), setAlarm(key, epochMs, name, cfgJson), cancelAlarm(key)
+ * cfgJson: {"lead":int, "vib":bool, "tone":bool, "snd":"alarm|ring|notif", "vol":0..1}
  */
 class NativeBridge(private val act: Activity) {
 
@@ -265,17 +266,25 @@ class NativeBridge(private val act: Activity) {
             val arr = JSONArray(patternJson)
             val pat = LongArray(arr.length()) { arr.optLong(it, 0L) }
             val v = act.getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator ?: return
-            if (pat.isEmpty()) v.cancel() else v.vibrate(pat, -1)
+            if (pat.isEmpty()) v.cancel()
+            else if (Build.VERSION.SDK_INT >= 26)
+                v.vibrate(android.os.VibrationEffect.createWaveform(pat, -1))
+            else @Suppress("DEPRECATION") v.vibrate(pat, -1)
         } catch (e: Exception) { }
     }
 
     @JavascriptInterface
-    fun setAlarm(key: String, epochMs: String, name: String, leadMin: String) {
+    fun setAlarm(key: String, epochMs: String, name: String, cfgJson: String) {
         val am = act.getSystemService(ALARM_SERVICE) as android.app.AlarmManager
         val ctx = act.applicationContext
+        val cfg = try { JSONObject(cfgJson) } catch (e: Exception) { JSONObject() }
         val intent = Intent(ctx, AlarmReceiver::class.java).apply {
             putExtra("key", key)
             putExtra("name", name)
+            putExtra("vib", cfg.optBoolean("vib", true))
+            putExtra("tone", cfg.optBoolean("tone", true))
+            putExtra("snd", cfg.optString("snd", "alarm"))
+            putExtra("vol", cfg.optDouble("vol", 1.0))
         }
         // requestCode = Key-Hash: cancelAlarm funktioniert auch nach App-Neustart
         val pi = android.app.PendingIntent.getBroadcast(
