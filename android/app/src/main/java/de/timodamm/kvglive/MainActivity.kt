@@ -160,6 +160,8 @@ class MainActivity : Activity() {
             val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
             for (id in NativeBridge.alarmNotifs.toList()) nm.cancel(id)
             NativeBridge.alarmNotifs.clear()
+            for (id in NativeBridge.notifIds.toList()) nm.cancel(id)
+            NativeBridge.notifIds.clear()
         } catch (e: Exception) { }
         super.onDestroy()
     }
@@ -359,9 +361,18 @@ class NativeBridge(private val act: Activity) {
     fun vibrate(patternJson: String) {
         try {
             val arr = JSONArray(patternJson)
-            val pat = LongArray(arr.length()) { arr.optLong(it, 0L) }
-            val v = act.getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator ?: return
-            if (pat.isEmpty()) v.cancel()
+            // Web-Konvention (navigator.vibrate): Muster beginnt mit VIBRIER-Dauer.
+            // Android createWaveform erwartet aber PAUSE zuerst — [3000] waere dort
+            // 3000 ms Stillstand! Deshalb fuehrende 0 ergaenzen, wenn keine da ist.
+            val raw = LongArray(arr.length()) { arr.optLong(it, 0L) }
+            val pat = if (raw.isEmpty() || raw[0] != 0L) longArrayOf(0L) + raw else raw
+            // Vibrator besorgen (ab API 31 ueber den VibratorManager)
+            val v = if (Build.VERSION.SDK_INT >= 31)
+                (act.getSystemService(android.os.VibratorManager::class.java))?.defaultVibrator
+            else @Suppress("DEPRECATION")
+                act.getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            if (v == null) return
+            if (pat.size <= 1) v.cancel()
             else if (Build.VERSION.SDK_INT >= 26)
                 v.vibrate(android.os.VibrationEffect.createWaveform(pat, -1))
             else @Suppress("DEPRECATION") v.vibrate(pat, -1)
@@ -456,6 +467,75 @@ class NativeBridge(private val act: Activity) {
         return arr.toString()
     }
 
+    // ---------- Freie Benachrichtigungen (Finde-Nach-Hause, Fahrtverlauf) ----------
+    // Die Seite ruft notify(id, title, text, channel) fuer Hinweise, die auch in
+    // der Android-Nachrichtenliste erscheinen sollen. Kanaele:
+    //   "hinweise"      – Finde-Nach-Hause-Fahrten
+    //   "fahrtverlauf"  – Fortschritt im aktiven Fahrtverlauf (an Station angekommen)
+    @JavascriptInterface
+    fun notify(id: String, title: String, text: String, channel: String) {
+        try {
+            val nm = act.getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val chId = if (channel == "fahrtverlauf") "fahrtverlauf" else "hinweise"
+            if (Build.VERSION.SDK_INT >= 26) {
+                val ch = android.app.NotificationChannel(chId,
+                    if (chId == "fahrtverlauf") "Fahrtverlauf" else "Finde-Nach-Hause-Hinweise",
+                    android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                if (chId == "hinweise") ch.description = "Moegliche Fahrten zu Favoriten-Zielen"
+                nm.createNotificationChannel(ch)
+            }
+            val nid = id.hashCode()
+            val open = android.app.PendingIntent.getActivity(
+                act, nid, Intent(act, MainActivity::class.java),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                    android.app.PendingIntent.FLAG_IMMUTABLE)
+            val b = if (Build.VERSION.SDK_INT >= 26)
+                android.app.Notification.Builder(act, chId)
+            else @Suppress("DEPRECATION") android.app.Notification.Builder(act)
+            b.apply {
+                setSmallIcon(android.R.drawable.ic_dialog_map)
+                setContentTitle(title)
+                setContentText(text)
+                setContentIntent(open)
+                setAutoCancel(true)       // mit Antippen weg, oeffnet die App
+                if (Build.VERSION.SDK_INT < 26) {
+                    @Suppress("DEPRECATION")
+                    setPriority(android.app.Notification.PRIORITY_DEFAULT)
+                }
+            }
+            try { nm.notify(nid, b.build()); notifIds.add(nid) } catch (e: Exception) { }
+        } catch (e: Exception) { }
+    }
+
+    @JavascriptInterface
+    fun cancelNotify(id: String) {
+        try {
+            val nm = act.getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val nid = id.hashCode()
+            nm.cancel(nid)
+            notifIds.remove(nid)
+        } catch (e: Exception) { }
+    }
+
+    /** Hat die App die Benachrichtigungs-Freigabe (Android 13+)? */
+    @JavascriptInterface
+    fun hasNotifPerm(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            act.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+
+    /** Benachrichtigungs-Freigabe nachtraeglich anfragen (falls abgelehnt/verpasst). */
+    @JavascriptInterface
+    fun requestNotifPerm() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            act.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED) {
+            act.runOnUiThread {
+                act.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 41)
+            }
+        }
+    }
+
     // ---------- Geofence-Wecker (Distanz-Wecker im Hintergrund) ----------
     // Die Seite konfiguriert (listJson), das System überwacht die Zäune:
     // [{key, lat, lon, radius, name, vib, tone, snd, vol}] je Distanz-Wecker.
@@ -529,6 +609,9 @@ class NativeBridge(private val act: Activity) {
         private const val NOTIFICATION_SERVICE = android.content.Context.NOTIFICATION_SERVICE
         /** IDs der Wecker-Benachrichtigungen (zum Aufraeumen bei App-Ende). */
         val alarmNotifs: MutableSet<Int> =
+            java.util.Collections.synchronizedSet(HashSet<Int>())
+        /** IDs der freien Benachrichtigungen (Finde-Nach-Hause, Fahrtverlauf). */
+        val notifIds: MutableSet<Int> =
             java.util.Collections.synchronizedSet(HashSet<Int>())
     }
 }
