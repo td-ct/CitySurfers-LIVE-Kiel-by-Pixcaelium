@@ -38,7 +38,7 @@
     #gpsCtl .accbar { gap: 1px; }
     #gpsCtl .accbar i { width: 4px; height: 8px; }
     #apiInd { top: 42px; right: 6px; gap: 3px; }
-    #alarmList, #addrFavPanel, #stopFavPanel { top: 74px; right: 6px; }
+    #alarmList { top: 74px; right: 6px; }
   }
   #posBtn, #addrGo { flex: none; }
   #accDlg { position: fixed; inset: 0; z-index: 80; background: rgba(2,6,23,.65);
@@ -171,9 +171,10 @@
 
   footer { margin-top: 24px; font-size: 0.8rem; color: #475569; line-height: 1.5; }
   footer a { color: #64748b; }
-  #addrFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
-    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
-    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  #addrFavPanel { background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 100%;
+    width: fit-content; margin: 6px 0 8px auto;
+    max-height: 45vh; overflow-y: auto; }
   #addrFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
   #addrFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
@@ -182,6 +183,9 @@
     border-radius: 6px; padding: 1px 7px; font-size: 0.9rem; }
   #addrFavPanel .afbtn:hover { background: #334155; }
   #addrFavPanel .afsave { width: 100%; margin-bottom: 6px; }
+  .afshead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+  .afshead .dim { font-size: 0.72rem; }
+  .pagefoot .verline { margin-top: 8px; opacity: 0.75; }
   footer details.legal { margin-top: 14px; border: 1px solid #334155; border-radius: 8px;
     padding: 8px 12px; background: #0b1222; }
   footer details.legal summary { cursor: pointer; font-weight: 600; color: #4d8fd6; font-size: 1.05rem; }
@@ -287,9 +291,10 @@
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
-  #stopFavPanel { position: fixed; top: 82px; right: 12px; z-index: 50; background: #1e293b;
+  #stopFavPanel { background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
-    min-width: 250px; max-width: 340px; box-shadow: 0 8px 22px #000000cc; margin: 4px 0 8px; }
+    min-width: 250px; max-width: 100%; width: fit-content; margin: 4px 0 8px auto;
+    max-height: 45vh; overflow-y: auto; }
   #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -398,12 +403,12 @@
       <input type="range" id="fontSlider" min="0.85" max="1.5" step="0.05" value="1" title="Textgröße" />
       A
     </span>
-    <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
-    <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
+    <button class="chip" id="addrFavBtn" title="Adressfavoritenliste ein-/ausklappen">⭐ Adressen <span id="addrFavCount">0</span></button>
+    <button class="chip" id="stopFavBtn" title="Haltestellenfavoritenliste ein-/ausklappen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
     <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
   </header>
 
-  <div id="addrFavPanel" hidden></div>
+  <div id="addrFavPanel"></div>
 
   <div class="addrwrap">
     <button class="gpsbtn" id="posBtn" title="Aktuelle GPS-Position als Startpunkt übernehmen">⤓ GPS</button>
@@ -416,7 +421,7 @@
   <div class="chips" id="addrChip"></div>
   <div class="locnote" id="locNote"></div>
 
-  <div id="stopFavPanel" hidden></div>
+  <div id="stopFavPanel"></div>
   <div class="searchbox">
     <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
     <button class="gpsbtn" id="gpsGoBtn" title="GPS-Ortung übernehmen und Haltestellenliste danach sortieren">GPS➜</button>
@@ -741,7 +746,7 @@ function onPos(pos) {
   } catch (e) {}
   if (addrPos) {
     if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✗ hinter der Adresse kehrt zu GPS zurück.");
-    if (gpsDlgMode === "takeover" && !gpsDlg.hidden && pos.coords.accuracy <= GPS_ACC_AUTOCLOSE_M) { gpsDlg.hidden = true; gpsAdoptForStops(myPos); }
+    if (gpsDlgMode === "takeover" && !gpsDlg.hidden && pos.coords.accuracy <= GPS_ACC_AUTOCLOSE_M) { gpsDlg.hidden = true; gpsAdoptDispatch(myPos); }
     return;
   }
   // Ortung wird für die Sortierung der Listen höchstens alle 30 s neu angewendet
@@ -755,7 +760,7 @@ function onPos(pos) {
   if (gpsDlgMode === "takeover" && !gpsDlg.hidden && myPos.accuracy <= GPS_ACC_AUTOCLOSE_M) {   // Dialog: ab ±20 m automatisch übernehmen
     gpsDlg.hidden = true;
     lastGpsSortTs = Date.now();
-    gpsAdoptForStops(myPos);
+    gpsAdoptDispatch(myPos);
     return;
   }
   if (firstFix || (moved && sortDue)) {
@@ -880,6 +885,39 @@ function gpsTakeOver() {
 // Dialog öffnen: "takeover" zeigt Abbrechen/Übernehmen und übernimmt automatisch ab
 // GPS_ACC_AUTOCLOSE_M; "status" (Klick aufs GPS-Symbol oben rechts) zeigt nur
 // Ein-/Aus-Schalter und Genauigkeit, ohne Übernehmen/Abbrechen.
+// ---------- GPS-Übernahme für eine einzelne Liste (Ziel dispatchen) ----------
+// gpsTakeTarget legt fest, wohin eine GPS-Übernahme geht: "stops" = klassische
+// GPS➜-Übernahme (Startpunkt + Haltestellenliste), "addrFav"/"stopFav" =
+// GPS-Standort nur als Sortier-Ursprung der jeweiligen Favoritenliste hinterlegen.
+let gpsTakeTarget = "stops";
+function gpsAdoptForList(kind, p) {
+  if (!p) return;
+  sortGps[kind] = { lat: p.lat, lon: p.lon, acc: Math.round(p.accuracy || 0), t: Date.now() };
+  saveSortGps();
+  renderAddrFavs();
+  renderStopFavs();
+  setLocNote("📍 GPS-Standort für die " + (kind === "addrFav" ? "Adressfavoriten" : "Haltestellenfavoriten") +
+    " übernommen (±" + Math.round(p.accuracy || 0) + " m) – Liste wird danach sortiert.");
+}
+function gpsAdoptDispatch(p) {
+  if (gpsTakeTarget === "addrFav" || gpsTakeTarget === "stopFav") gpsAdoptForList(gpsTakeTarget, p);
+  else gpsAdoptForStops(p);
+}
+function gpsTakeOverFor(kind) {
+  gpsTakeTarget = kind;
+  if (!("geolocation" in navigator) || !isSecure()) {
+    setLocNote("GPS nicht verfügbar – Liste lässt sich nicht nach GPS-Standort sortieren.");
+    return;
+  }
+  // gute Ortung: direkt hinterlegen; sonst Dialog (schaltet GPS nötigenfalls ein)
+  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
+    gpsAdoptForList(kind, myPos);
+    return;
+  }
+  if (gpsState === "off") gpsStart();
+  openGpsDlg("takeover");
+}
+
 function openGpsDlg(mode) {
   gpsDlgMode = mode;
   gpsDlgSince = Date.now();   // für die Warnung bei ausbleibender Verbesserung
@@ -889,14 +927,14 @@ function openGpsDlg(mode) {
   updateGpsDlg();
 }
 gpsDlgBtn.addEventListener("click", gpsToggle);
-document.getElementById("gpsGoBtn").addEventListener("click", gpsTakeOver);
+document.getElementById("gpsGoBtn").addEventListener("click", () => { gpsTakeTarget = "stops"; gpsTakeOver(); });
 document.getElementById("gpsDlgOk").addEventListener("click", () => {
   if (!myPos || gpsState !== "on") {
     gpsDlgMsg.textContent = "Noch keine Position – kurz warten und erneut drücken oder GPS oben einschalten.";
     return;
   }
   gpsDlg.hidden = true;
-  gpsAdoptForStops(myPos);
+  gpsAdoptDispatch(myPos);
 });
 document.getElementById("gpsDlgCancel").addEventListener("click", () => { gpsDlg.hidden = true; });
 gpsDlg.addEventListener("keydown", e => { if (e.key === "Escape") gpsDlg.hidden = true; });
@@ -1268,7 +1306,7 @@ addrSug.addEventListener("click", e => {
     st.classList.toggle("off", !addrFavs.some(f =>
       f.label === fav.label && f.lat === fav.lat && f.lon === fav.lon));
     addrFavCount.textContent = addrFavs.length;
-    if (!addrFavPanel.hidden) renderAddrFavs();
+    renderAddrFavs();
     return;
   }
   const coord = e.target.closest("[data-coord]");
@@ -1428,6 +1466,18 @@ function renderStopChip() {
 
 // ---------- Adressfavoriten (oben rechts) ----------
 let addrFavs = JSON.parse(localStorage.getItem("kvg-addrfavs") || "[]");
+// Pro Favoritenliste hinterlegter GPS-Standort als Sortier-Ursprung:
+// { addrFav: {lat,lon,acc,t} | null, stopFav: {...} | null }
+let sortGps = { addrFav: null, stopFav: null };
+try {
+  const sg = JSON.parse(localStorage.getItem("kvg-sortgps") || "null");
+  if (sg && typeof sg === "object") sortGps = { addrFav: sg.addrFav || null, stopFav: sg.stopFav || null };
+} catch (e) {}
+function saveSortGps() { try { localStorage.setItem("kvg-sortgps", JSON.stringify(sortGps)); } catch (e) {} }
+function sortGpsOrigin(kind) {
+  const g = sortGps[kind];
+  return (g && g.lat != null) ? g : getPos();
+}
 const addrFavBtn = document.getElementById("addrFavBtn");
 const addrFavPanel = document.getElementById("addrFavPanel");
 const addrFavCount = document.getElementById("addrFavCount");
@@ -1437,17 +1487,28 @@ function saveAddrFavs() {
 }
 function renderAddrFavs() {
   addrFavCount.textContent = addrFavs.length;
-  if (addrFavPanel.hidden) return;
-  let inner = '<button class="chip ok afsave" id="addrFavSave" title="Aktuell aktive Adresse oder GPS-Standort speichern">＋ Aktuelle Position speichern</button>';
+  const origin = sortGpsOrigin("addrFav");   // hinterlegter GPS-Standort oder aktuelle Position
+  let inner = '<div class="afshead">' +
+    '<button class="chip afbtn" id="addrFavGps" title="GPS-Standort für diese Liste übernehmen und Adressfavoriten nach Abstand sortieren">📍 GPS➜</button>' +
+    (sortGps.addrFav
+      ? '<button class="afbtn" id="addrFavGpsClr" title="Gespeicherten GPS-Standort löschen – sortiert wieder nach aktueller Position">✕ GPS</button>'
+      : '') +
+    '<span class="dim">' + (sortGps.addrFav
+      ? 'Sortierung: gespeicherter GPS-Standort (±' + sortGps.addrFav.acc + ' m)'
+      : 'Sortierung: aktuelle Position') + '</span></div>' +
+    '<button class="chip ok afsave" id="addrFavSave" title="Aktuell aktive Adresse oder GPS-Standort speichern">＋ Aktuelle Position speichern</button>';
   if (!getPos()) {
     inner += '<div class="afsrow"><span class="afsname dim">Noch keine Position aktiv (Adresse wählen oder GPS aktivieren).</span></div>';
   }
   if (!addrFavs.length) {
     inner += '<div class="afsrow"><span class="afsname dim">Noch keine Adressfavoriten gespeichert.</span></div>';
   }
-  addrFavs.forEach((f, i) => {
+  const order = addrFavs.map((f, i) => ({ f, i }));
+  if (origin) order.sort((a, b) => dist(origin, a.f) - dist(origin, b.f));   // nächster Favorit zuerst
+  order.forEach(({ f, i }) => {
     inner += '<div class="afsrow" data-afi="' + i + '" title="Als Startadresse aktivieren">' +
       '<span class="afsname">⭐ ' + escapeHtml(f.name) +
+        (origin ? ' <small class="dim">' + formatDist(dist(origin, f)) + '</small>' : '') +
         (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") + '</span>' +
       '<button class="afbtn" data-fh="addr:' + i + '" title="Finde nach Hause: Hinweise einstellen' +
         (f.fh && f.fh.on ? ' (aktiv)' : '') + '">' + (f.fh && f.fh.on ? "🏠" : "⌂") + "</button>" +
@@ -1525,20 +1586,19 @@ document.getElementById("favDlgCancel").addEventListener("click", () => { favDlg
 favDlg.addEventListener("keydown", e => { if (e.key === "Escape") favDlg.hidden = true; });
 function toggleAddrFavPanel() {
   addrFavPanel.hidden = !addrFavPanel.hidden;
-  if (!addrFavPanel.hidden) stopFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderAddrFavs();
 }
 addrFavBtn.addEventListener("click", e => { e.stopPropagation(); toggleAddrFavPanel(); });
-document.addEventListener("click", e => {
-  if (!addrFavPanel.hidden && !e.target.closest("#addrFavPanel") && !e.target.closest("#addrFavBtn")) {
-    addrFavPanel.hidden = true;
-  }
-});
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && !addrFavPanel.hidden) addrFavPanel.hidden = true;
-});
 addrFavPanel.addEventListener("click", e => {
   e.stopPropagation();
+  if (e.target.closest("#addrFavGps")) { gpsTakeOverFor("addrFav"); return; }
+  if (e.target.closest("#addrFavGpsClr")) {
+    sortGps.addrFav = null;
+    saveSortGps();
+    renderAddrFavs();
+    setLocNote("GPS-Standort der Adressfavoriten gelöscht – sortiert wieder nach aktueller Position.");
+    return;
+  }
   const fhb = e.target.closest("[data-fh]");
   if (fhb) {
     const p = fhb.dataset.fh.split(":");
@@ -1656,7 +1716,10 @@ addrSearch.addEventListener("focus", () => {
       // favoriten vorhanden, dienen sie als Platzhalter-Einträge (⭐, antippen
       // übernimmt). Ohne Favoriten gibt es keine Liste -> Tastatur öffnet normal.
       if (addrSug.hidden && addrFavs.length) {
-        addrSug.innerHTML = addrFavs.map((f, i) =>
+        const aOrigin = sortGpsOrigin("addrFav");
+        const aOrder = addrFavs.map((f, i) => ({ f, i }));
+        if (aOrigin) aOrder.sort((a, b) => dist(aOrigin, a.f) - dist(aOrigin, b.f));
+        addrSug.innerHTML = aOrder.map(({ f, i }) =>
           '<div data-favsel="' + i + '" class="favhit" tabindex="0" title="Adressfavorit als Standort übernehmen">' +
           '<span>⭐ ' + escapeHtml(f.name) + '</span>' +
           '<span class="atype">' + escapeHtml(f.label || "") + '</span></div>').join("");
@@ -3118,7 +3181,7 @@ function openAlarmDialog(tripId, preSn) {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps"];
 function kvgExportState() {
   // Aktuell geöffnete Reiter (jeweils Kette Haltestelle -> Buslinie ->
   // Fahrtverlauf) mit in den Export nehmen; sie werden beim Import
@@ -3268,16 +3331,29 @@ const stopFavPanel = document.getElementById("stopFavPanel");
 const stopFavCount = document.getElementById("stopFavCount");
 function renderStopFavs() {
   if (stopFavCount) stopFavCount.textContent = favs.length;
-  if (stopFavPanel.hidden) return;
-  let inner = "";
+  const origin = sortGpsOrigin("stopFav");   // hinterlegter GPS-Standort oder aktuelle Position
+  let inner = '<div class="afshead">' +
+    '<button class="chip afbtn" id="stopFavGps" title="GPS-Standort für diese Liste übernehmen und Haltestellenfavoriten nach Abstand sortieren">📍 GPS➜</button>' +
+    (sortGps.stopFav
+      ? '<button class="afbtn" id="stopFavGpsClr" title="Gespeicherten GPS-Standort löschen – sortiert wieder nach aktueller Position">✕ GPS</button>'
+      : '') +
+    '<span class="dim">' + (sortGps.stopFav
+      ? 'Sortierung: gespeicherter GPS-Standort (±' + sortGps.stopFav.acc + ' m)'
+      : 'Sortierung: aktuelle Position') + '</span></div>';
   if (!favs.length) {
     inner += '<div class="afsrow"><span class="afsname dim">Noch keine Haltestellenfavoriten. ' +
       "★ an einer Haltestelle antippen, um sie hier zu sichern.</span></div>";
   }
-  favs.forEach(sn => {
+  const sns = favs.slice();
+  if (origin) sns.sort((a, b) => {   // nächstgelegene Haltestelle zuerst
+    const sa = stops.find(x => x.shortName === a), sb = stops.find(x => x.shortName === b);
+    return (sa ? dist(origin, sa) : 1e12) - (sb ? dist(origin, sb) : 1e12);
+  });
+  sns.forEach(sn => {
     const s = stops.find(x => x.shortName === sn);
     inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
-      '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) + "</span>" +
+      '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) +
+        (s && origin ? ' <small class="dim">' + formatDist(dist(origin, s)) + '</small>' : '') + "</span>" +
       '<button class="afbtn" data-fh="stop:' + escapeHtml(sn) + '" title="Finde nach Hause: Hinweise einstellen' +
         (fhStopCfg[sn] && fhStopCfg[sn].on ? ' (aktiv)' : '') + '">' +
         (fhStopCfg[sn] && fhStopCfg[sn].on ? "🏠" : "⌂") + "</button>" +
@@ -3288,18 +3364,18 @@ function renderStopFavs() {
 stopFavBtn.addEventListener("click", e => {
   e.stopPropagation();
   stopFavPanel.hidden = !stopFavPanel.hidden;
-  if (!stopFavPanel.hidden) addrFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
   renderStopFavs();
-});
-document.addEventListener("click", e => {
-  if (!stopFavPanel.hidden && !e.target.closest("#stopFavPanel") && !e.target.closest("#stopFavBtn"))
-    stopFavPanel.hidden = true;
-});
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && !stopFavPanel.hidden) stopFavPanel.hidden = true;
 });
 stopFavPanel.addEventListener("click", e => {
   e.stopPropagation();
+  if (e.target.closest("#stopFavGps")) { gpsTakeOverFor("stopFav"); return; }
+  if (e.target.closest("#stopFavGpsClr")) {
+    sortGps.stopFav = null;
+    saveSortGps();
+    renderStopFavs();
+    setLocNote("GPS-Standort der Haltestellenfavoriten gelöscht – sortiert wieder nach aktueller Position.");
+    return;
+  }
   const fhb = e.target.closest("[data-fh]");
   if (fhb) {
     const p = fhb.dataset.fh.split(":");
@@ -3320,7 +3396,7 @@ stopFavPanel.addEventListener("click", e => {
     return;
   }
   const row = e.target.closest("[data-sfi]");
-  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; }
+  if (row) selectStop(row.dataset.sfi);
 });
 
 function toggleFavSn(sn) {
@@ -4104,6 +4180,7 @@ function escapeHtml(s) {
 }
 setStatus(stops.length + " Haltestellen bereit");
 renderStopFavs();
+renderAddrFavs();
 </script>
 
 <div class="apkdl pagefoot">
@@ -4112,6 +4189,7 @@ renderStopFavs();
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.0.22 · Build: 13.11.2026</div>
 </div>
 </body>
 </html>
