@@ -2072,6 +2072,66 @@ function fireAlarm(aKey, a) {
   if (currentBus) renderBusPanel();
 }
 
+// ---------- Geofence-Wecker: Distanz-Wecker klingeln in der App auch im Hintergrund ----------
+// Die Seite bleibt das Konzept: Sie kennt die Wecker-Logik und konfiguriert die
+// Zäune; die App überwacht sie beim System (Geofencing API) und läutet beim
+// Eintritt in den Radius nach exakt demselben Muster wie der Zeit-Wecker
+// (3 s Ton/Vibration, 5 s Pause, ... bis zum ⏰-Antippen). Im Browser bleiben
+// alle Aufrufe wirkungslos, die Seite läuft unverändert weiter.
+let geoSyncHash = "";
+function syncGeofences() {
+  if (!window.KvgNative || typeof window.KvgNative.syncGeofences !== "function") return;
+  const list = [];
+  for (const [aKey, a] of alarms) {
+    if (!a.dist) continue;   // nur Distanz-Wecker; Zeit-Wecker klingelt nativ per AlarmManager
+    const stop = stops.find(x => x.shortName === a.sn);
+    if (!stop) continue;
+    list.push({ key: aKey, lat: stop.lat, lon: stop.lon, radius: a.dist,
+      name: a.name || a.sn, vib: a.vib !== false, tone: a.tone !== false,
+      snd: a.snd || "alarm", vol: a.vol == null ? 1 : a.vol });
+  }
+  // nur bei Änderung an die App durchreichen (renderAlarmInd läuft alle 15 s)
+  const h = list.map(x => x.key + ":" + x.radius + ":" +
+    Math.round(x.lat * 1e5) + "," + Math.round(x.lon * 1e5)).sort().join("|");
+  if (h === geoSyncHash) return;
+  geoSyncHash = h;
+  nativeCall("syncGeofences", JSON.stringify(list));
+}
+
+// Von der App gemeldete Geofence-Ereignisse (z. B. ausgelöst, während die Seite
+// im Hintergrund war): Wecker als ausgelöst markieren, native Läut-Kette
+// übernehmen (nicht abbrechen, sie klingelt bereits).
+window.kvgGeofenceEvents = function (json) {
+  try {
+    const evs = typeof json === "string" ? JSON.parse(json) : (json || []);
+    let n = 0;
+    for (const ev of evs) {
+      const aKey = ev.key || ev;
+      const a = alarms.get(aKey);
+      if (!a) continue;
+      alarms.delete(aKey);
+      firedAlarms.add(aKey);
+      syncNativeRinging();    // laufende native Kette ins ⏰-Symbol übernehmen
+      startRinging(aKey, a);   // nur falls noch nicht nativ am Läuten
+      setLocNote("⏰ Wecker: " + a.name + " – Haltestelle erreicht (Geofence, im Hintergrund ausgelöst). Zum Beenden ⏰ antippen.");
+      n++;
+    }
+    if (n) { renderTabs(); renderAlarmInd(); if (currentBus) renderBusPanel(); }
+    return "ok";
+  } catch (e) { return "error"; }
+};
+
+// Beim Wieder-Aktivieren der App: ausgelöste Geofence-Wecker abholen
+function pollGeofenceEvents() {
+  try {
+    if (window.KvgNative && typeof window.KvgNative.pendingGeofenceEvents === "function") {
+      const s = window.KvgNative.pendingGeofenceEvents();
+      if (s && s !== "[]") window.kvgGeofenceEvents(s);
+    }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGeofenceEvents(); });
+
 // ---------- Native Brücke (Android-Mini-App) ----------
 // window.KvgNative wird nur von der App eingespritzt; im Browser bleibt es
 // undefiniert und alle Aufrufe sind wirkungslos (Seite läuft unverändert weiter).
@@ -2281,7 +2341,8 @@ function openAlarmDialog(aKey) {
       setLocNote("🔔 Wecker gestellt: " + a.name +
         (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
         (selDist && selLead ? " oder " : "") +
-        (selLead ? selLead + " min vor Abfahrt" : ""));
+        (selLead ? selLead + " min vor Abfahrt" : "") +
+        (selDist && window.KvgNative ? " · klingelt in der App dank Geofence auch bei ausgeschaltetem Display" : ""));
       if (currentBus) renderBusPanel();
     }
   });
@@ -2547,6 +2608,7 @@ function renderAlarmInd() {
       tab: en.a.tabSn || ""
     }))));
   }
+  syncGeofences();   // native Geofences für Distanz-Wecker (Hintergrund) aktualisieren
   alarmInd.hidden = !alarms.size;
   if (alarmList.hidden) return;
   if (!alarms.size) { alarmList.hidden = true; return; }

@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private var geoOrigin: String? = null
     private var pendingTab: String? = null   // Reiter-Sprung aus Wecker-Benachrichtigung
     private var pendingShare: String? = null // geteilter Text (Adresse/Koordinaten/Link)
+    private var askedBackgroundLoc = false    // ACCESS_BACKGROUND_LOCATION nur 1x nachfragen
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,6 +88,11 @@ class MainActivity : Activity() {
                     view.evaluateJavascript(
                         "window.kvgImportLocation(${JSONObject.quote(s)})", null)
                 }
+                // im Hintergrund ausgelöste Geofence-Wecker an die Seite melden
+                val evs = org.json.JSONArray()
+                for (e in GeofenceStore.drainEvents(applicationContext)) evs.put(e)
+                if (evs.length() > 0)
+                    view.evaluateJavascript("window.kvgGeofenceEvents(${evs.toString()})", null)
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -220,6 +226,16 @@ class MainActivity : Activity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        // Standort im Vordergrund erteilt: einmalig nachträglich nach
+        // ACCESS_BACKGROUND_LOCATION fragen (noetig fuer Geofence-Wecker im
+        // Hintergrund; ab Android 11 nur separat und per "Bei allen Zeiten"
+        // im Dialog bzw. in den App-Einstellungen waehlbar).
+        if (ok && Build.VERSION.SDK_INT >= 29 && !askedBackgroundLoc &&
+            permissions.isNotEmpty() && permissions[0].contains("LOCATION")) {
+            askedBackgroundLoc = true
+            requestPermissions(arrayOf(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                REQ_PERMS + 1)
+        }
         val cb = geoCallback
         val origin = geoOrigin
         if (cb != null && origin != null) {
@@ -228,9 +244,14 @@ class MainActivity : Activity() {
         }
         if (!ok && permissions.isNotEmpty() &&
             permissions[0].contains("LOCATION")) {
-            Toast.makeText(this,
-                "Ohne Standortfreigabe funktionieren GPS-Funktionen und Distanz-Wecker nicht.",
-                Toast.LENGTH_LONG).show()
+            if (!permissions[0].equals(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+                Toast.makeText(this,
+                    "Ohne Standortfreigabe funktionieren GPS-Funktionen und Distanz-Wecker nicht.",
+                    Toast.LENGTH_LONG).show()
+            else
+                Toast.makeText(this,
+                    "Ohne „Bei allen Zeiten“ klingeln Geofence-Wecker nur bei offener App.",
+                    Toast.LENGTH_LONG).show()
         }
     }
 
@@ -434,6 +455,61 @@ class NativeBridge(private val act: Activity) {
         for (k in AlarmReceiver.Ringing) arr.put(k)
         return arr.toString()
     }
+
+    // ---------- Geofence-Wecker (Distanz-Wecker im Hintergrund) ----------
+    // Die Seite konfiguriert (listJson), das System überwacht die Zäune:
+    // [{key, lat, lon, radius, name, vib, tone, snd, vol}] je Distanz-Wecker.
+    @JavascriptInterface
+    fun syncGeofences(listJson: String) {
+        val ctx = act.applicationContext
+        val client = com.google.android.gms.location.GeofencingClient(ctx)
+        val pi = geofencePi(ctx)
+        try { client.removeGeofences(pi) } catch (e: Exception) { }
+        GeofenceStore.clearFences(ctx)
+        val arr = org.json.JSONArray(listJson)
+        val fences = ArrayList<com.google.android.gms.location.Geofence>()
+        for (i in 0 until arr.length()) {
+            val f = arr.optJSONObject(i) ?: continue
+            val key = f.optString("key")
+            if (key.isEmpty()) continue
+            val lat = f.optDouble("lat", Double.NaN)
+            val lon = f.optDouble("lon", Double.NaN)
+            if (!lat.isFinite() || !lon.isFinite()) continue
+            val id = key.hashCode()
+            fences.add(com.google.android.gms.location.Geofence.Builder()
+                .setRequestId(id.toString())
+                .setCircularRegion(lat, lon,
+                    Math.max(100.0, f.optDouble("radius", 500.0)).toFloat())
+                .setExpirationDuration(com.google.android.gms.location.Geofence.NEVER_EXPIRE)
+                .setTransitionTypes(com.google.android.gms.location.Geofence.GEOFENCE_TRANSITION_ENTER)
+                .setNotificationResponsiveness(0)
+                .build())
+            GeofenceStore.put(ctx, id, f)
+        }
+        if (fences.isEmpty()) return
+        try {
+            // INITIAL_TRIGGER_ENTER: steht man beim Stellen schon im Radius, feuert
+            // der Zaun sofort – dieselbe Semantik wie die Distanz-Prüfung der Seite.
+            client.addGeofences(com.google.android.gms.location.GeofencingRequest.Builder()
+                .setInitialTrigger(com.google.android.gms.location.GeofencingRequest.INITIAL_TRIGGER_ENTER)
+                .addGeofences(fences)
+                .build(), pi)
+        } catch (e: Exception) { }
+    }
+
+    /** Ausgelöste Geofence-Ereignisse ([{key, name, ts}]) für die Seite, danach geleert. */
+    @JavascriptInterface
+    fun pendingGeofenceEvents(): String {
+        val arr = org.json.JSONArray()
+        for (e in GeofenceStore.drainEvents(act.applicationContext)) arr.put(e)
+        return arr.toString()
+    }
+
+    private fun geofencePi(ctx: android.content.Context): android.app.PendingIntent =
+        android.app.PendingIntent.getBroadcast(
+            ctx, 0, android.content.Intent(ctx, GeofenceReceiver::class.java),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE)
 
     @JavascriptInterface
     fun cancelAlarm(key: String) {
