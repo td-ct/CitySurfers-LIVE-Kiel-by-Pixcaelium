@@ -462,7 +462,7 @@ class NativeBridge(private val act: Activity) {
     @JavascriptInterface
     fun syncGeofences(listJson: String) {
         val ctx = act.applicationContext
-        val client = com.google.android.gms.location.GeofencingClient(ctx)
+        val client = com.google.android.gms.location.LocationServices.getGeofencingClient(ctx)
         val pi = geofencePi(ctx)
         try { client.removeGeofences(pi) } catch (e: Exception) { }
         GeofenceStore.clearFences(ctx)
