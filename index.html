@@ -164,6 +164,8 @@
     color: #64748b; cursor: pointer; line-height: 1; }
   .abell.on { color: #38bdf8; text-shadow: 0 0 6px rgba(56,189,248,.8); }
   .abell.fired { color: #f59e0b; text-shadow: 0 0 8px rgba(245,158,11,.9); }
+  .abell.ring { animation: ringpulse 0.9s ease-in-out infinite; }
+  @keyframes ringpulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.45); } }
   .dlgwrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
     justify-content: center; background: rgba(3,7,18,.7); }
   .dlg { background: #16233c; border: 1px solid #1e3a5f; border-radius: 10px;
@@ -190,6 +192,7 @@
     padding: 6px 12px; cursor: pointer; color: #cbd5e1; font-size: .85rem; }
   .dbtns .aok { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
   .dbtns .aok:disabled { opacity: .35; cursor: not-allowed; }
+  .dbtns .adel { border-color: #b45309; color: #f59e0b; margin-right: auto; }
   .apkdl { margin-top: 10px; padding: 8px; font-size: .72rem; line-height: 1.4;
     background: rgba(245,158,11,.08); border: 1px dashed rgba(245,158,11,.5);
     border-radius: 8px; color: #cbd5e1; }
@@ -1378,8 +1381,8 @@ function tripSectionHTML() {
     }
     const aKey = currentTrip.tripId + "|" + s.shortName;
     const armed = alarms.has(aKey);
-    const fired = firedAlarms.has(aKey);
-    const bellCls = fired ? " abell fired" : armed ? " abell on" : " abell";
+    const fired = firedAlarms.has(aKey) || ringing.has(aKey);
+    const bells = ringing.has(aKey) ? " abell fired ring" : fired ? " abell fired" : armed ? " abell on" : " abell";
     const rowCls = (i <= done ? " done" : "") + (i === done ? " here" : "") +
       (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
     html += '<div class="trow' + rowCls + '">' +
@@ -1387,9 +1390,11 @@ function tripSectionHTML() {
       '<span class="takt">' + escapeHtml(actual || "–") + "</span>" +
       delayHtml +
       '<span class="tname">' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
-      '<button class="' + bellCls + '" data-alarm="' + escapeHtml(aKey) + '" title="' +
-        (fired ? "Wecker bereits ausgelöst" : armed ? "Wecker ausschalten" : "Wecker stellen") +
-        '">' + (fired ? "⏰" : "🔔") + "</button>" +
+      '<button class="' + bells + '" data-alarm="' + escapeHtml(aKey) + '" title="' +
+        (ringing.has(aKey) ? "Läutet gerade – antippen zum Beenden" :
+         fired ? "Wecker ausgelöst – antippen zum Beenden" :
+         armed ? "Wecker gestellt – antippen zum Ändern/Löschen" : "Wecker stellen") +
+        '">' + (armed || fired ? "⏰" : "🔔") + "</button>" +
       "</div>";
   }
   html += "</div>";
@@ -1432,7 +1437,8 @@ function alarmBeep(vol, snd) {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") audioCtx.resume();
     const t0 = audioCtx.currentTime;
-    for (let i = 0; i < 4; i++) {
+    const cycles = arguments.length > 2 ? arguments[2] : 4;   // 4 Signale ≙ 2,4 s; Wecker: 5 ≙ 3 s
+    for (let i = 0; i < cycles; i++) {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
       o.type = "sine"; o.frequency.value = (BEEP_FREQ[s] || BEEP_FREQ.alarm)[i % 2];
       g.gain.setValueAtTime(0.001, t0 + i * 0.6);
@@ -1449,13 +1455,50 @@ function vibratePattern(pat) {
   if (navigator.vibrate) { try { navigator.vibrate(pat); } catch (e) {} }
   if (window.KvgNative) nativeVibrate(pat);
 }
+// ---------- Durchgehendes Läuten ----------
+// Der Wecker wiederholt sich, bis er am ⏰-Symbol gelöscht wird:
+// 3 s klingeln/vibrieren, 5 s Pause, dann von vorne.
+const ringing = new Map();   // aKey -> { timer, name }
+function startRinging(aKey, a) {
+  const prev = ringing.get(aKey);
+  if (prev) { if (prev.timer != null) return; ringing.delete(aKey); }  // native-only: übernehmen
+  const cycle = () => {
+    if (a.tone !== false) alarmBeep(a.vol, a.snd, 5);   // 5 Signale ≙ 3 s
+    if (a.vib !== false) vibratePattern([3000]);        // 3 s vibrieren
+  };
+  cycle();
+  ringing.set(aKey, { timer: setInterval(cycle, 8000), name: a.name });
+}
+// In der App: Hat der AlarmManager geläutet, während die Seite neu geladen war,
+// übernimmt die Seite das ⏰-Symbol (native Kette läutet bereits selbst);
+// Antippen ruft stopRinging -> cancelAlarm und beendet die Kette.
+function syncNativeRinging() {
+  if (!window.KvgNative || typeof window.KvgNative.ringingAlarms !== "function") return;
+  let keys = [];
+  try { keys = JSON.parse(window.KvgNative.ringingAlarms()); } catch (e) { return; }
+  let changed = false;
+  for (const k of keys) {
+    if (!ringing.has(k) && !alarms.has(k)) {
+      ringing.set(k, { timer: null, name: "Wecker" });
+      firedAlarms.add(k);
+      changed = true;
+    }
+  }
+  if (changed && currentBus) renderBusPanel();
+}
+function stopRinging(aKey) {
+  const r = ringing.get(aKey);
+  if (r) { clearInterval(r.timer); ringing.delete(aKey); }
+  if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
+  nativeCall("vibrate", "[]");       // native Vibration abbrechen
+  nativeCall("cancelAlarm", aKey);   // ggf. laufende native Läut-Kette stoppen
+}
 function fireAlarm(aKey, a) {
   alarms.delete(aKey);
   nativeCall("cancelAlarm", aKey);   // nativen Wecker mitauslösen (falls in App gestellt)
   firedAlarms.add(aKey);
-  if (a.vib) vibratePattern([400, 200, 400, 200, 800]);
-  if (a.tone) alarmBeep(a.vol, a.snd);
-  setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!");
+  startRinging(aKey, a);   // klingelt/vibriert im 3 s/5 s-Rhythmus bis weggeklickt
+  setLocNote("⏰ Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab! Zum Beenden ⏰ antippen.");
   if (currentBus) renderBusPanel();
 }
 
@@ -1528,6 +1571,7 @@ async function pollAlarmStop(a) {
   } catch (e) {}
 }
 function alarmTick() {
+  syncNativeRinging();
   if (!alarms.size) return;
   const pos = getPos();
   const nowD = new Date();
@@ -1589,7 +1633,9 @@ function openAlarmDialog(aKey) {
       '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cfg.vol + '" title="Weckton-Lautstärke" /></label>' +
       '<button class="atest" title="Weckton und Vibration sofort ausprobieren">▶ Test</button>' +
     "</div>" +
-    '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
+    '<div class="dbtns">' + ((old.dist || old.leadMin) ?
+      '<button class="adel" title="Gestellten Wecker entfernen">🗑 Wecker löschen</button>' : "") +
+      '<button class="acancel">Abbrechen</button>' +
     '<button class="aok" disabled>Wecker stellen</button></div>' +
     // Im Browser (ohne native Brücke): Hinweis, dass Vibration/Weckton im
     // Hintergrund nicht funktionieren, plus Download-Link zur APK im selben
@@ -1628,6 +1674,14 @@ function openAlarmDialog(aKey) {
       sync();
       return;
     }
+    if (e.target.closest(".adel")) {   // gestellten Wecker löschen
+      alarms.delete(aKey);
+      stopRinging(aKey);
+      wrap.remove();
+      setLocNote("🔕 Wecker gelöscht: " + a.name);
+      if (currentBus) renderBusPanel();
+      return;
+    }
     if (e.target.closest(".acancel")) { wrap.remove(); return; }
     if (e.target.closest(".aok") && (selDist || selLead)) {
       const snd = wrap.querySelector(".asnd").value;
@@ -1635,6 +1689,7 @@ function openAlarmDialog(aKey) {
       saveAlarmCfg({ snd: snd, vol: vol });   // Klang/Lautstärke künftig merken
       const useVib = hasVib && wrap.querySelector(".avib").checked;
       const useTone = wrap.querySelector(".atone").checked;
+      firedAlarms.delete(aKey);       // ggf. alten Auslöse-Zustand zurücksetzen
       alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
@@ -1762,13 +1817,13 @@ busPanel.addEventListener("click", e => {
   const al = e.target.closest("[data-alarm]");
   if (al) {
     const aKey = al.dataset.alarm;
-    if (alarms.has(aKey)) {           // aktiv -> ausschalten
-      alarms.delete(aKey);
-      nativeCall("cancelAlarm", aKey);
-      setLocNote("🔕 Wecker ausgeschaltet.");
+    if (ringing.has(aKey)) {         // läutet gerade: antippen beendet den Wecker
+      stopRinging(aKey);
+      firedAlarms.delete(aKey);
+      setLocNote("🔕 Wecker beendet.");
       renderBusPanel();
-    } else if (!firedAlarms.has(aKey)) {
-      openAlarmDialog(aKey);          // neu stellen
+    } else {
+      openAlarmDialog(aKey);          // gestellt oder neu: Dialog (enthält Löschen)
     }
     return;
   }

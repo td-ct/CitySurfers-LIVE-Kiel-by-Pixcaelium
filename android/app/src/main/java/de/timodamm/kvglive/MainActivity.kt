@@ -255,7 +255,8 @@ class MainActivity : Activity() {
 
 /**
  * JS-Brücke: window.KvgNative in der Seite.
- * vibrate(patternJson), setAlarm(key, epochMs, name, cfgJson), cancelAlarm(key)
+ * vibrate(patternJson), setAlarm(key, epochMs, name, cfgJson), cancelAlarm(key),
+ * ringingAlarms() -> JSON-Array der gerade nativ läutenden Wecker-Keys
  * cfgJson: {"lead":int, "vib":bool, "tone":bool, "snd":"alarm|ring|notif", "vol":0..1}
  */
 class NativeBridge(private val act: Activity) {
@@ -286,6 +287,7 @@ class NativeBridge(private val act: Activity) {
             putExtra("snd", cfg.optString("snd", "alarm"))
             putExtra("vol", cfg.optDouble("vol", 1.0))
         }
+        AlarmReceiver.Ringing.remove(key)   // neu gestellt: alte Läut-Kette weg
         // requestCode = Key-Hash: cancelAlarm funktioniert auch nach App-Neustart
         val pi = android.app.PendingIntent.getBroadcast(
             ctx, key.hashCode(), intent,
@@ -301,7 +303,15 @@ class NativeBridge(private val act: Activity) {
     }
 
     @JavascriptInterface
+    fun ringingAlarms(): String {
+        val arr = org.json.JSONArray()
+        for (k in AlarmReceiver.Ringing) arr.put(k)
+        return arr.toString()
+    }
+
+    @JavascriptInterface
     fun cancelAlarm(key: String) {
+        AlarmReceiver.Ringing.remove(key)   // Läut-Kette stoppen (falls aktiv)
         val am = act.getSystemService(ALARM_SERVICE) as android.app.AlarmManager
         val intent = Intent(act.applicationContext, AlarmReceiver::class.java)
         val pi = android.app.PendingIntent.getBroadcast(
