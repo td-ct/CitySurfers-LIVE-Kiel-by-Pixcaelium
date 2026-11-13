@@ -357,7 +357,7 @@
     </div>
     <div>Aktuelle Genauigkeit: <b id="gpsDlgAcc">–</b></div>
     <div id="gpsDlgMsg">GPS wird eingeschaltet – warte auf Positionsdaten …</div>
-    <div class="acbtns">
+    <div class="acbtns" id="gpsDlgBtns">
       <button class="chip bad" id="gpsDlgCancel">Abbrechen</button>
       <button class="chip ok" id="gpsDlgOk">Übernehmen</button>
     </div>
@@ -546,6 +546,31 @@
 <script>
 "use strict";
 
+// =====================================================================
+// Steuerkonstanten: alle wichtigen Ortungsradius-Schwellen und Cache-/Zeit-Intervalle.
+// Werte hier zentral anpassen, der Code darunter greift nur über diese Namen zu.
+// =====================================================================
+// --- Ortungsradien (Meter) ---
+const GPS_ACC_DIRECT_M    = 100;  // GPS➜: bei dieser Genauigkeit oder besser wird direkt ohne Dialog übernommen
+const GPS_ACC_AUTOCLOSE_M = 20;   // GPS➜-Dialog: ab dieser Genauigkeit automatisch schließen und übernehmen
+const GPS_ACC_COARSE_M    = 200;  // darüber gilt die Ortung als zu grob: nur eine sichtbare Auswahlliste wird ggf. neu sortiert, sonst nichts aktualisiert
+const ACC_THRESH_DEFAULT_M = 50;  // „⤓ GPS“ (Adressfeld): Standard-Schwellenwert für automatische Übernahme (nutzerspeicherbar, kvg-accthresh)
+const STATION_RADIUS_BUS_M  = 75;   // Stationsradius: GPS gilt als „an der Haltestelle“ (Bus/KVG)
+const STATION_RADIUS_TRAIN_M = 250;  // Stationsradius für DB-Züge (größerer Haltestellenbereich)
+const GPS_SUSPECT_WINDOW_MIN = 2;    // Plausibilitätsfenster ± Minuten um die Abfahrtszeit (sonst blinkt der GPS-Knopf rot)
+// --- Zeit-/Cache-Intervalle (Millisekunden) ---
+const GPS_SORT_INTERVAL_MS   = 30000; // GPS-Positionen werden für die Sortierung der Listen höchstens so oft neu angewendet
+const GPS_WATCH_TIMEOUT_MS   = 15000; // GPS-Watch: Timeout eines einzelnen Positionsabrufs
+const GPS_WATCH_MAX_AGE_MS   = 5000;  // GPS-Watch: maximal akzeptiertes Alter gepufferter Positionsdaten
+const GPS_START_HINT_MS      = 20000; // nach so langer Suche ohne Fix erscheint der „noch keine Daten“-Hinweis
+const ACCWATCH_TIMEOUT_MS    = 20000; // ⤓-GPS-Einzelübernahme: Timeout der Ortung
+const ACCWATCH_MAX_AGE_MS    = 1000;  // ⤓-GPS-Einzelübernahme: maximal akzeptiertes Positions-Alter
+const ADDR_DEBOUNCE_MS       = 400;   // Adresssuche: Wartezeit nach letzter Eingabe vor der Abfrage
+const ADDR_MIN_CHARS         = 3;     // Adresssuche: ab so vielen Zeichen wird gesucht
+const SUGGEST_CHUNK_ROWS      = 10;    // Haltestellenliste: so viele Zeilen pro Render-Schritt (Rest beim Scrollen)
+const SUSPECT_REFETCH_MS     = 120000; // GPS-Verdachtsfall: zweite Echtzeitabfrage der Linie nach so langer Zeit
+const RELOAD_DELAY_MS         = 600;   // Zustands-Import: kurze Pause vor dem Neuladen der Seite
+
 // ---------- Konfiguration ----------
 const API_BASE = "https://kvg-internetservice-proxy.p.networkteam.com/internetservice";
 const STOPS_URL   = API_BASE + "/geoserviceDispatcher/services/stopinfo/stops" +
@@ -620,6 +645,7 @@ const gpsDlg = document.getElementById("gpsDlg");
 const gpsDlgState = document.getElementById("gpsDlgState");
 const gpsDlgAcc = document.getElementById("gpsDlgAcc");
 const gpsDlgMsg = document.getElementById("gpsDlgMsg");
+let gpsDlgMode = "takeover";   // "takeover": mit Übernehmen/Abbrechen + Auto-Schließen; "status": reiner Ein-/Aus-Dialog
 const gpsDlgBar = document.getElementById("gpsDlgBar");
 const locNote = document.getElementById("locNote");
 const gpsCtl = document.getElementById("gpsCtl");
@@ -653,13 +679,13 @@ function gpsStart() {
   renderGpsBtn();
   setLocNote("GPS wird aktiviert – warte auf Positionsdaten …");
   watchId = navigator.geolocation.watchPosition(onPos, onGpsErr,
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+    { enableHighAccuracy: true, timeout: GPS_WATCH_TIMEOUT_MS, maximumAge: GPS_WATCH_MAX_AGE_MS });
   clearTimeout(gpsStart._wd);
   gpsStart._wd = setTimeout(() => {
     if (gpsState === "searching") {
       setLocNote("Noch keine Positionsdaten – GPS-Signal wird weiter gesucht (im Freien hilft es). ◎ bricht ab.");
     }
-  }, 20000);
+  }, GPS_START_HINT_MS);
 }
 
 function gpsStop() {
@@ -693,12 +719,18 @@ function onPos(pos) {
   } catch (e) {}
   if (addrPos) {
     if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✗ hinter der Adresse kehrt zu GPS zurück.");
-    if (!gpsDlg.hidden && pos.coords.accuracy <= 20) { gpsDlg.hidden = true; gpsAdoptForStops(myPos); }
+    if (gpsDlgMode === "takeover" && !gpsDlg.hidden && pos.coords.accuracy <= GPS_ACC_AUTOCLOSE_M) { gpsDlg.hidden = true; gpsAdoptForStops(myPos); }
     return;
   }
   // Ortung wird für die Sortierung der Listen höchstens alle 30 s neu angewendet
-  const sortDue = !lastGpsSortTs || Date.now() - lastGpsSortTs >= 30000;
-  if (!gpsDlg.hidden && myPos.accuracy <= 20) {   // Dialog: ab ±20 m automatisch übernehmen
+  // Zu grobe Ortung (Radius > GPS_ACC_COARSE_M): nur eine gerade sichtbare
+  // Auswahlliste wird ggf. neu sortiert, der Rest wird nicht aktualisiert.
+  if (myPos.accuracy != null && myPos.accuracy > GPS_ACC_COARSE_M) {
+    if (!sugBox.hidden && !search.value.trim()) { sortStops(); updateSuggestions(); }
+    return;
+  }
+  const sortDue = !lastGpsSortTs || Date.now() - lastGpsSortTs >= GPS_SORT_INTERVAL_MS;
+  if (gpsDlgMode === "takeover" && !gpsDlg.hidden && myPos.accuracy <= GPS_ACC_AUTOCLOSE_M) {   // Dialog: ab ±20 m automatisch übernehmen
     gpsDlg.hidden = true;
     lastGpsSortTs = Date.now();
     gpsAdoptForStops(myPos);
@@ -782,9 +814,13 @@ function updateGpsDlg() {
     gpsDlgBar.hidden = false;
     gpsDlgBar.title = "GPS-Genauigkeit ±" + a + " m";
     gpsDlgMsg.textContent = gpsState === "searching" ? "GPS wird eingeschaltet – warte auf Positionsdaten …"
-      : a <= 20 ? "Sehr gute Ortung – wird übernommen …"
-      : a <= 100 ? "Gute Ortung – „Übernehmen“ oder auf ein noch besseres Signal (±20 m) warten."
-      : "Ortung noch ungenau – warte auf ein besseres Signal (ab ±20 m automatische Übernahme) …";
+      : gpsDlgMode === "status"
+        ? (a <= GPS_ACC_AUTOCLOSE_M ? "Sehr gute Ortung (±" + a + " m)."
+           : a <= GPS_ACC_DIRECT_M ? "Gute Ortung (±" + a + " m)."
+           : "Ortung noch ungenau (±" + a + " m) – Positionen laufen weiter, sobald es besser wird.")
+        : a <= GPS_ACC_AUTOCLOSE_M ? "Sehr gute Ortung – wird übernommen …"
+        : a <= GPS_ACC_DIRECT_M ? "Gute Ortung – „Übernehmen“ oder auf ein noch besseres Signal (±" + GPS_ACC_AUTOCLOSE_M + " m) warten."
+        : "Ortung noch ungenau – warte auf ein besseres Signal (ab ±" + GPS_ACC_AUTOCLOSE_M + " m automatische Übernahme) …";
   } else {
     gpsDlgAcc.textContent = "–";
     gpsDlgBar.hidden = true;
@@ -806,15 +842,23 @@ function gpsTakeOver() {
     return;
   }
   // GPS an und gute Ortung: kein Dialog, direkt für die Sortierung übernehmen
-  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= 100)) {
+  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
     gpsAdoptForStops(myPos);
     return;
   }
   // sonst: Dialog (schaltet GPS nötigenfalls ein, wartet auf besseres Signal)
   if (gpsState === "off") gpsStart();
+  openGpsDlg("takeover");
+}
+// Dialog öffnen: "takeover" zeigt Abbrechen/Übernehmen und übernimmt automatisch ab
+// GPS_ACC_AUTOCLOSE_M; "status" (Klick aufs GPS-Symbol oben rechts) zeigt nur
+// Ein-/Aus-Schalter und Genauigkeit, ohne Übernehmen/Abbrechen.
+function openGpsDlg(mode) {
+  gpsDlgMode = mode;
+  document.getElementById("gpsDlgBtns").hidden = mode === "status";
+  gpsDlg.hidden = false;   // zuerst öffnen, dann rendern (updateGpsDlg rendert nur im offenen Dialog)
   renderGpsBtn();
   updateGpsDlg();
-  gpsDlg.hidden = false;
 }
 gpsDlgBtn.addEventListener("click", gpsToggle);
 document.getElementById("gpsGoBtn").addEventListener("click", gpsTakeOver);
@@ -828,9 +872,13 @@ document.getElementById("gpsDlgOk").addEventListener("click", () => {
 });
 document.getElementById("gpsDlgCancel").addEventListener("click", () => { gpsDlg.hidden = true; });
 gpsDlg.addEventListener("keydown", e => { if (e.key === "Escape") gpsDlg.hidden = true; });
+gpsDlg.addEventListener("click", e => { if (e.target === gpsDlg && gpsDlgMode === "status") gpsDlg.hidden = true; });
 
 function setLocNote(t) { locNote.textContent = t; }
-locBtn.addEventListener("click", gpsToggle);
+locBtn.addEventListener("click", () => {
+  if (!gpsDlg.hidden && gpsDlgMode === "status") { gpsDlg.hidden = true; return; }
+  openGpsDlg("status");
+});
 renderGpsBtn();
 
 // ---------- Unplausible GPS-Nähe: GPS-Knopf blinkt rot, Linie echtzeit-nachfragen ----------
@@ -851,7 +899,7 @@ function triggerSuspectRefetch(sn, tripId) {
     refetchTripRealtime(sn, tripId);   // … und noch mal 2 Minuten später
     gpsSuspect = false;               // alter Zustand des GPS-Knopfes wiederherstellen
     renderGpsSuspect();
-  }, 120000);
+  }, SUSPECT_REFETCH_MS);
 }
 
 // ---------- Position übernehmen (Knopf am Adressfeld) ----------
@@ -866,7 +914,7 @@ let accFix = null;
 // Schwellenwert (m), ab dem eine Ortung automatisch übernommen wird (bleibt gespeichert)
 function getAccThresh() {
   let t = Number(localStorage.getItem("kvg-accthresh"));
-  if (!isFinite(t) || t < 5 || t > 500) t = 50;
+  if (!isFinite(t) || t < 5 || t > 500) t = ACC_THRESH_DEFAULT_M;
   return t;
 }
 accDlgThresh.value = getAccThresh();
@@ -945,7 +993,7 @@ function posTakeOver() {
     } else updateAccDlg();
   }, err => {
     accDlgMsg.textContent = "Kein GPS-Empfang (" + err.message + ") – im Freien hilft es.";
-  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 });
+  }, { enableHighAccuracy: true, timeout: ACCWATCH_TIMEOUT_MS, maximumAge: ACCWATCH_MAX_AGE_MS });
 }
 document.getElementById("accDlgOk").addEventListener("click", () => {
   if (!accFix) { accDlgMsg.textContent = "Noch keine Position – kurz warten und erneut drücken."; return; }
@@ -970,7 +1018,7 @@ addrSearch.addEventListener("input", () => {
   clearTimeout(addrTimer);
   const q = addrSearch.value.trim();
   addrSearch._loc = null;
-  if (q.length < 3) { addrSug.hidden = true; return; }
+  if (q.length < ADDR_MIN_CHARS) { addrSug.hidden = true; return; }
   // Koordinaten/Locator/Karten-Link: lokal erkannt, keine Adressabfrage nötig
   const loc = parseLocText(q);
   if (loc) {
@@ -981,7 +1029,7 @@ addrSearch.addEventListener("input", () => {
     addrSug.hidden = false;
     return;
   }
-  addrTimer = setTimeout(() => searchAddress(q), 400);
+  addrTimer = setTimeout(() => searchAddress(q), ADDR_DEBOUNCE_MS);
 });
 addrSearch.addEventListener("keydown", e => {
   if (e.key === "Escape") addrSug.hidden = true;
@@ -1567,7 +1615,7 @@ function rowHTML(s, pos) {
 function renderMoreRows(n) {
   if (sugRendered >= sugHits.length) return;
   const pos = getPos();
-  const end = Math.min(sugRendered + (n || 10), sugHits.length);
+  const end = Math.min(sugRendered + (n || SUGGEST_CHUNK_ROWS), sugHits.length);
   let html = "";
   for (let i = sugRendered; i < end; i++) html += rowHTML(sugHits[i], pos);
   sugBox.insertAdjacentHTML("beforeend", html);
@@ -1589,7 +1637,7 @@ function updateSuggestions() {
   sugBox.innerHTML = "";
   sugBox.hidden = false;
   sugBox.scrollTop = 0;
-  renderMoreRows(10);   // die zehn nächsten Treffer zuerst
+  renderMoreRows(SUGGEST_CHUNK_ROWS);   // die nächsten Treffer zuerst
   if (pos) enrichVisible(false);   // auch während der Suche laden
 }
 
@@ -2130,7 +2178,7 @@ function tripSectionHTML() {
   const tstops = currentTrip.stops;
   // Fortschritt: GPS nahe an einer Station der Fahrt -> alle bis dahin ausgrauen.
   // Radius: 75 m bei Bussen, 250 m bei Zügen/Schienenersatz (größere Halteflächen)
-  const gpsR = isDB(currentTrip.sn) ? 250 : 75;
+  const gpsR = isDB(currentTrip.sn) ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
   let gpsKey = null;   // Station im Radius (plausibel): dort live Ist-Abfahrt füllen
   let atIdx = null;    // Index der Station, in deren Radius das GPS gerade steht
   if (pos) {
@@ -2150,7 +2198,7 @@ function tripSectionHTML() {
         const n0 = new Date();
         const nowMin0 = n0.getHours() * 60 + n0.getMinutes();
         const depMin0 = dh0 * 60 + dm0;
-        if (nowMin0 < depMin0 - 2 || nowMin0 > depMin0 + 2) {
+        if (nowMin0 < depMin0 - GPS_SUSPECT_WINDOW_MIN || nowMin0 > depMin0 + GPS_SUSPECT_WINDOW_MIN) {
           // Systemzeit passt nicht ins erweiterte Fenster: Die Fahrt kann hier gar nicht
           // sein -> Fortschritt NICHT setzen, GPS-Knopf rot aufblinken lassen und die
           // Linie genau jetzt sowie noch mal 2 Minuten später echtzeit-abfragen.
@@ -2654,7 +2702,7 @@ window.kvgImportState = function (code) {
     for (const k of STATE_KEYS) if (k in o) { try { localStorage.setItem(k, o[k]); } catch (e) {} n++; }
     if (!n) throw new Error("leer");
     setLocNote("Zustand übernommen (" + n + " Einträge) – lade neu …");
-    setTimeout(() => location.reload(), 600);
+    setTimeout(() => location.reload(), RELOAD_DELAY_MS);
     return "ok";
   } catch (e) {
     setLocNote("Zustand-Code ungültig.");
@@ -3423,7 +3471,7 @@ function enrichVisible(force) {
       const last = rows[rows.length - 1];
       if (last) {
         const r = last.getBoundingClientRect();
-        if (r.bottom < (innerHeight || 800) + 300) renderMoreRows(10);
+        if (r.bottom < (innerHeight || 800) + 300) renderMoreRows(SUGGEST_CHUNK_ROWS);
       }
     }
   }, 60);
