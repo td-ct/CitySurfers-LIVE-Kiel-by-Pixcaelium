@@ -42,7 +42,6 @@
   .ricon svg { width: 15px; height: 15px; display: block; }
 
   /* Zeile 1: GPS-Kontrolle + Adresse */
-  .addrwrap { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
   /* GPS an/aus: in der festen Statusleiste oben rechts, direkt neben den Aktivitätsanzeigen */
   #apiInd { position: fixed; top: 6px; right: 12px; z-index: 47; display: flex; align-items: center; gap: 6px;
     background: #0f172ae6; border: 1px solid #334155; border-radius: 999px; padding: 3px 6px; }
@@ -57,7 +56,12 @@
     #apiInd .accbar i { width: 4px; height: 8px; }
     #alarmList, #addrFavPanel, #stopFavPanel { top: 42px; right: 6px; }
   }
-  #posBtn, #addrGo { flex: none; }
+  /* Adresssuche: Knöpfe wie in der Haltestellensuche im Eingabefeld (gleiche Größe und Position) */
+  #posBtn, #addrGo { position: absolute; top: 50%; transform: translateY(-50%); flex: none;
+    font-size: 0.72rem; padding: 7px 8px; border-radius: 8px; white-space: nowrap; }
+  #addrGo { right: 42px; }
+  #posBtn { right: 84px; }
+  #addrClearBtn { right: 146px; }
   .chip.mini { padding: 1px 6px; font-size: 0.72rem; border-radius: 6px; }
   .chip.mini.dim2 { background: #0b1222; border-color: #1e3a5f; color: #94a3b8; }
   .tname[data-stopopen] { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
@@ -87,7 +91,7 @@
     border: none; background: rgba(0,81,158,0.15); color: #cbd5e1; border-radius: 50%;
     width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
   .addrclr:hover { background: #c0392b; color: #fff; }
-  .stopclr { right: 104px; }
+  .stopclr { right: 146px; }
   #about .theses p { font-size: 0.8rem; line-height: 1.35; margin: 5px 0; }
   #about .dim { font-size: 0.74rem; color: #94a3b8; margin: 4px 0; }
   #about .aboutbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -134,14 +138,13 @@
   .accbar { display: inline-flex; gap: 1px; align-items: flex-end; height: 10px; }
   .accbar i { width: 3px; background: #334155; border-radius: 1px; display: inline-block; }
   .accbar i.on { background: #4ade80; }
-  .addrfield { position: relative; flex: 1; }
   input[type="search"] {
     width: 100%; padding: 12px 14px; font-size: 1.05rem; border-radius: 10px;
     border: 1px solid #334155; background: #1e293b; color: #e2e8f0; outline: none;
   }
   input[type="search"]:focus { border-color: #00519e; }
   input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
-  #addrSearch { padding-right: 14px; }
+  #addrSearch { padding-right: 176px; }
   .suggestions {
     position: absolute; top: 100%; left: 0; right: 0; z-index: 10; background: #1e293b;
     border: 1px solid #334155; border-radius: 0 0 10px 10px; max-height: 60vh; overflow-y: auto;
@@ -165,9 +168,9 @@
 
   /* Zeile 2: Haltestellensuche */
   .searchbox { position: relative; margin-bottom: 6px; }
-  #stopSearch { padding-right: 108px; }
+  #stopSearch { padding-right: 176px; }
   .kbhint { font-size: 11px; color: #94a3b8; padding: 2px 2px 0; }
-  #gpsGoBtn { position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+  #gpsGoBtn { position: absolute; right: 84px; top: 50%; transform: translateY(-50%);
     font-size: 0.72rem; padding: 7px 8px; border-radius: 8px; white-space: nowrap; }
   .ddbtn {
     position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
@@ -175,6 +178,8 @@
     padding: 9px 11px; cursor: pointer; border-radius: 8px;
   }
   .ddbtn:hover { color: #e2e8f0; background: #33415580; }
+  /* Modus-Knopf (☰/⏱): eigener Platz links neben dem ▾, damit sich nichts überlappt */
+  #listModeBtn { right: 42px; }
 
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
   .chip {
@@ -239,16 +244,14 @@
 
   footer { margin-top: 24px; font-size: 0.8rem; color: #475569; line-height: 1.5; }
   footer a { color: #64748b; }
-  #addrFavPanel { position: fixed; top: 42px; right: 12px; z-index: 50; background: #1e293b;
-    border: 1px solid #334155; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
-    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
-  #addrFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
+  /* Beide Favoritenlisten: identisches Format – gleiche Breite, gleiche Elementgrößen
+     (auch der 📍 GPS➜-Knopf), dünner gelber Rahmen als Erkennungszeichen */
+  #addrFavPanel, #stopFavPanel { position: fixed; top: 42px; right: 12px; z-index: 50; background: #1e293b;
+    border: 1px solid #eab308; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
+    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 0.9rem; }
+  #addrFavPanel .afsrow, #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
-  #addrFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
-  #addrFavPanel .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  #addrFavPanel .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
-    border-radius: 6px; padding: 1px 7px; font-size: 0.9rem; }
-  #addrFavPanel .afbtn:hover { background: #334155; }
+  #addrFavPanel .afsrow:hover, #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
   #addrFavPanel .afsave { width: 100%; margin-bottom: 6px; }
   .favchiprow { display: flex; justify-content: flex-end; gap: 6px; margin: 6px 0 -2px; }
   .afshead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
@@ -357,11 +360,6 @@
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
   #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
-  #stopFavPanel { position: fixed; top: 42px; right: 12px; z-index: 50; background: #1e293b;
-    border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
-    min-width: 250px; max-width: 340px; box-shadow: 0 8px 22px #000000cc; }
-  #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
-  #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
     border-radius: 6px; padding: 2px 7px; font-size: 0.75rem; }
@@ -475,15 +473,13 @@
     <div class="favchiprow">
       <button class="chip" id="addrFavBtn" title="Adressfavoriten öffnen">⭐ Adressen <span id="addrFavCount">0</span></button>
     </div>
-    <div class="addrwrap">
-      <div class="addrfield">
-        <input type="search" id="addrSearch" placeholder="Startadresse, Koordinaten (54.32, 10.13), Locator (JO49sk), Karten-Link …" autocomplete="off" />
-        <button class="addrclr" id="addrClearBtn" hidden title="Adresse abwählen und zu GPS zurückkehren">✕</button>
-        <div class="suggestions" id="addrSug" hidden></div>
-      </div>
+    <div class="searchbox" id="addrBox">
+      <input type="search" id="addrSearch" placeholder="Startadresse, Koordinaten (54.32, 10.13), Locator (JO49sk), Karten-Link …" autocomplete="off" />
       <button class="gpsbtn" id="posBtn" title="GPS-Ortung übernehmen und als Startpunkt einloggen (Haltestellen danach sortieren)">GPS➜</button>
-      <button class="ddbtn" id="addrDdBtn" title="Passende Adressen als Auswahlliste anzeigen" aria-label="Adressvorschläge anzeigen">▾</button>
       <button class="gpsbtn" id="addrGo" title="Eingegebene Adresse, Koordinaten oder Locator übernehmen (Einloggen)">➜</button>
+      <button class="ddbtn" id="addrDdBtn" title="Passende Adressen als Auswahlliste anzeigen" aria-label="Adressvorschläge anzeigen">▾</button>
+      <button class="addrclr" id="addrClearBtn" hidden title="Suchtext leeren – ist eine Adresse aktiv, wird sie abgewählt (zurück zu GPS)">✕</button>
+      <div class="suggestions" id="addrSug" hidden></div>
     </div>
     <div class="chips" id="addrChip"></div>
   </div>
@@ -497,7 +493,7 @@
     <div class="searchbox">
       <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
       <button class="gpsbtn" id="gpsGoBtn" title="GPS-Ortung übernehmen und Haltestellenliste danach sortieren">GPS➜</button>
-      <button class="ddbtn" id="listModeBtn" title="Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite nach Abfahrtszeit" aria-label="Listenansicht wechseln">☰</button>
+      <button class="ddbtn" id="listModeBtn" title="Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 15 Minuten, gemeinsam nach Fußweg sortiert)" aria-label="Listenansicht wechseln">☰</button>
       <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
       <button class="addrclr stopclr" id="stopClearBtn" hidden title="Suchfeld leeren – steht die ausgewählte Station drin, wird ihr Reiter geschlossen (mit Wecker-Rückfrage)">✕</button>
       <div class="suggestions" id="suggestions" hidden></div>
@@ -1154,6 +1150,7 @@ let addrResults = [];
 
 addrSearch.addEventListener("input", () => {
   clearTimeout(addrTimer);
+  updateAddrClear();   // ✕ sofort zeigen, sobald etwas im Feld steht
   const q = addrSearch.value.trim();
   addrSearch._loc = null;
   if (q.length < ADDR_MIN_CHARS) { addrSug.hidden = true; return; }
@@ -1178,7 +1175,7 @@ addrSearch.addEventListener("keydown", e => {
   }
 });
 document.addEventListener("click", e => {
-  if (!e.target.closest(".addrfield")) addrSug.hidden = true;
+  if (!e.target.closest("#addrBox")) addrSug.hidden = true;
 });
 
 // ---------- Koordinaten, Locator & Karten-Links erkennen (viele Formate) ----------
@@ -1478,6 +1475,7 @@ function selectAddr(i) {
 
 function clearAddr() {
   addrPos = null;
+  addrSearch.value = "";
   try { localStorage.removeItem("kvg-addr"); } catch (e) {}
   renderAddrChip();
   locBtn.classList.remove("disabled");
@@ -1493,9 +1491,13 @@ function clearAddr() {
   renderPanels();
 }
 
+// ✕ im Adressfeld: sofort sichtbar, sobald Text im Feld steht oder eine Adresse aktiv ist
+function updateAddrClear() {
+  const b = document.getElementById("addrClearBtn");
+  if (b) b.hidden = !addrPos && !addrSearch.value;
+}
 function renderAddrChip() {
-  const clr = document.getElementById("addrClearBtn");
-  if (clr) clr.hidden = !addrPos;   // ✕ im Adressfeld nur bei aktiver Adresse
+  updateAddrClear();
   if (!addrPos) { addrChip.innerHTML = ""; return; }
   addrChip.innerHTML =
     '<span class="chip mini dim2" title="Aktiver Standort: diese Adresse ist als Startpunkt eingeloggte">' + escapeHtml(addrPos.label) + "</span>" +
@@ -1974,14 +1976,17 @@ function handleSugNav(e) {
 
 // ---------- Flachmodus der Haltestellensuche (⏱): Abfahrten in Laufweite ----------
 // Alle Haltestellen, die in FLAT_WALK_MAX_MIN Minuten zu Fuß erreichbar sind,
-// in einer Abfrage (OSRM-Tabelle) entfernen, alle deren Abfahrten einsammeln
-// und nach Abfahrtszeit sortieren – ohne Stationsüberschriften. Läuft derselbe
+// in einer Abfrage (OSRM-Tabelle) entfernen, deren Abfahrten der nächsten
+// FLAT_DEP_MAX_MIN Minuten einsammeln und ALLE Treffer GEMEINSAM nach Fußweg
+// zur Station sortieren (innerhalb derselben Station nach Abfahrtszeit) – ganz
+// ohne Stationsüberschriften, die Station steht in jeder Zeile. Läuft derselbe
 // Bus (tripId) an mehreren erreichbaren Stationen, bleibt nur die Verbindung
 // mit dem kürzesten Fußweg stehen.
 const FLAT_WALK_MAX_MIN = 15;      // Laufweite in Gehminuten
 const FLAT_AIR_FACTOR = 1.3;      // Luftlinie × Faktor als Höchstwert für Kandidaten
 const FLAT_MAX_STOPS = 20;        // Kandidaten vor der Fußweg-Abfrage (nächste zuerst)
 const FLAT_REFRESH_MS = 45000;    // Abfahrten im Flachmodus so frisch halten
+const FLAT_DEP_MAX_MIN = 15;      // nur Abfahrten der nächsten 15 Minuten zeigen
 let listMode = "tree";            // "tree" = Hierarchie nach Haltestellen, "flat" = Laufweite
 let flatBusy = false, flatTs = 0;
 const listModeBtn = document.getElementById("listModeBtn");
@@ -1990,7 +1995,7 @@ listModeBtn.addEventListener("click", () => {
   listModeBtn.textContent = listMode === "tree" ? "☰" : "⏱";
   listModeBtn.classList.toggle("active", listMode === "flat");
   listModeBtn.title = listMode === "tree"
-    ? "Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite nach Abfahrtszeit"
+    ? "Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 15 Minuten, gemeinsam nach Fußweg sortiert)"
     : "Listenansicht wechseln: zurück zur Hierarchie nach Haltestellen";
   searchIndex = -1;
   updateSuggestions();
@@ -2051,6 +2056,7 @@ async function buildFlatList() {
       depCache.delete(c.s.shortName);
       const [deps, platforms] = await Promise.all([getDepartures(c.s.shortName), loadPlatforms(c.s.shortName)]);
       for (const d of (deps || [])) {
+        if (d.actualRelativeTime == null || d.actualRelativeTime > FLAT_DEP_MAX_MIN * 60) continue;   // nur nächste 15 Minuten
         rows.push({
           sn: c.s.shortName, name: c.s.name, footM: c.footM,
           tripId: d.tripId, line: d.line, direction: d.direction,
@@ -2064,7 +2070,7 @@ async function buildFlatList() {
       const prev = best[r.tripId];
       if (!prev || r.footM < prev.footM) best[r.tripId] = r;
     }
-    const list = Object.values(best).sort((a, b) => a.rel - b.rel);
+    const list = Object.values(best).sort((a, b) => a.footM - b.footM || a.rel - b.rel);   // gemeinsam nach Fußweg zur Station, dann Abfahrtszeit
     const walkSecOf = m => m / (WALK_SPEED_KMH * 1000 / 3600);
     let html = "";
     const now0 = Date.now();
@@ -2082,7 +2088,7 @@ async function buildFlatList() {
           escapeHtml(formatDist(r.footM)) + " · " + walkMin + " min</span>" +
         '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>";
     }
-    sugBox.innerHTML = html || '<div class="srow"><span class="sname dim">Gerade keine Abfahrten der erreichbaren Haltestellen.</span></div>';
+    sugBox.innerHTML = html || '<div class="srow"><span class="sname dim">Gerade keine Abfahrten in den nächsten ' + FLAT_DEP_MAX_MIN + ' Minuten.</span></div>';
     sugBox.hidden = false;
   } finally {
     flatBusy = false;
@@ -4962,8 +4968,17 @@ document.getElementById("about").addEventListener("toggle", () => {
   if (document.getElementById("about").open) fillAbout();
 });
 
-// ✕ im Adressfeld: Adresse abwählen, zurück zu GPS
-document.getElementById("addrClearBtn").addEventListener("click", clearAddr);
+// ✕ im Adressfeld: Suchtext leeren; steht die aktive Adresse drin (oder ist das Feld
+// leer, obwohl eine aktiv ist), wird die Adresse abgewählt – zurück zu GPS.
+document.getElementById("addrClearBtn").addEventListener("click", () => {
+  const inField = addrSearch.value.trim();
+  if (!inField || (addrPos && inField === addrPos.label)) { clearAddr(); return; }
+  addrSearch.value = addrPos ? addrPos.label : "";   // nur Suchtext: aktive Adresse bleibt angemeldet
+  addrSearch._loc = null;
+  addrSug.hidden = true;
+  updateAddrClear();
+  setLocNote(addrPos ? "Suchtext geleert – Adresse bleibt angemeldet, ✕ erneut tippen zum Abwählen." : "Adressfeld geleert.");
+});
 
 // ✕ im Haltestellen-Suchfeld: Suchtext leeren; steht die Station des aktiven
 // Reiters drin, wird der Reiter geschlossen (mit der bekannten Wecker-Rückfrage).
@@ -4999,7 +5014,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.6 · Build: 14.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.7 · Build: 14.11.2026</div>
 </div>
 </body>
 </html>

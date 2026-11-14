@@ -11,8 +11,8 @@ android {
         applicationId 'de.timodamm.kvglive'
         minSdk 24
         targetSdk 34
-        versionCode 30
-        versionName '1.1.6'
+        versionCode 31
+        versionName '1.1.7'
         manifestPlaceholders = [appLabel: "@string/app_name"]
     }
 
