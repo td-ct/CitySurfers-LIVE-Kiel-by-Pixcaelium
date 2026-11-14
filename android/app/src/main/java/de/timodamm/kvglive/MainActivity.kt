@@ -214,9 +214,10 @@ class MainActivity : Activity() {
             var missing = emptyList<String>()
             if (ok) {
                 try {
-                    val needed = Regex("<!--\\s*CSLK-BRIDGE:\\s*([^>]*?)\\s*-->")
+                    // Marker <!-- CSLK-BRIDGE: … --> aus der geladenen Seite lesen
+                    val raw = Regex("<!--\\s*CSLK-BRIDGE:\\s*([^>]*?)\\s*-->")
                         .find(body)?.groupValues?.get(1) ?: ""
-                        .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                    val needed = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                     missing = needed.filter { it !in BRIDGE_FEATURES }
                 } catch (e: Exception) { }
             }
