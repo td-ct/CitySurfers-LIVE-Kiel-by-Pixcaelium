@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="de">
 <head>
+<!-- CSLK-BRIDGE: vibrate,vibrateLong,setAlarm,cancelAlarm,ringingAlarms,syncAlarms,notify,cancelNotify,hasNotifPerm,requestNotifPerm,syncGeofences,pendingGeofenceEvents,openMenu -->
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CitySurfers LIVE @ Kiel by Pixcaelium</title>
@@ -4574,6 +4575,55 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") { const d = document.getElementById("bigAssignDlg"); if (d) d.remove(); }
 });
 
+// ---------- App-Feature-Handshake: Seite meldet, welche App-Funktionen sie nutzt ----------
+// Die App liest denselben Katalog aus dem <!-- CSLK-BRIDGE: … -->-Marker im <head> und
+// warnt beim „Web-Version übernehmen“, wenn die SEITE neuere App-Funktionen braucht,
+// als diese APK kennt. Umgekehrt prüft die Seite hier zur Laufzeit, ob die APP
+// alles mitbringt, und meldet fehlende Funktionen (einmal pro Seiten-Version).
+const CSLK_BRIDGE = [
+  ["vibrate", "Vibration"],
+  ["vibrateLong", "Vibrations-Failsafe"],
+  ["setAlarm", "native Zeit-Wecker"],
+  ["cancelAlarm", "Wecker abbrechen"],
+  ["ringingAlarms", "Läut-Übernahme"],
+  ["syncAlarms", "Wecker-Benachrichtigung"],
+  ["notify", "System-Hinweise"],
+  ["cancelNotify", "Hinweise löschen"],
+  ["hasNotifPerm", "Benachrichtigungs-Freigabe"],
+  ["requestNotifPerm", "Benachrichtigungs-Freigabe"],
+  ["syncGeofences", "Geofence-Wecker"],
+  ["pendingGeofenceEvents", "Geofence-Übernahme"],
+  ["openMenu", "App-Menü-Knopf"]
+];
+function pageVersion() {
+  try { return (document.querySelector(".verline").textContent.match(/Version (\d+\.\d+\.\d+)/) || [])[1] || ""; }
+  catch (e) { return ""; }
+}
+(function checkAppFeatures() {
+  if (!window.KvgNative) return;   // im Browser: nichts zu melden
+  const miss = CSLK_BRIDGE.filter(p => typeof window.KvgNative[p[0]] !== "function");
+  if (!miss.length) return;
+  const sig = pageVersion() + ":" + miss.map(m => m[0]).join(",");
+  let last = "";
+  try { last = localStorage.getItem("kvg-appwarn") || ""; } catch (e) {}
+  if (last === sig) return;   // nur einmal pro Version/Fehlstand melden
+  try { localStorage.setItem("kvg-appwarn", sig); } catch (e) {}
+  setLocNote("⚠️ App-Update empfohlen: Diese Seiten-Version nutzt App-Funktionen, die die installierte App noch nicht kennt: " +
+    miss.map(m => m[1]).join(", ") + ". Bitte cslk.apk aktualisieren und danach „Web-Version übernehmen“ wiederholen.");
+})();
+
+// ⚮ App-Menü-Knopf im Kopf — nur sichtbar, wenn die App die openMenu-Brücke hat
+// (das Android-Optionsmenü ist auf Geräten ohne Menü-Taste sonst nicht erreichbar)
+if (window.KvgNative && typeof window.KvgNative.openMenu === "function") {
+  const mb = document.createElement("button");
+  mb.className = "chip";
+  mb.id = "appMenuBtn";
+  mb.title = "App-Menü öffnen: Zustand importieren, Web-Version übernehmen, gebündelte Version laden, Seiten-URL ändern";
+  mb.textContent = "⋮ App";
+  mb.addEventListener("click", () => nativeCall("openMenu"));
+  document.querySelector("header").appendChild(mb);
+}
+
 // ✕ im Adressfeld: Adresse abwählen, zurück zu GPS
 document.getElementById("addrClearBtn").addEventListener("click", clearAddr);
 
@@ -4612,7 +4662,7 @@ alarmTick = function () { _alarmTickPlain(); renderBigBtns(); };
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.2 · Build: 13.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.3 · Build: 14.11.2026</div>
 </div>
 </body>
 </html>

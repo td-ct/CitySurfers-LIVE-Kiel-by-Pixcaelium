@@ -31,6 +31,13 @@ class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_URL = "file:///android_asset/index.html"
+        // App-Funktionen (Brücken-Methoden) DIESER APK-Version. Die Seite trägt
+        // denselben Katalog im <!-- CSLK-BRIDGE: ... -->-Marker; beim "Web-Version
+        // übernehmen" wird verglichen und vor fehlenden Funktionen gewarnt.
+        private val BRIDGE_FEATURES = setOf(
+            "vibrate", "vibrateLong", "setAlarm", "cancelAlarm", "ringingAlarms",
+            "syncAlarms", "notify", "cancelNotify", "hasNotifPerm", "requestNotifPerm",
+            "syncGeofences", "pendingGeofenceEvents", "openMenu")
         // gehostete Seite (eigener Server); dort liegt auch cslk.apk zum Download
         const val DEFAULT_WEB_URL =
             "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html"
@@ -181,13 +188,14 @@ class MainActivity : Activity() {
         thread {
             var ok = false
             var msg = ""
+            var body = ""
             try {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 15000
                 conn.readTimeout = 15000
                 conn.setRequestProperty("Cache-Control", "no-cache")
                 if (conn.responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    body = conn.inputStream.bufferedReader().use { it.readText() }
                     if (body.contains("<script>") && body.length > 10000) {
                         val dir = File(filesDir, "web")
                         dir.mkdirs()
@@ -201,9 +209,25 @@ class MainActivity : Activity() {
                     } else msg = "Geladene Datei sieht nicht wie die Seite aus."
                 } else msg = "HTTP ${conn.responseCode}"
             } catch (e: Exception) { msg = e.message ?: e.toString() }
+            // Feature-Handshake: braucht die geladene Seite App-Funktionen, die
+            // diese APK noch nicht kennt, wird das beim Übernehmen gemeldet.
+            var missing = emptyList<String>()
+            if (ok) {
+                try {
+                    val needed = Regex("<!--\\s*CSLK-BRIDGE:\\s*([^>]*?)\\s*-->")
+                        .find(body)?.groupValues?.get(1) ?: ""
+                        .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                    missing = needed.filter { it !in BRIDGE_FEATURES }
+                } catch (e: Exception) { }
+            }
             runOnUiThread {
                 if (ok) {
                     Toast.makeText(this, "Web-Version übernommen.", Toast.LENGTH_SHORT).show()
+                    if (missing.isNotEmpty())
+                        Toast.makeText(this,
+                            "⚠️ App-Update empfohlen: Die Seite nutzt App-Funktionen, die diese APK noch nicht kennt (" +
+                                missing.joinToString(", ") + "). Bitte cslk.apk aktualisieren.",
+                            Toast.LENGTH_LONG).show()
                     web.loadUrl(currentTarget())
                 } else {
                     Toast.makeText(this, "Übernahme fehlgeschlagen: $msg", Toast.LENGTH_LONG).show()
@@ -615,6 +639,19 @@ class NativeBridge(private val act: Activity) {
             ctx, 0, android.content.Intent(ctx, GeofenceReceiver::class.java),
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                 android.app.PendingIntent.FLAG_IMMUTABLE)
+
+    /**
+     * Öffnet das App-Optionsmenü (Zustand importieren, Web-Version übernehmen,
+     * gebündelte Version laden, Seiten-URL ändern). Der ⋮-Knopf der Seite ruft
+     * diese Brücke — das Hardware-/Overflow-Menü ist auf modernen Geräten ohne
+     * Menü-Taste und ohne Actionbar sonst nicht zu erreichen.
+     */
+    @JavascriptInterface
+    fun openMenu() {
+        act.runOnUiThread {
+            try { act.openOptionsMenu() } catch (e: Exception) { }
+        }
+    }
 
     @JavascriptInterface
     fun cancelAlarm(key: String) {
