@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="de">
 <head>
@@ -68,18 +69,10 @@
     width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
   .addrclr:hover { background: #c0392b; color: #fff; }
   .stopclr { right: 104px; }
-  .legalbtns { margin-top: 12px; }
-  .legalbtns .chip { margin: 0; }
-  #aboutDlg { position: fixed; inset: 0; z-index: 86; background: rgba(2,6,23,.65);
-    display: flex; align-items: center; justify-content: center; padding: 16px; }
-  #aboutDlg[hidden] { display: none; }
-  .aboutbox { background: #1e293b; border: 1px solid #334155; border-radius: 12px;
-    padding: 12px 14px; max-width: 340px; width: 92vw; max-height: 88vh; overflow: auto; }
-  .aboutbox h2 { margin: 0 0 2px; font-size: 1.1rem; }
-  .aboutbox .theses p { font-size: 0.8rem; line-height: 1.35; margin: 5px 0; }
-  .aboutbox .dim { font-size: 0.74rem; color: #94a3b8; }
-  .aboutbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .aboutbtns .chip { flex: 1 1 auto; text-align: center; font-size: 0.85rem; padding: 6px 10px; }
+  #about .theses p { font-size: 0.8rem; line-height: 1.35; margin: 5px 0; }
+  #about .dim { font-size: 0.74rem; color: #94a3b8; margin: 4px 0; }
+  #about .aboutbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  #about .aboutbtns .chip { flex: 1 1 auto; text-align: center; font-size: 0.85rem; padding: 6px 10px; }
   #addrSearch { padding-right: 36px; }
   #bigAssignDlg { position: fixed; top: 132px; right: 12px; z-index: 84; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px; max-width: 320px; width: 88vw;
@@ -501,16 +494,30 @@
   <div class="alerts" id="alerts"></div>
 
   <footer>
-    Datenquelle: inoffizielle JSON-Schnittstelle der Kieler Verkehrsgesellschaft (INIT InternetService,
-    kvg-internetservice-proxy.p.networkteam.com) – dieselbe Quelle, die kvg-kiel.de für
-    seine Echtzeitabfahrten nutzt (CORS freigegeben). Fußwege: OSRM-Fußprofil auf
-    OpenStreetMap-Wegenetz (6 km/h). Adressen: Photon/OpenStreetMap (Fallback: Nominatim).
-    Kein Scraping, aber ohne Garantien. Koordinaten, Locator und Karten-Links werden
-    lokal erkannt. Offizielle Alternative: <a href="https://www.nah.sh">NAH.SH</a>.
+    Datenquellen: KVG (inoffizielle Schnittstelle wie kvg-kiel.de) · Fußwege: OSRM/OpenStreetMap ·
+    Adressen: Photon · Details unter „Über diese App“. Offizielle Alternative:
+    <a href="https://www.nah.sh">NAH.SH</a>.
 
-    <div class="legalbtns">
-      <button class="chip" id="aboutBtn" title="Über diese App: Version, Idee und (in der Android-App) Update-Prüfung">ⓘ Über diese App</button>
-    </div>
+    <details class="legal" id="about">
+      <summary>ⓘ Über diese App</summary>
+      <div class="dim" id="aboutVer"></div>
+      <div class="theses">
+        <p><b>Live statt Papierfahrplan:</b> Echtzeit-Abfahrten der Kieler Verkehrsgesellschaft direkt aus derselben Quelle wie kvg-kiel.de – inklusive Ist-Zeiten und Prognosen.</p>
+        <p><b>Deine Daten bleiben deine:</b> Favoriten, Wecker und Standort bleiben vollständig auf dem Gerät – kein Konto, kein Tracking, alles per ⇅ exportierbar.</p>
+        <p><b>Der Bildschirm gehört den Abfahrten:</b> bewusst ohne Rahmen, Menüleisten und Login – eine einzige Seite, ein Blick auf die Abfahrten.</p>
+      </div>
+      <p><b>Datenquellen im Detail:</b> Live-Abfahrten aus der inoffiziellen JSON-Schnittstelle der
+      Kieler Verkehrsgesellschaft (INIT InternetService) – dieselbe Quelle, die auch kvg-kiel.de für
+      seine Echtzeitabfahrten nutzt, CORS freigegeben, kein Scraping, aber ohne Garantien. Fußwege über
+      das OSRM-Fußprofil auf dem OpenStreetMap-Wegenetz (6 km/h). Adressen über Photon auf
+      OpenStreetMap-Basis, Fallback: Nominatim. Koordinaten, Locator und Karten-Links werden lokal
+      erkannt. Offizielle Alternative: <a href="https://www.nah.sh" rel="noopener">NAH.SH</a>.</p>
+      <div class="dim" id="aboutApp"></div>
+      <div class="aboutbtns">
+        <button class="chip ok" id="aboutUpdate" hidden>🔃 Nach neuer Version suchen</button>
+        <button class="chip" id="aboutMenu" hidden>⋮ App-Menü</button>
+      </div>
+    </details>
 
     <details class="legal">
       <summary>Impressum</summary>
@@ -4630,9 +4637,8 @@ function pageVersion() {
     miss.map(m => m[1]).join(", ") + ". Bitte cslk.apk aktualisieren und danach „Web-Version übernehmen“ wiederholen.");
 })();
 
-// ---------- Über-Dialog: Version, Idee, und in der App der Update-Knopf ----------
-const aboutDlg = document.getElementById("aboutDlg");
-function openAbout() {
+// ---------- Über-Sektion im Fuß: beim Aufklappen füllen (Version, Idee, App-Info, Update) ----------
+function fillAbout() {
   const vl = document.querySelector(".verline").textContent;
   const ver = pageVersion() || "?";
   const build = (vl.match(/Build: ([\d.]+)/) || [])[1] || "?";
@@ -4668,12 +4674,10 @@ function openAbout() {
     upd.hidden = true;
     menu.hidden = true;
   }
-  aboutDlg.hidden = false;
 }
-document.getElementById("aboutBtn").addEventListener("click", openAbout);
-document.getElementById("aboutClose").addEventListener("click", () => { aboutDlg.hidden = true; });
-aboutDlg.addEventListener("click", e => { if (e.target === aboutDlg) aboutDlg.hidden = true; });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && !aboutDlg.hidden) aboutDlg.hidden = true; });
+document.getElementById("about").addEventListener("toggle", () => {
+  if (document.getElementById("about").open) fillAbout();
+});
 
 // ✕ im Adressfeld: Adresse abwählen, zurück zu GPS
 document.getElementById("addrClearBtn").addEventListener("click", clearAddr);
@@ -4706,32 +4710,13 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
 
 </script>
 
-<div id="aboutDlg" hidden>
-  <div class="aboutbox">
-    <h2>CitySurfers LIVE @ Kiel <span class="by">by Pixcaelium</span></h2>
-    <div class="dim" id="aboutVer"></div>
-    <div class="theses">
-      <p><b>Live statt Papierfahrplan:</b> Echtzeit-Abfahrten der Kieler Verkehrsgesellschaft direkt aus derselben Quelle wie kvg-kiel.de – inklusive Ist-Zeiten und Prognosen.</p>
-      <p><b>Deine Daten bleiben deine:</b> Favoriten, Wecker und Standort bleiben vollständig auf dem Gerät – kein Konto, kein Tracking, alles per ⇅ exportierbar.</p>
-      <p><b>Der Bildschirm gehört den Abfahrten:</b> bewusst ohne Rahmen, Menüleisten und Login – eine einzige Seite, ein Blick auf die Abfahrten.</p>
-      <p><b>Offene Wege, offene Daten:</b> Fußwege über OpenStreetMap/OSRM, Adressen über Photon – kostenlos, aber ohne Garantien.</p>
-    </div>
-    <div class="dim" id="aboutApp"></div>
-    <div class="aboutbtns">
-      <button class="chip ok" id="aboutUpdate" hidden>🔃 Nach neuer Version suchen</button>
-      <button class="chip" id="aboutMenu" hidden>⋮ App-Menü</button>
-      <button class="chip bad" id="aboutClose">Schließen</button>
-    </div>
-  </div>
-</div>
-
 <div class="apkdl pagefoot">
   📱 <strong>Android-App nachinstallieren bzw. aktualisieren:</strong>
   <a href="cslk.apk" download="cslk.apk">cslk.apk herunterladen</a> –
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.4 · Build: 14.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.5 · Build: 14.11.2026</div>
 </div>
 </body>
 </html>
