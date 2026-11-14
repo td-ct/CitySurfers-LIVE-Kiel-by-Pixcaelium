@@ -37,7 +37,8 @@ class MainActivity : Activity() {
         private val BRIDGE_FEATURES = setOf(
             "vibrate", "vibrateLong", "setAlarm", "cancelAlarm", "ringingAlarms",
             "syncAlarms", "notify", "cancelNotify", "hasNotifPerm", "requestNotifPerm",
-            "syncGeofences", "pendingGeofenceEvents", "openMenu")
+            "syncGeofences", "pendingGeofenceEvents", "openMenu",
+            "checkWebUpdate", "appVersion")
         // gehostete Seite (eigener Server); dort liegt auch cslk.apk zum Download
         const val DEFAULT_WEB_URL =
             "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html"
@@ -232,6 +233,70 @@ class MainActivity : Activity() {
                     web.loadUrl(currentTarget())
                 } else {
                     Toast.makeText(this, "Übernahme fehlgeschlagen: $msg", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** Update-Check vom Über-Dialog der Seite: lädt die Seite von der URL und
+     *  übernimmt sie dauerhaft, wenn ihre Versionsnummer von der laufenden
+     *  abweicht; ist sie gleich, gibt es nur einen Toast. Fehlende App-
+     *  Funktionen werden wie beim "Web-Version übernehmen" gemeldet. */
+    fun checkWebUpdate(url: String, curVer: String) {
+        Toast.makeText(this, "Suche neue Web-Version …", Toast.LENGTH_SHORT).show()
+        thread {
+            var ok = false
+            var msg = ""
+            var body = ""
+            var missing = emptyList<String>()
+            try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.setRequestProperty("Cache-Control", "no-cache")
+                if (conn.responseCode in 200..299) {
+                    body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val newVer = Regex("Version (\\d+\\.\\d+\\.\\d+)").find(body)?.groupValues?.get(1) ?: "?"
+                    if (body.contains("<script>") && body.length > 10000) {
+                        if (newVer == curVer) {
+                            msg = "Die Seite ist bereits aktuell (Version $newVer)."
+                        } else {
+                            val dir = File(filesDir, "web")
+                            dir.mkdirs()
+                            val tmp = File(dir, "index.html.tmp")
+                            tmp.writeText(body)
+                            val f = webFile()
+                            if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+                            getSharedPreferences("kvglive", MODE_PRIVATE)
+                                .edit().putString("webUrl", url).apply()
+                            ok = true
+                            msg = "Neue Web-Version $newVer übernommen."
+                        }
+                    } else msg = "Geladene Datei sieht nicht wie die Seite aus."
+                } else msg = "HTTP ${conn.responseCode}"
+                if (ok) {
+                    try {
+                        val raw = Regex("<!--\\s*CSLK-BRIDGE:\\s*([^>]*?)\\s*-->")
+                            .find(body)?.groupValues?.get(1) ?: ""
+                        val needed = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                        missing = needed.filter { it !in BRIDGE_FEATURES }
+                    } catch (e: Exception) { }
+                }
+            } catch (e: Exception) { msg = e.message ?: e.toString() }
+            val okF = ok
+            val msgF = msg
+            val missF = missing
+            runOnUiThread {
+                if (okF) {
+                    Toast.makeText(this, msgF + " – lade neu …", Toast.LENGTH_SHORT).show()
+                    if (missF.isNotEmpty())
+                        Toast.makeText(this,
+                            "⚠️ App-Update empfohlen: Die Seite nutzt App-Funktionen, die diese APK noch nicht kennt (" +
+                                missF.joinToString(", ") + "). Bitte cslk.apk aktualisieren.",
+                            Toast.LENGTH_LONG).show()
+                    web.loadUrl(currentTarget())
+                } else {
+                    Toast.makeText(this, msgF, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -652,6 +717,24 @@ class NativeBridge(private val act: Activity) {
         act.runOnUiThread {
             try { act.openOptionsMenu() } catch (e: Exception) { }
         }
+    }
+
+    /** Update-Knopf im Über-Dialog der Seite: löst den Update-Check aus
+     *  (Seite laden, Versionsnummern vergleichen, bei Neuheit übernehmen). */
+    @JavascriptInterface
+    fun checkWebUpdate(url: String, curVer: String) {
+        (act as? MainActivity)?.checkWebUpdate(url, curVer)
+    }
+
+    /** Versionsname + versionCode der installierten App, z. B. "1.1.4 (28)". */
+    @JavascriptInterface
+    fun appVersion(): String {
+        return try {
+            val pi = act.packageManager.getPackageInfo(act.packageName, 0)
+            val code = if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode
+                       else @Suppress("DEPRECATION") pi.versionCode.toLong()
+            (pi.versionName ?: "?") + " (" + code + ")"
+        } catch (e: Exception) { "?" }
     }
 
     @JavascriptInterface
