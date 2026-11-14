@@ -38,11 +38,13 @@ class MainActivity : Activity() {
             "vibrate", "vibrateLong", "setAlarm", "cancelAlarm", "ringingAlarms",
             "syncAlarms", "notify", "cancelNotify", "hasNotifPerm", "requestNotifPerm",
             "syncGeofences", "pendingGeofenceEvents", "openMenu",
-            "checkWebUpdate", "appVersion")
+            "checkWebUpdate", "appVersion", "alarmActions")
         // gehostete Seite (eigener Server); dort liegt auch cslk.apk zum Download
         const val DEFAULT_WEB_URL =
             "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html"
         private const val REQ_PERMS = 41
+        // App-interner Broadcast: Wecker-Aktion aus einem Benachrichtigungs-Button
+        const val ACTION_ALARM_ACTION = "de.timodamm.kvglive.ALARM_ACTION"
     }
 
     private lateinit var web: WebView
@@ -50,6 +52,7 @@ class MainActivity : Activity() {
     private var geoOrigin: String? = null
     private var pendingTab: String? = null   // Reiter-Sprung aus Wecker-Benachrichtigung
     private var pendingShare: String? = null // geteilter Text (Adresse/Koordinaten/Link)
+    private var alarmActionReceiver: android.content.BroadcastReceiver? = null
     private var askedBackgroundLoc = false    // ACCESS_BACKGROUND_LOCATION nur 1x nachfragen
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -101,6 +104,15 @@ class MainActivity : Activity() {
                 for (e in GeofenceStore.drainEvents(applicationContext)) evs.put(e)
                 if (evs.length() > 0)
                     view.evaluateJavascript("window.kvgGeofenceEvents(${evs.toString()})", null)
+                // Wecker-Aktionen aus Benachrichtigungs-Buttons, die gedrückt wurden,
+                // während die App nicht lief: jetzt an die Seite nachreichen
+                val acts = AlarmActionStore.drain(applicationContext)
+                for (k in 0 until acts.length()) {
+                    val a2 = acts.optJSONObject(k) ?: continue
+                    view.evaluateJavascript(
+                        "window.kvgAlarmAction(${JSONObject.quote(a2.optString("akey"))}, " +
+                            "${JSONObject.quote(a2.optString("mode"))})", null)
+                }
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -122,6 +134,34 @@ class MainActivity : Activity() {
         web.loadUrl(currentTarget())
         takeTabFrom(intent)
         takeShareFrom(intent)
+        // Wecker-Aktionen aus den Buttons der Wecker-Benachrichtigung: die Seite
+        // (window.kvgAlarmAction) sofort aktualisieren, solange die App läuft
+        alarmActionReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context, i: Intent) {
+                val akey = i.getStringExtra("akey") ?: return
+                val mode = i.getStringExtra("mode") ?: return
+                handleAlarmAction(akey, mode)
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(alarmActionReceiver,
+                android.content.IntentFilter(ACTION_ALARM_ACTION),
+                android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(alarmActionReceiver,
+                android.content.IntentFilter(ACTION_ALARM_ACTION))
+        }
+    }
+
+    /** Wecker-Aktion (Benachrichtigungs-Button) an die Seite weiterreichen
+     *  und aus der Nachhol-Liste nehmen (sie wurde ja gerade ausgeführt). */
+    private fun handleAlarmAction(akey: String, mode: String) {
+        AlarmActionStore.remove(applicationContext, akey, mode)
+        try {
+            web.evaluateJavascript(
+                "window.kvgAlarmAction(${JSONObject.quote(akey)}, ${JSONObject.quote(mode)})", null)
+        } catch (e: Exception) { }
     }
 
     // ---------- Senden-Ziel: geteilter Text (Adresse/Koordinaten/Locator/Link) ----------
@@ -163,6 +203,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // Wecker-Aktions-Receiver abmelden
+        try { alarmActionReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) { }
+        alarmActionReceiver = null
         // App beendet: Wecker-Benachrichtigungen mit verschwinden lassen
         try {
             val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
@@ -562,6 +605,27 @@ class NativeBridge(private val act: Activity) {
                     if (Build.VERSION.SDK_INT < 26) {
                         @Suppress("DEPRECATION")
                         setPriority(android.app.Notification.PRIORITY_DEFAULT)
+                    }
+                }
+                // Action-Buttons (max. 3): je Eintrag Stopp (läutet), Aus/An
+                // (Distanz-Wecker) oder Löschen; Tippen ruft AlarmActionReceiver
+                val acts = a.optJSONArray("actions")
+                if (acts != null) {
+                    for (k in 0 until acts.length()) {
+                        if (k >= 3) break
+                        val ac = acts.optJSONObject(k) ?: continue
+                        val akey = ac.optString("akey")
+                        val amode = ac.optString("mode")
+                        val alabel = ac.optString("label")
+                        if (akey.isEmpty() || amode.isEmpty()) continue
+                        val ai = Intent(act, AlarmActionReceiver::class.java)
+                            .putExtra("akey", akey)
+                            .putExtra("mode", amode)
+                        val api = android.app.PendingIntent.getBroadcast(
+                            act, (key + "#" + amode + "#" + k).hashCode(), ai,
+                            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                                android.app.PendingIntent.FLAG_IMMUTABLE)
+                        b.addAction(android.R.drawable.ic_lock_idle_alarm, alabel, api)
                     }
                 }
                 try { nm.notify(id, b.build()); alarmNotifs.add(id) } catch (e: Exception) { }
