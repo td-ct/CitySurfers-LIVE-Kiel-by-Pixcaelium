@@ -695,10 +695,9 @@ const RELOAD_DELAY_MS         = 600;   // Zustands-Import: kurze Pause vor dem N
 const GPS_DLG_WARN_MS         = 60000; // GPS-Dialog: nach so langer Wartezeit ohne besseres Signal Warnung anzeigen
 // --- "Finde nach Hause"-Modus (Fahrplan-Suche nach direkten Fahrten zu Favoriten) ---
 const FH_SCAN_INTERVAL_MS   = 60000; // Such-Takt: alle 60 s nach passenden Fahrten suchen (nur bei laufendem GPS)
-const FH_POS_RADIUS_M       = 500;   // Stationen in diesem Umkreis der eigenen Position werden geprüft
+const FH_DIST_OPTS          = [250, 500, 750, 1000]; // wählbare Such-Umkreise (m): eigene Position und Ziel
 const FH_MAX_STATIONS       = 4;     // maximal so viele der nächsten Stationen pro Suchlauf prüfen
-const FH_DEPART_WINDOW_MIN  = 15;    // Abfahrten in den nächsten so vielen Minuten gelten als Kandidaten
-const FH_TARGET_RADIUS_M    = 400;   // Ziel erreicht: Fahrtverlauf enthält eine Station in diesem Umkreis des Favoriten
+const FH_TIME_OPTS          = [5, 10, 15, 30];       // wählbare Zeit (min): bis man spätestens losgehen muss
 const FH_TRIP_CACHE_MS      = 300000; // Fahrtverläufe der Kandidaten 5 Minuten cachen
 
 // ---------- Konfiguration ----------
@@ -2150,9 +2149,10 @@ async function buildFlatList() {
       const t = new Date(now0 + r.rel * 1000);
       const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
       const walkMin = Math.ceil(r.footM / (WALK_SPEED_KMH * 1000 / 60));
-      html += '<div class="srow flatrow" data-fsn="' + escapeHtml(r.sn) + '" data-ftrip="' +
+      html += '<div class="srow flatrow bl' + (losMin < 0 ? " missed" : (losMin <= 3 ? " soon" : "")) +
+        '" data-fsn="' + escapeHtml(r.sn) + '" data-ftrip="' +
         escapeHtml(r.sn + "~" + r.tripId) + '" title="Station und Buslinie öffnen">' +
-        '<span class="dl">' + escapeHtml(r.line) + "</span>" +
+        '<span class="dl blink">' + escapeHtml(r.line) + "</span>" +
         (r.plat ? '<span class="plat">[' + escapeHtml(r.plat) + ']</span>' : "") +
         '<span class="mqwrap"><span class="mqi">' + escapeHtml(r.direction) +
           " (ab " + escapeHtml(r.name) + ")</span></span>" +
@@ -3102,9 +3102,10 @@ function pollGeofenceEvents() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGeofenceEvents(); });
 
 // ---------- Finde nach Hause: direkte Fahrten zu Favoriten-Zielen finden ----------
-// Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im Umkreis
-// FH_POS_RADIUS_M eine Abfahrt in den nächsten FH_DEPART_WINDOW_MIN Minuten hat,
-// deren Fahrtverlauf eine Station im Umkreis FH_TARGET_RADIUS_M eines als 🏠
+// Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im
+// eingestellten Positions-Umkreis eine Abfahrt hat, für die man spätestens im
+// eingestellten Zeitfenster losgehen muss, und deren Fahrtverlauf eine Station im
+// Ziel-Umkreis des als 🏠
 // markierten Favoriten enthält (ohne Umsteigen). Treffer werden live geprüft und
 // dann gemeldet: Dialog im Stil der Abfahrtsanzeigen + Hinweiston/Vibration
 // (konfigurierbar wie beim Wecker) + Android-System-Benachrichtigung (Kanal
@@ -3118,15 +3119,29 @@ const fhSeen = new Map();        // "cfgId|route|tripId|sn" -> Ablaufzeit (Meldu
 let fhScanning = false;
 let fhNotifAsked = false;
 
+// Pro Ziel konfigurierbare Radien/Zeitfenster; alte Einträge ohne Werte bekommen die bisherigen Defaults
+function fhDefaults(cfg) {
+  if (cfg.posR == null) cfg.posR = 500;
+  if (cfg.losWin == null) cfg.losWin = 15;
+  if (cfg.tgtR == null) cfg.tgtR = 400;
+}
+// kleines Auswahllisten-HTML (Optionen mit Einheit), direkt im Erklärtext des Dialogs
+function fhSelHtml(cls, opts, val, unit) {
+  if (val == null || opts.indexOf(val) < 0) val = opts[1];   // unbekannt/leer -> Standard 500/15
+  return '<select class="' + cls + '">' +
+    opts.map(o => '<option value="' + o + '"' + (o === val ? " selected" : "") + ">" + o + unit + "</option>").join("") +
+    "</select>";
+}
 function fhTargets() {
   const ts = [];
   addrFavs.forEach((f, i) => {
-    if (f.fh && f.fh.on && f.lat != null)
-      ts.push({ id: "a" + i, name: f.label || f.name, lat: f.lat, lon: f.lon, cfg: f.fh });
+    if (f.fh && f.fh.on && f.lat != null) { fhDefaults(f.fh);
+      ts.push({ id: "a" + i, name: f.label || f.name, lat: f.lat, lon: f.lon, cfg: f.fh }); }
   });
   for (const sn in fhStopCfg) {
     const c = fhStopCfg[sn];
     if (!c || !c.on) continue;
+    fhDefaults(c);
     const s = stops.find(x => x.shortName === sn);
     if (s) ts.push({ id: "s" + sn, name: s.name, lat: s.lat, lon: s.lon, cfg: c });
   }
@@ -3169,33 +3184,40 @@ async function fhScan() {
   if (!targets.length) return;
   fhScanning = true;
   try {
-    // 1) nächste Stationen um die eigene Position
+    // größte eingestellte Werte aller Ziele als grobe Vorfilter
+    const maxPosR = Math.max.apply(null, targets.map(t => t.cfg.posR || 500));
+    const maxLosWin = Math.max.apply(null, targets.map(t => t.cfg.losWin || 15));
+    // 1) nächste Stationen um die eigene Position (Positions-Umkreis des weitesten Ziels)
     const near = stops
-      .filter(s => !isDB(s.shortName) && dist(pos, s) <= FH_POS_RADIUS_M)
+      .filter(s => !isDB(s.shortName) && dist(pos, s) <= maxPosR)
       .sort((a, b) => dist(pos, a) - dist(pos, b))
       .slice(0, FH_MAX_STATIONS);
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
     for (const st of near) {
       const deps = await getDepartures(st.shortName) || [];
-      // 2) Abfahrten im Zeitfenster (Sollzeit = Offline-Fahrplan)
+      // 2) Abfahrten im Zeitfenster (Sollzeit = Offline-Fahrplan); grober Vorfilter
+      // über das größte Losgeh-Fenster zuzüglich geschätztem Fußweg (Luftlinie × 1,3)
+      const estWalk = dist(pos, st) * 1.3 / (WALK_SPEED_KMH * 1000 / 60);
       for (const d of deps) {
         if (isDB(st.shortName) || String(d.tripId).indexOf("DB:") === 0) continue; // erst nur KVG-Busse
         const pMin = hhmmMin(d.plannedTime);
-        if (pMin < 0 || pMin < nowMin - 1 || pMin > nowMin + FH_DEPART_WINDOW_MIN) continue;
+        if (pMin < 0 || pMin < nowMin - 1 || pMin > nowMin + maxLosWin + Math.ceil(estWalk)) continue;
         const route = d.line + "→" + d.direction;
         const tStops = await fhTripStops(d.tripId);
         if (!tStops) continue;
         // 3) fährt die Fahrt an einem Ziel-Favoriten vorbei?
         for (const tgt of targets) {
           if (fhMuted(tgt.cfg, route)) continue;
+          // Zeitfenster: Zeit bis man spätestens losgehen muss (Abfahrt minus geschätzter Fußweg)
+          if (pMin - nowMin - estWalk > (tgt.cfg.losWin || 15)) continue;
           // günstigste Station der Fahrt am Ziel: nächste im Ziel-Radius
           let bestS = null, bestD = Infinity;
           for (const ts2 of tStops) {
             const s2 = stops.find(x => x.shortName === ts2.sn);
             if (!s2) continue;
             const d2 = dist(tgt, s2);
-            if (d2 <= FH_TARGET_RADIUS_M && d2 < bestD) { bestD = d2; bestS = s2; }
+            if (d2 <= (tgt.cfg.tgtR || 400) && d2 < bestD) { bestD = d2; bestS = s2; }
           }
           if (!bestS) continue;
           // 4) Live-Prüfung: Abfahrt noch da? Ist-Zeit holen
@@ -3373,14 +3395,17 @@ function openFhDlg(kind, id) {
     name = s.name;
   }
   cfg.muted = cfg.muted || {};
+  fhDefaults(cfg);
   const acfg = alarmCfg();
   const wrap = document.createElement("div");
   wrap.className = "dlgwrap";
   wrap.innerHTML = '<div class="dlg">' +
     '<div class="dtitle">🏠 Finde nach Hause: ' + escapeHtml(name) + "</div>" +
     '<div class="rowinfo">Sucht bei laufendem GPS alle ' + Math.round(FH_SCAN_INTERVAL_MS / 60000) +
-      " min nach Bussen, die von einer Haltestelle bis " + FH_POS_RADIUS_M + " m Entfernung in den nächsten " +
-      FH_DEPART_WINDOW_MIN + " Minuten direkt in Richtung dieses Ziels fahren (Ziel-Umkreis " + FH_TARGET_RADIUS_M + " m, ohne Umsteigen).</div>" +
+      " min nach Bussen, die von einer Haltestelle bis " + fhSelHtml("fhposR", FH_DIST_OPTS, cfg.posR, " m") +
+      " Entfernung abfahren, wenn man spätestens in " + fhSelHtml("fhlos", FH_TIME_OPTS, cfg.losWin, " min") +
+      " losgehen muss, und direkt in Richtung dieses Ziels fahren (Ziel-Umkreis " +
+      fhSelHtml("fhtgtR", FH_DIST_OPTS, cfg.tgtR, " m") + ", ohne Umsteigen).</div>" +
     '<label class="dstage"><input type="checkbox" class="fhon"' + (cfg.on ? " checked" : "") + "> Hinweise aktiv</label>" +
     '<label class="dstage"><input type="checkbox" class="fhvib"' + (cfg.vib !== false ? " checked" : "") + "> Vibration</label>" +
     '<label class="dstage"><input type="checkbox" class="fhtone"' + (cfg.tone !== false ? " checked" : "") + "> Hinweiston</label>" +
@@ -3406,6 +3431,9 @@ function openFhDlg(kind, id) {
       cfg.on = wrap.querySelector(".fhon").checked;
       cfg.vib = wrap.querySelector(".fhvib").checked;
       cfg.tone = wrap.querySelector(".fhtone").checked;
+      cfg.posR = Number(wrap.querySelector(".fhposR").value);
+      cfg.losWin = Number(wrap.querySelector(".fhlos").value);
+      cfg.tgtR = Number(wrap.querySelector(".fhtgtR").value);
       cfg.snd = wrap.querySelector(".fhsnd").value;
       cfg.vol = Number(wrap.querySelector(".fhvol").value);
       if (kind === "addr") saveAddrFavs(); else saveFhStopCfg();
@@ -5193,7 +5221,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.11 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.12 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
