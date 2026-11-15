@@ -231,6 +231,8 @@
   .bl.missed { color: #f87171; }
   .blwrap { display: block; }
   .blwrap .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 3px 8px; white-space: nowrap; }
+  .blwrap .subinfo .nxlink { color: #7dd3fc; text-decoration: underline dotted; cursor: pointer; }
+  .blwrap .subinfo .nxlink:hover { color: #38bdf8; }
 
   /* Panels (Station / einzelne Abfahrt) unter der Suche */
   .panel { background: #1e293b; border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
@@ -1446,6 +1448,7 @@ addrSug.addEventListener("click", e => {
       clearStopSearchOnAddrLogin();
       setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
       renderPanels();
+      openStopListAfterFav();
     }
     return;
   }
@@ -1740,6 +1743,7 @@ document.getElementById("favDlgOk").addEventListener("click", async () => {
   clearStopSearchOnAddrLogin();
   setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
   renderPanels();
+  openStopListAfterFav();
 });
 document.getElementById("favDlgCancel").addEventListener("click", () => { favDlg.hidden = true; });
 favDlg.addEventListener("keydown", e => { if (e.key === "Escape") favDlg.hidden = true; });
@@ -1806,6 +1810,7 @@ addrFavPanel.addEventListener("click", e => {
     clearStopSearchOnAddrLogin();
     setLocNote("Adressfavorit aktiv: " + f.name + " · Haltestellen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
     renderPanels();
+    openStopListAfterFav();
     addrFavPanel.hidden = true;
   }
 });
@@ -1895,6 +1900,14 @@ document.getElementById("ddBtn").addEventListener("click", () => {
   updateSuggestions();
   focusFirstRow(sugBox);
 });
+// Nach der Wahl eines Favoriten (Adresse oder Station) klappt die
+// Haltestellenliste automatisch auf – wie ein Druck auf ▾ – und zeigt
+// sofort die nach dem neuen Standort sortierten Stationen.
+function openStopListAfterFav() {
+  search.blur();
+  updateSuggestions();
+  focusFirstRow(sugBox);
+}
 // Adressfavoriten als Auswahl-Liste anzeigen (leeres Suchfeld), wie beim
 // fokussieren, aber auch ohne Tastatur-Logik aufrufbar
 function showAddrFavSug() {
@@ -3990,7 +4003,7 @@ stopFavPanel.addEventListener("click", e => {
     return;
   }
   const row = e.target.closest("[data-sfi]");
-  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; }
+  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; openStopListAfterFav(); }
 });
 
 function toggleFavSn(sn) {
@@ -4726,11 +4739,16 @@ function busLinesHTML(v) {
       if (xrel <= rel) continue;   // nur spätere Fahrten
       const xl = Math.round((xrel - walkSec) / 60);
       if (xl < 0) continue;        // bereits abgefahren: nicht mehr nennen
-      nexts.push(xl);
+      nexts.push({ min: xl, id: x.tripId });
     }
-    nexts.sort((a, b) => a - b);
+    nexts.sort((a, b) => a.min - b.min);
+    // jede Folgefahrt einzeln antippbar: oeffnet ihren Fahrtverlauf (die Fahrt
+    // steht mit geplanten Zeiten schon im System, auch wenn sie erst kommt oder
+    // soeben losgefahren ist)
     const nextTxt = nexts.length
-      ? '<div class="subinfo">auch in ' + nexts.slice(0, 5).join(", ") + " min</div>"
+      ? '<div class="subinfo">auch in ' + nexts.slice(0, 5).map(n =>
+          '<span class="nxlink" data-buslink="' + escapeHtml(v.stop.shortName) + "~" + escapeHtml(n.id) +
+          '" title="Fahrtverlauf dieser Verbindung öffnen">' + n.min + "</span>").join(", ") + " min</div>"
       : "";
     out.push({
       html: '<div class="blwrap"><div class="' + cls + '" data-bus="' + bLink + '">' +
@@ -5094,12 +5112,13 @@ bbBtns.forEach((b, i) => {
       clearStopSearchOnAddrLogin();   // wie Adress-Login: Suchtext weg, Feld-GPS der Stationssuche aus
       setLocNote("Adressfavorit aktiv: " + f.name + " · Listen danach sortiert. ✕ im Adressfeld kehrt zum GPS zurück.");
       renderPanels();
-      if (!sugBox.hidden) updateSuggestions();   // offene Haltestellenliste sofort neu sortieren
+      openStopListAfterFav();   // Haltestellenliste sofort neu sortiert aufklappen
     } else {
       const s = stops.find(x => x.shortName === a.sn);
       if (!s) { openBigAssignDlg(i); return; }
       selectStop(a.sn);   // neuen Stationsreiter anlegen und öffnen
       setLocNote("Haltestellenfavorit geöffnet: " + s.name);
+      openStopListAfterFav();   // Haltestellenliste gleich mit aufklappen
     }
   });
 });
@@ -5286,7 +5305,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.14 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.15 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
