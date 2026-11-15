@@ -6,6 +6,8 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 
 ## Version
 
+**v1.2** – 🧭 Routenplanung: Der violette Knopf oben (vormals frei belegbar) öffnet jetzt den Route-Dialog. Start und Ziel werden jeweils über Adresssuche (Nominatim), Adressfavoriten, Haltestellensuche oder Haltestellenfavoriten gewählt; die Favoritenlisten stehen nach Anwahl-Häufigkeit (Top 3) und sonst nach Entfernung bzw. alphabetisch voran. Die Abfahrtszeit ist frei wählbar (Standard: jetzt). Die Verbindungssuche läuft über die NAH.SH-HAFAS-Schnittstelle (TripSearch) und zeigt im neuen Reiter „🧭 Route“ die nächsten drei Verbindungen inklusive Fußwegen (🚶) und mitunter als Fahrrad ausgewiesener Wege (🚲), Umstiegen und Fahrtzeiten. Die zwei weiteren belegbaren Knöpfe funktionieren unverändert (Slot 1 entfällt). Entwickelt im Branch `routing`.
+
 **v1.1.14** – GPS-Dialog entschärft und „auch in … min“ bei Abfahrten: Im GPS-Dialog steht rechts neben dem Ein-/Aus-Knopf kein Zustands-Hinweis mehr („GPS an/aus (läuft laufend)“); nur wenn GPS aus ist und noch eine letzte Position vorliegt, zeigt dort die Kurzform „nutzt letzten Standort weiter“. Die Meldung „GPS aus – nutze letzten Standort weiter (Liste bleibt nach Entfernung sortiert).“ ist ersatzlos entfallen. In der Abfahrtenliste steht unter jeder Zeile jetzt „auch in vv, ww, xx, yy, zz min“ – die Folgefahrten derselben Linie in dieselbe Richtung, die noch nicht abgefahren sind (bis zu fünf, mit deren geladenen Soll-/Ist-Zeiten), ohne die in der Zeile darüber angezeigte Verbindung.
 
 

@@ -316,6 +316,26 @@
     background: rgba(245,158,11,.08); border: 1px dashed rgba(245,158,11,.5);
     border-radius: 8px; color: #cbd5e1; }
   .apkdl a { color: #f59e0b; text-decoration: underline; cursor: pointer; }
+  .routepick { display: flex; gap: 6px; flex-wrap: wrap; }
+  .routepick .achip { flex: 1 1 calc(50% - 3px); text-align: center; }
+  .routefield { display: flex; align-items: center; gap: 8px; }
+  .routefield .routelab { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rtq { box-sizing: border-box; width: 100%; background: #0f172a; color: #e2e8f0;
+    border: 1px solid #1e3a5f; border-radius: 8px; padding: 8px 10px; font-size: .9rem;
+    margin-bottom: 6px; }
+  .rtrow { display: flex; align-items: center; gap: 8px; padding: 8px 6px; cursor: pointer;
+    border-bottom: 1px solid rgba(30,58,95,.5); }
+  .rtrow:hover { background: rgba(56,189,248,.08); }
+  .rtrow .rtname { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rtrow .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
+  .routecon { margin: 8px 0; padding: 8px 10px; background: #0f1a30;
+    border: 1px solid #1e3a5f; border-radius: 10px; }
+  .routecon .rchead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .routecon .rcdur { color: #7dd3fc; font-weight: 600; }
+  .routesec { font-size: .85rem; color: #cbd5e1; padding: 2px 0 2px 6px; }
+  .routesec .rcline { font-weight: 600; color: #7dd3fc; }
+  .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
+    border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
   .pagefoot { margin: 14px 8px 20px; padding: 10px; font-size: .78rem; }
   .stata { width: 100%; box-sizing: border-box; height: 60px; margin: 4px 0 6px;
     background: #0f1a30; color: #cbd5e1; border: 1px solid #1e3a5f; border-radius: 8px;
@@ -480,7 +500,7 @@
     <button class="bigbtn green" id="bbNear" title="Abfahrten ganz in der Nähe: GPS-Ortung aktivieren und Haltestellenliste nach Entfernung öffnen"><span class="bbsym">🧭</span><small>Nähe</small></button>
     <button class="bigbtn orange" id="bbAlarm" title="Alle Wecker ein/aus (global)"><span class="bbsym">⏰</span><small>Wecker</small></button>
     <button class="bigbtn blue" id="bbFh" title="Alle „Finde nach Hause“-Hinweise ein/aus (global)"><span class="bbsym">🏠</span><small>nach Hause</small></button>
-    <button class="bigbtn violet" id="bb0" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
+    <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
     <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
   </div>
@@ -520,6 +540,7 @@
 
   <div id="tabsbar" hidden></div>
   <div class="panel" id="stationPanel" hidden></div>
+  <div class="panel" id="routePanel" hidden></div>
   <div class="panel" id="busPanel" hidden></div>
 
   <div class="alerts" id="alerts"></div>
@@ -2257,9 +2278,11 @@ function tabAlarmCount(sn) {
 }
 function renderTabs() {
   renderStopChip();
-  if (!tabs.length) { tabsbar.hidden = true; tabsbar.innerHTML = ""; return; }
-  tabsbar.hidden = false;
-  tabsbar.innerHTML = tabs.map((t, i) => {
+  let h = "";
+  if (routeTabOpen) h += '<div class="tab' + (routeTabActive ? " on" : "") + '" data-ti="route" title="🧭 Route: ' +
+    escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " + escapeHtml(routeSel.dest ? routeSel.dest.label : "?") +
+    '">🧭 Route <button class="tabx" data-tx="route" title="Route-Reiter schließen">✕</button></div>';
+  h += tabs.map((t, i) => {
     const s = stops.find(x => x.shortName === t.sn);
     const nAl = tabAlarmCount(t.sn);
     return '<div class="tab' + (i === activeTab ? " on" : "") + '" draggable="true" data-ti="' + i +
@@ -2268,6 +2291,9 @@ function renderTabs() {
       (nAl ? ' <span class="tabal" title="' + nAl + ' Wecker aktiv">⏰ ' + nAl + "</span>" : "") +
       ' <button class="tabx" data-tx="' + i + '" title="Reiter schließen">✕</button></div>';
   }).join("");
+  if (!h) { tabsbar.hidden = true; tabsbar.innerHTML = ""; return; }
+  tabsbar.hidden = false;
+  tabsbar.innerHTML = h;
 }
 // Zustand des aktiven Reiters in sein Reiter-Objekt sichern (vor dem Wechseln)
 function saveActiveTab() {
@@ -2280,6 +2306,7 @@ function saveActiveTab() {
 function activateTab(i, refetch) {
   saveActiveTab();
   activeTab = i;
+  routeTabActive = false;
   const t = tabs[i];
   const stop = t ? stops.find(s => s.shortName === t.sn) : null;
   currentStop = stop || null;
@@ -2325,9 +2352,15 @@ function closeTab(i) {
 }
 tabsbar.addEventListener("click", e => {
   const x = e.target.closest(".tabx");
-  if (x) { closeTab(Number(x.dataset.tx)); return; }
+  if (x) {
+    if (x.dataset.tx === "route") closeRouteTab();
+    else closeTab(Number(x.dataset.tx));
+    return;
+  }
   const tb = e.target.closest(".tab");
-  if (tb && Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
+  if (!tb) return;
+  if (tb.dataset.ti === "route") { if (!routeTabActive) activateRouteTab(); return; }
+  if (Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
 });
 // Reiter verschieben: Drag & Drop innerhalb der Reiterleiste
 let dragTi = -1;
@@ -2387,6 +2420,7 @@ const busPanel = document.getElementById("busPanel");
 function renderPanels() {
   renderStationPanel();
   renderBusPanel();
+  renderRoutePanel();
 }
 
 let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
@@ -4966,7 +5000,7 @@ renderAddrFavs();
 const bbNear = document.getElementById("bbNear");
 const bbAlarm = document.getElementById("bbAlarm");
 const bbFh = document.getElementById("bbFh");
-const bbBtns = [0, 1, 2].map(i => document.getElementById("bb" + i));
+const bbBtns = [1, 2].map(i => document.getElementById("bb" + i));
 
 // Belegung der drei rechten Knöpfe: {kind:"addr", name} | {kind:"stop", sn} | null
 let bigAssign = [null, null, null];
@@ -4992,7 +5026,7 @@ function renderBigToggles() {
 function renderBigBtns() {
   bbBtns.forEach((b, i) => {
     if (!b) return;
-    const a = bigAssign[i];
+    const a = bigAssign[i + 1];
     if (!a) {
       b.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
       b.title = "Noch frei – langer Druck (oder Antippen) belegt diesen Knopf mit einem Adress- oder Haltestellenfavorit";
@@ -5071,17 +5105,17 @@ bbBtns.forEach((b, i) => {
   if (!b) return;
   b.addEventListener("pointerdown", () => {
     bbLongFired = false;
-    bbPressTimer = setTimeout(() => { bbLongFired = true; openBigAssignDlg(i); }, 550);
+    bbPressTimer = setTimeout(() => { bbLongFired = true; openBigAssignDlg(i + 1); }, 550);
   });
   ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
     b.addEventListener(ev, () => clearTimeout(bbPressTimer)));
   b.addEventListener("click", () => {
     if (bbLongFired) { bbLongFired = false; return; }   // Aktion nach Langdrücken unterdrücken
-    const a = bigAssign[i];
-    if (!a) { openBigAssignDlg(i); return; }
+    const a = bigAssign[i + 1];
+    if (!a) { openBigAssignDlg(i + 1); return; }
     if (a.kind === "addr") {
       const f = addrFavs.find(x => x.name === a.name);
-      if (!f) { openBigAssignDlg(i); return; }
+      if (!f) { openBigAssignDlg(i + 1); return; }
       // Adressfavorit als Startadresse einsetzen – immer mit den gespeicherten Koordinaten
       addrPos = { lat: f.lat, lon: f.lon, label: f.name };
       try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
@@ -5097,12 +5131,16 @@ bbBtns.forEach((b, i) => {
       if (!sugBox.hidden) updateSuggestions();   // offene Haltestellenliste sofort neu sortieren
     } else {
       const s = stops.find(x => x.shortName === a.sn);
-      if (!s) { openBigAssignDlg(i); return; }
+      if (!s) { openBigAssignDlg(i + 1); return; }
       selectStop(a.sn);   // neuen Stationsreiter anlegen und öffnen
       setLocNote("Haltestellenfavorit geöffnet: " + s.name);
     }
   });
 });
+
+// Route-Knopf (ehemaliger frei belegbarer Knopf 0) öffnet die Routenplanung
+const bbRoute = document.getElementById("bbRoute");
+bbRoute.addEventListener("click", () => openRouteDlg());
 
 // Belegungs-Dialog: Einträge aus beiden Favoritenlisten (+ Löschen der Belegung)
 function openBigAssignDlg(i) {
@@ -5155,6 +5193,365 @@ document.addEventListener("click", e => {
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { const d = document.getElementById("bigAssignDlg"); if (d) d.remove(); }
 });
+
+
+// ---------- 🧭 Routenplanung: Start/Ziel wählen, Verbindungen über NAH.SH-HAFAS ----------
+// HAFAS-TripSearch (ver MUSS hier 1.94 sein, numF statt numTrips, kein gisFltrL!).
+// Dialog öffnet über den violetten Route-Knopf; Ergebnisse erscheinen im Route-Reiter.
+let routeTabOpen = false, routeTabActive = false;
+const routePanel = document.getElementById("routePanel");
+const routeSel = { start: null, dest: null, time: "" };   // je: {label, kind, key, name, sn, lat, lon, lid, locType}
+let routeCons = [], routeLoading = false, routeSearchErr = null;
+
+function routeNowStr() {
+  const n = new Date(), p = x => String(x).padStart(2, "0");
+  return p(n.getHours()) + ":" + p(n.getMinutes());
+}
+// Anwahl-Häufigkeit der Favoriten (kvg-routehist): Top 3 stehen in den Listen voran
+function routeHist() { try { return JSON.parse(localStorage.getItem("kvg-routehist") || "{}") || {}; } catch (e) { return {}; } }
+function routeBump(key) {
+  if (!key) return;
+  const h = routeHist(); h[key] = (h[key] || 0) + 1;
+  try { localStorage.setItem("kvg-routehist", JSON.stringify(h)); } catch (e) {}
+}
+function routeFavList(kind) {   // kind "addr" | "stop"
+  const pos = getPos();
+  let items;
+  if (kind === "addr") {
+    items = addrFavs.map(f => ({ label: f.label || f.name, kind: "addr", key: "addr:" + f.name,
+      name: f.name, lat: f.lat, lon: f.lon }));
+  } else {
+    items = favs.map(sn => {
+      const st = stops.find(x => x.shortName === sn);
+      return { label: st ? st.name : sn, kind: "stop", key: "stop:" + sn, name: st ? st.name : sn,
+        sn: sn, lat: st ? st.lat : null, lon: st ? st.lon : null };
+    });
+  }
+  const h = routeHist();
+  items.forEach(it => it.n = h[it.key] || 0);
+  const top = items.filter(it => it.n > 0).sort((a, b) => b.n - a.n).slice(0, 3).map(it => it.key);
+  items.sort((a, b) => {
+    const ra = top.indexOf(a.key), rb = top.indexOf(b.key);
+    if (ra !== rb) { if (ra >= 0) return -1; if (rb >= 0) return 1; }
+    if (pos && a.lat != null && b.lat != null) return dist(pos, a) - dist(pos, b);
+    return String(a.label).localeCompare(String(b.label), "de");
+  });
+  return items;
+}
+// HAFAS-Aufruf mit ver 1.94 (TripSearch/LocMatch vertragen kein 1.68!)
+async function routeHafas(meth, req) {
+  const res = await apiFetch("db", DB_GATE, { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ver: "1.94", lang: "deu", ext: null,
+      client: { id: "NAHSH", type: "WEB", name: "webapp", l: "vs_webapp" },
+      auth: { type: "AID", aid: "nahsh" }, svcReqL: [{ meth: meth, req: req }] }) });
+  if (!res.ok) throw new Error("NAH.SH nicht erreichbar (HTTP " + res.status + ")");
+  const j = await res.json();
+  const r = j && j.svcResL && j.svcResL[0];
+  if (!r) throw new Error("NAH.SH: leere Antwort");
+  if (r.err && r.err !== "OK") {
+    if (r.err === "H9380") throw new Error("Keine Verbindung zwischen Start und Ziel gefunden.");
+    throw new Error("NAH.SH-Fehler " + r.err);
+  }
+  return r.res;
+}
+// Name (Stations- oder Adresstext) -> HAFAS-lid, einmal auf sel gecacht
+async function routeResolve(sel) {
+  if (sel.lid) return sel;
+  const want = sel.kind === "stop" ? "S" : "A";
+  const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: sel.name, type: "ALL" } } });
+  const locL = (res.match && res.match.locL) || [];
+  const loc = locL.find(x => x.type === want) || locL.find(x => x.type === "S" || x.type === "A");
+  if (!loc) throw new Error("Ort nicht gefunden: " + sel.name);
+  sel.lid = loc.lid; sel.locType = loc.type;
+  return sel;
+}
+function hafasDurMin(d) {   // "HHMMSS" -> Minuten
+  if (!d || d.length < 4) return 0;
+  const t = d.length > 6 ? d.slice(-6) : d.padStart(6, "0");
+  return Number(t.slice(0, 2)) * 60 + Number(t.slice(2, 4));
+}
+function hafasDiffMin(a, b) {   // zwei "HHMMSS"-Zeiten -> Minuten
+  const mv = t => { if (!t) return null; const x = t.length > 6 ? t.slice(-6) : t;
+    return Number(x.slice(0, 2)) * 60 + Number(x.slice(2, 4)); };
+  const x = mv(a), y = mv(b);
+  if (x == null || y == null) return 0;
+  return Math.max(0, y - x);
+}
+function routeWhen() {
+  let d = new Date();
+  if (routeSel.time && /^\d\d:\d\d$/.test(routeSel.time)) {
+    const parts = routeSel.time.split(":");
+    const t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(parts[0]), Number(parts[1]));
+    if (t.getTime() < d.getTime() - 60000) t.setDate(t.getDate() + 1);   // Uhrzeit vorbei: morgen
+    d = t;
+  }
+  const p = x => String(x).padStart(2, "0");
+  return { date: d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
+           time: p(d.getHours()) + p(d.getMinutes()) + "00" };
+}
+async function routeTripSearch() {
+  const dep = await routeResolve(routeSel.start);
+  const arr = await routeResolve(routeSel.dest);
+  const when = routeWhen();
+  const res = await routeHafas("TripSearch", {
+    depLocL: [{ type: dep.locType, lid: dep.lid }],
+    arrLocL: [{ type: arr.locType, lid: arr.lid }],
+    outDate: when.date, outTime: when.time,
+    numF: 6, getPasslist: false, getPolyline: false });
+  const locL = (res.common && res.common.locL) || [];
+  const prodL = (res.common && res.common.prodL) || [];
+  const out = [];
+  for (const c of (res.outConL || [])) {
+    if (!c.secL || !c.secL.length) continue;
+    const secs = [];
+    let line = null, dir = null;
+    for (const sec of c.secL) {
+      const from = locL[sec.dep && sec.dep.locX] || {};
+      const to = locL[sec.arr && sec.arr.locX] || {};
+      if (sec.type === "JNY" && sec.jny) {
+        const prod = prodL[sec.jny.prodX] || {};
+        let ln = String(prod.name || "").trim();
+        if (/^Bus\s+/i.test(ln)) ln = ln.replace(/^Bus\s+/i, "");
+        line = ln; dir = sec.jny.dirTxt || "";
+        secs.push({ kind: "jny", line: ln, dir: dir, from: from.name, to: to.name,
+          dep: dbHHMM(sec.dep && (sec.dep.dTimeR || sec.dep.dTimeS)),
+          arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)) });
+      } else {
+        secs.push({ kind: sec.type === "BIKE" ? "bike" : "walk", from: from.name, to: to.name,
+          mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) });
+      }
+    }
+    out.push({ dep: dbHHMM(c.dep && (c.dep.dTimeR || c.dep.dTimeS)),
+      arr: dbHHMM(c.arr && (c.arr.aTimeR || c.arr.aTimeS)),
+      dur: hafasDurMin(c.dur), chg: c.chg || 0, line: line, dir: dir, secs: secs });
+  }
+  return out;
+}
+async function routeRunSearch() {
+  routeLoading = true; routeSearchErr = null; routeCons = [];
+  renderRoutePanel();
+  try {
+    routeCons = await routeTripSearch();
+    if (!routeCons.length) routeSearchErr = "Keine Verbindung gefunden.";
+  } catch (e) {
+    routeSearchErr = String(e && e.message || e);
+  }
+  routeLoading = false;
+  renderRoutePanel();
+}
+function activateRouteTab() {
+  saveActiveTab();
+  activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
+  stationPanelOpen = true; stationPanelCache = "";
+  routeTabActive = true;
+  renderTabs(); renderPanels();
+}
+function closeRouteTab() {
+  routeTabOpen = false; routeTabActive = false;
+  if (tabs.length && activeTab < 0) activateTab(0, false);
+  renderTabs(); renderPanels(); renderAlarmInd();
+}
+function renderRoutePanel() {
+  const show = routeTabOpen && routeTabActive;
+  routePanel.hidden = !show;
+  if (!show) { routePanel.innerHTML = ""; return; }
+  const a = routeSel.start, b = routeSel.dest;
+  let h = '<div class="sechead"><span class="sarr">▾</span>🧭 Route: ' +
+    escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") + "</div>";
+  h += '<div class="dstage" style="margin:6px 0">Abfahrt <input type="time" class="rttime" id="routeTime" value="' +
+    (routeSel.time || routeNowStr()) + '">' +
+    ' <button class="achip" data-rtnow2="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button>' +
+    ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶ Suchen</button></div>';
+  if (routeLoading) {
+    h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
+  } else if (routeSearchErr) {
+    h += '<div style="padding:8px 2px;color:#f87171">' + escapeHtml(routeSearchErr) + "</div>";
+  } else if (!routeCons.length) {
+    h += '<div style="padding:8px 2px;color:#94a3b8">Noch keine Suche – „▶ Suchen“ ruft die nächsten Verbindungen ab.</div>';
+  } else {
+    h += routeCons.slice(0, 3).map(c => {
+      let x = '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
+        "<span>" + c.dur + " min</span>" +
+        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
+      for (const sec of c.secs) {
+        if (sec.kind === "jny") {
+          x += '<div class="routesec"><span class="rcline">' + escapeHtml(sec.line) + "</span> Richtung " +
+            escapeHtml(sec.dir || "?") + " · ab " + escapeHtml(sec.from || "?") + " " + sec.dep +
+            " → an " + escapeHtml(sec.to || "?") + " " + sec.arr + "</div>";
+        } else {
+          x += '<div class="routesec">' + (sec.kind === "bike" ? "🚲" : "🚶") + " " + sec.mins + " min · " +
+            escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") + "</div>";
+        }
+      }
+      return x + "</div>";
+    }).join("");
+  }
+  routePanel.innerHTML = h;
+}
+routePanel.addEventListener("click", e => {
+  if (e.target.closest("[data-rtnow2]")) {
+    routeSel.time = "";
+    const ti = document.getElementById("routeTime");
+    if (ti) ti.value = routeNowStr();
+    return;
+  }
+  if (e.target.closest("[data-rtsearch]")) {
+    const ti = document.getElementById("routeTime");
+    if (ti) routeSel.time = ti.value || "";
+    routeRunSearch();
+  }
+});
+// --- Routen-Dialog (Start, Ziel, Abfahrtszeit) ---
+function routeFieldHTML(which) {
+  const sel = routeSel[which];
+  if (sel) {
+    return '<div class="routefield"><span class="routelab">📍 ' + escapeHtml(sel.label) + "</span>" +
+      '<button class="achip" data-rtclear="' + which + '" title="Auswahl löschen">✕</button></div>';
+  }
+  return '<div class="routepick">' +
+    '<button class="achip" data-rtpick="addr:' + which + '">🔍 Adresse</button>' +
+    '<button class="achip" data-rtpick="addrfav:' + which + '">⭐ Adresse</button>' +
+    '<button class="achip" data-rtpick="stop:' + which + '">🚏 Station</button>' +
+    '<button class="achip" data-rtpick="stopfav:' + which + '">⭐ Station</button></div>';
+}
+function routeDlgHTML() {
+  return '<div class="dlg">' +
+    '<div class="dtitle">🧭 Route planen</div>' +
+    '<label class="dlabel">Start</label>' + routeFieldHTML("start") +
+    '<label class="dlabel">Ziel</label>' + routeFieldHTML("dest") +
+    '<label class="dlabel">Abfahrtszeit</label>' +
+    '<div class="dstage"><input type="time" class="rttime" value="' + (routeSel.time || routeNowStr()) + '">' +
+      ' <button class="achip" data-rtnow="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button></div>' +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
+      '<button class="aok" data-rtgo="1">▶ Route suchen</button></div>' +
+    '</div>';
+}
+function openRouteDlg() {
+  const old = document.getElementById("routeDlg");
+  if (old) { old.remove(); return; }
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap"; wrap.id = "routeDlg";
+  wrap.innerHTML = routeDlgHTML();
+  wrap.addEventListener("change", e => {
+    if (e.target.classList.contains("rttime")) routeSel.time = e.target.value;
+  });
+  wrap.addEventListener("click", e => {
+    if (e.target === wrap) { wrap.remove(); return; }
+    const pick = e.target.closest("[data-rtpick]");
+    if (pick) { const parts = pick.dataset.rtpick.split(":"); openRoutePicker(parts[0], parts[1]); return; }
+    const clr = e.target.closest("[data-rtclear]");
+    if (clr) { routeSel[clr.dataset.rtclear] = null; wrap.innerHTML = routeDlgHTML(); return; }
+    if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
+    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest("[data-rtgo]")) {
+      if (!routeSel.start || !routeSel.dest) { setLocNote("🧭 Bitte Start und Ziel wählen."); return; }
+      wrap.remove();
+      routeTabOpen = true;
+      activateRouteTab();
+      routeRunSearch();
+    }
+  });
+  document.body.appendChild(wrap);
+}
+// --- Auswahl-Dialoge für Start/Ziel (Adresse, Favoriten, Station) ---
+function openRoutePicker(kind, which) {
+  const old = document.getElementById("routePickDlg");
+  if (old) { old.remove(); return; }
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap"; wrap.id = "routePickDlg";
+  const titles = { addr: "🔍 Adresse suchen", addrfav: "⭐ Adressfavoriten",
+                   stop: "🚏 Haltestelle suchen", stopfav: "⭐ Haltestellenfavoriten" };
+  wrap.innerHTML = '<div class="dlg"><div class="dtitle">' + titles[kind] + "</div>" +
+    ((kind === "addr" || kind === "stop")
+      ? '<input class="rtq" id="routeQ" placeholder="' +
+        (kind === "addr" ? "Adresse eingeben, z. B. Legienstraße 14, Kiel"
+                         : "Haltestelle eingeben – leer: nächste Haltestellen") + '">'
+      : "") +
+    '<div id="routePickList"></div>' +
+    '<div class="dbtns"><button class="acancel">Zurück</button></div></div>';
+  const listEl = () => wrap.querySelector("#routePickList");
+  let cur = [], timer = null;
+  function rows(entries) {
+    cur = entries;
+    if (!entries.length) {
+      listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Keine Treffer.</span></div>';
+      return;
+    }
+    listEl().innerHTML = entries.map((en, i) =>
+      '<div class="rtrow" data-rt="' + i + '" title="Klick: übernehmen">' +
+      '<span class="rtname">' + (en.star || "") + escapeHtml(en.label) + "</span>" +
+      (en.distTxt ? '<span class="rtsmall">' + en.distTxt + "</span>" : "") + "</div>").join("");
+  }
+  function pickEntry(en) {
+    routeSel[which] = { label: en.label, kind: en.kkind, key: en.key || null, name: en.name,
+      sn: en.sn || null, lat: en.lat, lon: en.lon, lid: null, locType: null };
+    routeBump(en.key);
+    wrap.remove();
+    const d = document.getElementById("routeDlg");
+    if (d) d.innerHTML = routeDlgHTML();
+    routeResolve(routeSel[which]).catch(() => {});   // Vorab-Auflösung; Fehler meldet die Suche
+  }
+  const pos = getPos();
+  if (kind === "addrfav" || kind === "stopfav") {
+    rows(routeFavList(kind === "addrfav" ? "addr" : "stop").map(it => ({
+      label: it.label, kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
+      lat: it.lat, lon: it.lon, star: "⭐ ",
+      distTxt: (pos && it.lat != null) ? formatDist(dist(pos, it)) : "" })));
+  } else if (kind === "stop") {
+    const input = wrap.querySelector("#routeQ");
+    const upd = () => {
+      const ql = (input.value || "").trim().toLowerCase();
+      let ss = stops.filter(st => !ql || st.name.toLowerCase().includes(ql));
+      if (!ql && pos) ss = ss.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
+      else ss = ss.slice().sort((a, b) =>
+        (a.name.toLowerCase().startsWith(ql) ? 0 : 1) - (b.name.toLowerCase().startsWith(ql) ? 0 : 1));
+      rows(ss.slice(0, 8).map(st => ({ label: st.name, kkind: "stop", key: null, name: st.name,
+        sn: st.shortName, lat: st.lat, lon: st.lon,
+        distTxt: (pos && st.lat != null) ? formatDist(dist(pos, st)) : "" })));
+    };
+    input.addEventListener("input", upd);
+    upd();
+  } else {   // addr: Favoriten-Treffer + Nominatim
+    const input = wrap.querySelector("#routeQ");
+    const upd = async () => {
+      const qv = (input.value || "").trim();
+      if (qv.length < 3) {
+        cur = [];
+        listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Mindestens 3 Zeichen eingeben …</span></div>';
+        return;
+      }
+      listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Suche …</span></div>';
+      const words = qv.toLowerCase().split(/\s+/).filter(Boolean);
+      let found = addrFavs
+        .filter(f => words.every(w => (f.name || "").toLowerCase().includes(w) || (f.label || "").toLowerCase().includes(w)))
+        .map(f => ({ label: f.label || f.name, kkind: "addr", key: "addr:" + f.name,
+          name: f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
+      try {
+        const res = await apiFetch("nom",
+          NOMINATIM + "?q=" + encodeURIComponent(qv) + "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+        if (res.ok) {
+          const r = await res.json();
+          found = found.concat((Array.isArray(r) ? r : []).map(x => {
+            const nm = String(x.display_name || "").split(",").map(t2 => t2.trim()).filter(Boolean);
+            const label = nm.slice(0, 3).join(", ");
+            return { label: label, kkind: "addr", key: null, name: label,
+              lat: Number(x.lat), lon: Number(x.lon) };
+          }));
+        }
+      } catch (e) {}
+      if ((input.value || "").trim() === qv) rows(found);   // nur bei noch aktuellem Text
+    };
+    input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(upd, 350); });
+    listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Adresse eingeben – gespeicherte Favoriten erscheinen zuerst.</span></div>';
+  }
+  wrap.addEventListener("click", e => {
+    if (e.target === wrap || e.target.closest(".acancel")) { wrap.remove(); return; }
+    const row = e.target.closest("[data-rt]");
+    if (row) { const en = cur[Number(row.dataset.rt)]; if (en) pickEntry(en); }
+  });
+  document.body.appendChild(wrap);
+}
 
 // ---------- App-Feature-Handshake: Seite meldet, welche App-Funktionen sie nutzt ----------
 // Die App liest denselben Katalog aus dem <!-- CSLK-BRIDGE: … -->-Marker im <head> und
@@ -5286,7 +5683,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.14 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
