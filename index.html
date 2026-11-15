@@ -54,7 +54,7 @@
     #apiInd .gpsbtn { padding: 2px 7px; font-size: 0.85rem; }
     #apiInd .accbar { gap: 1px; }
     #apiInd .accbar i { width: 4px; height: 8px; }
-    #alarmList, #addrFavPanel, #stopFavPanel { top: 42px; right: 6px; }
+    #alarmList, #fhList, #addrFavPanel, #stopFavPanel { top: 42px; right: 6px; }
   }
   /* Adresssuche: Knöpfe wie in der Haltestellensuche im Eingabefeld (gleiche Größe und Position) */
   #posBtn { position: absolute; top: 50%; transform: translateY(-50%); flex: none;
@@ -357,12 +357,23 @@
     border-radius: 999px; padding: 3px 8px; background: rgba(245,158,11,.12); }
   #alarmInd::before { display: none; }
   #alarmInd[hidden] { display: none; }
+  /* 🏠 Finde-nach-Hause-Status: gleiche Größe wie ⏰, Normalfarbe = Blau des
+     großen „nach Hause“-Knopfs; ohne Elemente ausgegraut (wie ⏰ ohne Wecker) */
+  #fhInd { --c: #4d8fd6; color: #4d8fd6; font-size: 1rem; border: 1px solid #2f6fb3;
+    border-radius: 999px; padding: 3px 8px; background: rgba(77,143,214,.12); }
+  #fhInd::before { display: none; }
+  #fhInd[hidden] { display: none; }
+  #alarmInd.empty, #fhInd.empty { color: #94a3b8; border-color: #334155;
+    background: transparent; filter: grayscale(1); opacity: 0.55; }
+  #fhList { position: fixed; top: 42px; right: 12px; z-index: 52; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
+    min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #tabsbar[hidden] { display: none; }
   #alarmList { position: fixed; top: 42px; right: 12px; z-index: 52; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
-  #alarmList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
-  #alarmList .alrow:hover { background: #273449; border-radius: 6px; }
+  #alarmList .alrow, #fhList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  #alarmList .alrow:hover, #fhList .alrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
     border-radius: 6px; padding: 2px 7px; font-size: 0.75rem; }
@@ -408,13 +419,15 @@
 <div id="apiInd">
   <button class="gpsbtn" id="locBtn" title="GPS-Status: ein-/ausschalten, Genauigkeit einsehen">◎</button>
   <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
-  <button class="ind" id="alarmInd" hidden title="Gestellte Wecker anzeigen, deaktivieren oder löschen">⏰</button>
+  <button class="ind" id="alarmInd" title="Gestellte Wecker: Zahl = Anzahl, Klick zeigt die Weckerliste (anzeigen, deaktivieren, löschen)">⏰</button>
+  <button class="ind" id="fhInd" title="Finde nach Hause: Zahl = aktive Hinweise, Klick zeigt die Hinweisliste; ausgegraut = gerade keine">🏠</button>
   <span class="ind" data-ind="db" title="Deutsche Bahn / NAH.SH (Zugabfahrten)">DB</span>
   <span class="ind" data-ind="kvg" title="KVG (Busabfahrten)">KVG</span>
   <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
   <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
 </div>
 <div id="alarmList" hidden></div>
+<div id="fhList" hidden></div>
 <div id="apiStats" hidden></div>
 <div id="gpsDlg" hidden>
   <div class="accbox">
@@ -3217,10 +3230,13 @@ async function fhScan() {
 // Sammel-Benachrichtigung regelmäßig aktualisieren (auch ohne neuen Fund).
 const fhCandidates = new Map();   // candKey -> {line, dir, station, clock, los, until}
 function updateFhNotification() {
-  if (!window.KvgNative) return;
-  if (fhOff) { nativeCall("cancelNotify", "fh-scan"); return; }   // global aus: Nachricht weg
+  // Abgelaufene Hinweise rausfügen – auch im Browser: Das 🏠-Symbol der
+  // Statusleiste zählt nur aktive Hinweise
   const now = Date.now();
   for (const [k, c] of fhCandidates) if (c.until < now) fhCandidates.delete(k);
+  renderFhInd();
+  if (!window.KvgNative) return;
+  if (fhOff) { nativeCall("cancelNotify", "fh-scan"); return; }   // global aus: Nachricht weg
   if (!fhCandidates.size) { nativeCall("cancelNotify", "fh-scan"); return; }
   const arr = [...fhCandidates.values()];
   const title = "🏠 Finde nach Hause: " + arr.length +
@@ -3309,14 +3325,18 @@ async function fhNotify(tgt, st, dep, aMin, bestS) {
       (m2 != null ? " · " + formatDist(m2) + " Weg (~" + w2 + " min" + (r2 ? "" : ", geschätzt") + ")" : "") + "</div>" : "");
   // Android: EINE Sammel-Benachrichtigung für alle Finde-nach-Hause-Funde,
   // laufend aktualisiert (statt einer neuen Nachricht je Fahrt).
+  // Kandidat merken: für die Android-Sammel-Benachrichtigung UND für das
+  // 🏠-Symbol der Statusleiste (aktive Hinweise zählen auch im Browser)
+  const candKey = tgt.id + "|" + dep.line + "→" + dep.direction + "|" + dep.tripId + "|" + st.shortName;
+  fhCandidates.set(candKey, {
+    line: dep.line, dir: dep.direction, station: st.name, clock: depClock,
+    los: losMin, until: (aMin + 5) * 60000 + new Date().setHours(0, 0, 0, 0)
+  });
   if (window.KvgNative) {
     if (!fhNotifAsked) { fhNotifAsked = true; nativeCall("requestNotifPerm"); }
-    const candKey = tgt.id + "|" + dep.line + "→" + dep.direction + "|" + dep.tripId + "|" + st.shortName;
-    fhCandidates.set(candKey, {
-      line: dep.line, dir: dep.direction, station: st.name, clock: depClock,
-      los: losMin, until: (aMin + 5) * 60000 + new Date().setHours(0, 0, 0, 0)
-    });
     updateFhNotification();
+  } else {
+    renderFhInd();
   }
   // Dialog mit Mute-Chips im Stil der Abfahrtsanzeigen
   const wrap = document.createElement("div");
@@ -3975,6 +3995,8 @@ function starHTML(sn) {
 // auf einen Eintrag wechselt in den Reiter des Weckers. Ohne Wecker unsichtbar.
 const alarmInd = document.getElementById("alarmInd");
 const alarmList = document.getElementById("alarmList");
+const fhInd = document.getElementById("fhInd");
+const fhList = document.getElementById("fhList");
 function alarmRingEpoch(a) {
   if (a.leadMin == null) return null;
   const trip = tripById(a.tripId);
@@ -4052,9 +4074,15 @@ function renderAlarmInd() {
     }
   }
   syncGeofences();   // native Geofences für Distanz-Wecker (Hintergrund) aktualisieren
-  alarmInd.hidden = !alarms.size;
+  // ⏰ in der Statusleiste: immer sichtbar, ausgegraut ohne Wecker, mit Zahl
+  // (inkl. läutender, bereits ausgelöster) in der normalen Farbe ab 1 Wecker
+  alarmInd.classList.toggle("empty", !entries.length);
+  alarmInd.textContent = "⏰" + (entries.length ? " " + entries.length : "");
   if (alarmList.hidden) return;
-  if (!alarms.size) { alarmList.hidden = true; return; }
+  if (!entries.length) {
+    alarmList.innerHTML = '<div class="alrow"><span class="afsname dim">Keine Wecker gestellt.</span></div>';
+    return;
+  }
   alarmList.innerHTML = entries.map(en => {
     const isDist = en.a.leadMin == null;
     let btns = "";
@@ -4073,11 +4101,45 @@ function renderAlarmInd() {
 alarmInd.addEventListener("click", e => {
   e.stopPropagation();
   alarmList.hidden = !alarmList.hidden;
+  if (!alarmList.hidden) fhList.hidden = true;   // nur eine der beiden Info-Listen
   renderAlarmInd();
 });
 document.addEventListener("click", e => {
   if (!alarmList.hidden && !e.target.closest("#alarmList") && !e.target.closest("#alarmInd"))
     alarmList.hidden = true;
+});
+
+// ---------- 🏠 Finde nach Hause in der Statusleiste ----------
+// Gleiche Mechanik wie ⏰: ausgegraut ohne aktive Hinweise, mit Zahl und in
+// normaler (blauer) Farbe, sobald ein Hinweis aktiv ist. Klick zeigt die Liste
+// der aktiven Hinweise (Linie, Richtung, Station, Uhrzeit, „losgehen“).
+function renderFhInd() {
+  const n = fhCandidates.size;
+  fhInd.classList.toggle("empty", !n);
+  fhInd.textContent = "🏠" + (n ? " " + n : "");
+  if (fhList.hidden) return;
+  if (fhOff) {
+    fhList.innerHTML = '<div class="alrow"><span class="afsname dim">Finde nach Hause ist global aus (🏠-Knopf „nach Hause“ unten).</span></div>';
+    return;
+  }
+  if (!n) {
+    fhList.innerHTML = '<div class="alrow"><span class="afsname dim">Gerade keine aktiven Finde-nach-Hause-Hinweise.</span></div>';
+    return;
+  }
+  fhList.innerHTML = [...fhCandidates.values()]
+    .sort((a, b) => (a.los || 0) - (b.los || 0))
+    .map(c => '<div class="alrow"><span class="afsname">🏠 ' + escapeHtml(c.line) + " → " + escapeHtml(c.dir) +
+      " · " + escapeHtml(c.station) + " " + escapeHtml(c.clock) + " Uhr (" +
+      (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")</span></div>").join("");
+}
+fhInd.addEventListener("click", e => {
+  e.stopPropagation();
+  fhList.hidden = !fhList.hidden;
+  if (!fhList.hidden) alarmList.hidden = true;   // nur eine der beiden Info-Listen
+  renderFhInd();
+});
+document.addEventListener("click", e => {
+  if (!fhList.hidden && !e.target.closest("#fhList") && !e.target.closest("#fhInd")) fhList.hidden = true;
 });
 alarmList.addEventListener("click", e => {
   const mute = e.target.closest("[data-amute]");
@@ -5131,6 +5193,8 @@ document.getElementById("stopClearBtn").addEventListener("click", () => {
 // Taster-Zustand/-Beschriftung initialisieren; Beschriftungen im 15-s-Takt auffrischen
 renderBigToggles();
 renderBigBtns();
+renderAlarmInd();   // ⏰ der Statusleiste initial füllen (Zahl, Farbe, Geofences)
+renderFhInd();      // 🏠 der Statusleiste initial füllen
 setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffrischen
 
 </script>
@@ -5141,7 +5205,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.9 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.10 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
