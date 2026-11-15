@@ -6,6 +6,9 @@ Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuch
 
 ## Version
 
+**v1.1.14** – GPS-Dialog entschärft und „auch in … min“ bei Abfahrten: Im GPS-Dialog steht rechts neben dem Ein-/Aus-Knopf kein Zustands-Hinweis mehr („GPS an/aus (läuft laufend)“); nur wenn GPS aus ist und noch eine letzte Position vorliegt, zeigt dort die Kurzform „nutzt letzten Standort weiter“. Die Meldung „GPS aus – nutze letzten Standort weiter (Liste bleibt nach Entfernung sortiert).“ ist ersatzlos entfallen. In der Abfahrtenliste steht unter jeder Zeile jetzt „auch in vv, ww, xx, yy, zz min“ – die Folgefahrten derselben Linie in dieselbe Richtung, die noch nicht abgefahren sind (bis zu fünf, mit deren geladenen Soll-/Ist-Zeiten), ohne die in der Zeile darüber angezeigte Verbindung.
+
+
 **v1.1.13** – 🏠-Einstellungen in der Statusliste und Systemnachrichten als Liste: Die Liste hinter dem 🏠-Symbol der Statusleiste zeigt unter den aktiven Hinweisen jetzt auch die 🏠-Einstellungen jedes Ziels (Adress- und Haltestellenfavoriten: Umkreis, Losgeh-Zeitfenster, Ziel-Umkreis, aktiv/aus) – über ✎ lässt sich der ursprüngliche 🏠-Dialog direkt öffnen und ändern, über ✗ wird Finde nach Hause für das Ziel komplett gelöscht. In der App stellen die Systemnachrichten der gestellten Wecker und der Finde-nach-Hause-Hinweise alle Einträge jetzt als Liste dar (eine Zeile je Wecker bzw. Hinweis, laufend aktualisiert, im Inbox-Listenstil) statt als zusammengesetzten Einzeiler. Web-Änderung plus App-Update (versionCode 37; die Liste in den Systemnachrichten profitiert vom neuen Inbox-Stil, ohne Update zeigt die alte App die Zeilen bereits mehrzeilig).
 
 

@@ -229,6 +229,8 @@
   .bl .lupe:hover { transform: scale(1.2); }
   .bl.soon { color: #fbbf24; }
   .bl.missed { color: #f87171; }
+  .blwrap { display: block; }
+  .blwrap .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 3px 8px; white-space: nowrap; }
 
   /* Panels (Station / einzelne Abfahrt) unter der Suche */
   .panel { background: #1e293b; border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
@@ -434,7 +436,7 @@
     <div><b>GPS-Ortung</b></div>
     <div class="gpsdlg-row">
       <button class="gpsbtn" id="gpsDlgBtn" title="GPS ein- bzw. ausschalten">◎</button>
-      <span id="gpsDlgState">GPS aus</span>
+      <span id="gpsDlgState" hidden></span>
       <span class="accbar" id="gpsDlgBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
     </div>
     <div>Aktuelle Genauigkeit: <b id="gpsDlgAcc">–</b></div>
@@ -830,11 +832,7 @@ function gpsStop() {
   gpsState = "off";
   renderGpsBtn();
   renderAcc();
-  if (!addrPos) {
-    setLocNote(myPos
-      ? "GPS aus – nutze letzten Standort weiter (Liste bleibt nach Entfernung sortiert)."
-      : "GPS aus – Liste alphabetisch. ◎ zum Aktivieren.");
-  }
+  // keine Meldung mehr: Der Kurz-Hinweis steht im GPS-Dialog neben dem Ein-/Aus-Knopf
 }
 
 function onPos(pos) {
@@ -926,8 +924,12 @@ function renderGpsBtn() {
   }
   if (gpsDlgBtn) {
     gpsDlgBtn.textContent = gpsState === "on" ? "◉ GPS aus" : gpsState === "searching" ? "◎ … abbrechen" : "◎ GPS ein";
-    gpsDlgState.textContent = gpsState === "on" ? "GPS an (läuft laufend)"
-      : gpsState === "searching" ? "GPS wird eingeschaltet …" : "GPS aus";
+    // kein Zustands-Hinweis mehr; nur die Kurzform, wenn GPS aus ist und noch
+    // eine letzte Position vorliegt (Liste nutzt sie weiter)
+    if (gpsState === "off" && myPos) {
+      gpsDlgState.hidden = false;
+      gpsDlgState.textContent = "nutzt letzten Standort weiter";
+    } else gpsDlgState.hidden = true;
   }
   updateGpsDlg();
 }
@@ -4714,12 +4716,28 @@ function busLinesHTML(v) {
     const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
     const text = d.direction;
     const bLink = escapeHtml(v.stop.shortName) + "~" + escapeHtml(d.tripId);
+    // spätere Fahrten derselben Linie und Richtung (noch nicht abgefahren, ohne
+    // die oben angezeigte): "auch in vv, ww, … min" – geplante/Ist-Daten der
+    // geladenen Abfahrten, bis zu 5 Folgefahrten
+    const nexts = [];
+    for (const x of v.deps) {
+      if (x === d || x.line !== d.line || x.direction !== d.direction) continue;
+      const xrel = x.actualRelativeTime - ageSec;
+      if (xrel <= rel) continue;   // nur spätere Fahrten
+      const xl = Math.round((xrel - walkSec) / 60);
+      if (xl < 0) continue;        // bereits abgefahren: nicht mehr nennen
+      nexts.push(xl);
+    }
+    nexts.sort((a, b) => a - b);
+    const nextTxt = nexts.length
+      ? '<div class="subinfo">auch in ' + nexts.slice(0, 5).join(", ") + " min</div>"
+      : "";
     out.push({
-      html: '<div class="' + cls + '" data-bus="' + bLink + '">' +
+      html: '<div class="blwrap"><div class="' + cls + '" data-bus="' + bLink + '">' +
         '<span class="dl blink" data-buslink="' + bLink + '">' + escapeHtml(d.line) + '</span>' +
         (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
         '<span class="mqwrap"><span class="mqi blink" data-buslink="' + bLink + '">' + escapeHtml(text) + "</span></span>" +
-        '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>",
+        '<span class="btime">' + clock + " · los in " + losMin + ' min</span></div>' + nextTxt + "</div>",
       losMin
     });
   }
@@ -5268,7 +5286,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.13 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.14 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
