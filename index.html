@@ -508,7 +508,7 @@
     <div class="searchbox">
       <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
       <button class="gpsbtn" id="gpsGoBtn" title="GPS für die Haltestellensuche: Liste nach GPS-Entfernung sortieren (leuchtet grün), erneuter Klick oder Texteingabe deaktiviert">GPS</button>
-      <button class="ddbtn" id="listModeBtn" title="Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 15 Minuten, gemeinsam nach Fußweg sortiert)" aria-label="Listenansicht wechseln">☰</button>
+      <button class="ddbtn" id="listModeBtn" title="Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 30 Minuten, gemeinsam nach Fußweg sortiert)" aria-label="Listenansicht wechseln">☰</button>
       <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
       <button class="addrclr stopclr" id="stopClearBtn" hidden title="Suchfeld leeren – steht die ausgewählte Station drin, wird ihr Reiter geschlossen (mit Wecker-Rückfrage)">✕</button>
       <div class="suggestions" id="suggestions" hidden></div>
@@ -2056,7 +2056,7 @@ const FLAT_WALK_MAX_MIN = 15;      // Laufweite in Gehminuten
 const FLAT_AIR_FACTOR = 1.3;      // Luftlinie × Faktor als Höchstwert für Kandidaten
 const FLAT_MAX_STOPS = 20;        // Kandidaten vor der Fußweg-Abfrage (nächste zuerst)
 const FLAT_REFRESH_MS = 45000;    // Abfahrten im Flachmodus so frisch halten
-const FLAT_DEP_MAX_MIN = 15;      // nur Abfahrten der nächsten 15 Minuten zeigen
+const FLAT_DEP_MAX_MIN = 30;      // nur Abfahrten der nächsten 30 Minuten zeigen
 let listMode = "tree";            // "tree" = Hierarchie nach Haltestellen, "flat" = Laufweite
 let flatBusy = false, flatTs = 0;
 const listModeBtn = document.getElementById("listModeBtn");
@@ -2065,7 +2065,7 @@ listModeBtn.addEventListener("click", () => {
   listModeBtn.textContent = listMode === "tree" ? "☰" : "⏱";
   listModeBtn.classList.toggle("active", listMode === "flat");
   listModeBtn.title = listMode === "tree"
-    ? "Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 15 Minuten, gemeinsam nach Fußweg sortiert)"
+    ? "Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 30 Minuten, gemeinsam nach Fußweg sortiert)"
     : "Listenansicht wechseln: zurück zur Hierarchie nach Haltestellen";
   searchIndex = -1;
   updateSuggestions();
@@ -2126,7 +2126,7 @@ async function buildFlatList() {
       depCache.delete(c.s.shortName);
       const [deps, platforms] = await Promise.all([getDepartures(c.s.shortName), loadPlatforms(c.s.shortName)]);
       for (const d of (deps || [])) {
-        if (d.actualRelativeTime == null || d.actualRelativeTime > FLAT_DEP_MAX_MIN * 60) continue;   // nur nächste 15 Minuten
+        if (d.actualRelativeTime == null || d.actualRelativeTime > FLAT_DEP_MAX_MIN * 60) continue;   // nur nächste 30 Minuten
         rows.push({
           sn: c.s.shortName, name: c.s.name, footM: c.footM,
           tripId: d.tripId, line: d.line, direction: d.direction,
@@ -2397,24 +2397,17 @@ try { depShowAll = localStorage.getItem("kvg-depall") === "1"; } catch (e) {}
 function renderStationPanel() {
   if (!currentStop) { stationPanel.hidden = true; stationPanel.innerHTML = ""; return; }
   const v = stopViews.get(currentStop.shortName);
-  const pos = getPos();
-  let meta;
-  if (v && v.meters) {
-    const pre = isEst(currentStop.shortName) ? "~" : "";
-    meta = pre + formatDist(v.meters) + " · " + pre +
-      Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60)) + " min";
-  } else if (pos) {
-    const air = dist(pos, currentStop) * 1.3;
-    meta = "~" + formatDist(air) + " · ~" +
-      Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)";
-  } else {
-    meta = "";
-  }
-  // Titelleiste des Bereichs; nur der aufgeklappte Bereich wird aktualisiert,
-  // der zugeklappte zeigt den eingefrorenen Stand
-  let inner = '<div class="sechead" data-ssec="1"><span class="sarr">' +
+  // Kopfzeile des Bereichs; nur der aufgeklappte Bereich wird aktualisiert,
+  // der zugeklappte zeigt den eingefrorenen Stand. Die frühere separate
+  // Stationsansicht (Name, Entfernung, Route-Icon, Stern, ↻) ist weg – der
+  // Stationsname steht nur noch hier, dahinter Favoritenstern und
+  // Aktualisieren, dann der ⏱/🌐-Umschalter.
+  const head = '<div class="sechead" data-ssec="1"><span class="sarr">' +
     (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
     escapeHtml(currentStop.name) +
+    starHTML(currentStop.shortName) +
+    '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
+      '" title="Diese Haltestelle neu abfragen">↻</button>' +
     ' <button class="depann' + (depShowAll ? " all" : "") + '" data-depann="1" title="' +
       (depShowAll
         ? "Alle Abfahrten der KVG-Live-Ansicht werden angezeigt (auch nicht erreichbare, rot) – Klick: nur erreichbare"
@@ -2423,7 +2416,7 @@ function renderStationPanel() {
     (stationPanelOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') +
     "</div>";
   if (!stationPanelOpen) {
-    inner += stationPanelCache;
+    const inner = head + stationPanelCache;
     if (stationPanel.dataset.last !== inner) {
       stationPanel.dataset.last = inner;
       stationPanel.innerHTML = inner;
@@ -2431,13 +2424,7 @@ function renderStationPanel() {
     stationPanel.hidden = false;
     return;
   }
-  inner +=
-    '<div class="phead"><span class="pname">' + escapeHtml(currentStop.name) + "</span>" +
-    '<span class="pmeta">' + meta + "</span>" +
-    routeIconHTML(getPos(), currentStop, "Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)") +
-    starHTML(currentStop.shortName) +
-    '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
-      '" title="Diese Haltestelle neu abfragen">↻</button></div>';
+  let body = "";
   if (v && v.fetched) {
     const lines = busLinesHTML(v);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
@@ -2446,13 +2433,14 @@ function renderStationPanel() {
       return;
     }
     if (!lines.length && v.deps.length) {
-      inner += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 🌐-Knopf oben zeigt alle Abfahrten.</small>';
+      body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 🌐-Knopf oben zeigt alle Abfahrten.</small>';
     }
-    inner += lines.map(l => l.html).join("");
+    body += lines.map(l => l.html).join("");
   } else {
-    inner += '<small class="rowinfo dim">Daten werden geladen …</small>';
+    body += '<small class="rowinfo dim">Daten werden geladen …</small>';
   }
-  stationPanelCache = inner.slice(inner.indexOf('<div class="phead"'));   // Körper fürs Einfrieren
+  stationPanelCache = body;   // Körper fürs Einfrieren (Abfahrtszeilen ohne Kopf)
+  const inner = head + body;
   if (stationPanel.dataset.last !== inner) {
     stationPanel.dataset.last = inner;
     stationPanel.innerHTML = inner;
@@ -3806,6 +3794,8 @@ stationPanel.addEventListener("click", e => {
     renderPanels();
     return;
   }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) { refetchStop(ref.dataset.ref, true); return; }   // ↻ sitzt jetzt in der Kopfzeile
   const ssec = e.target.closest("[data-ssec]");
   if (ssec) {
     stationPanelOpen = !stationPanelOpen;   // zugeklappt = eingefroren
@@ -3819,8 +3809,6 @@ stationPanel.addEventListener("click", e => {
     selectTrip(lSn, lId);       // Fahrtverlauf (beide Blöcke aufgetaut)
     return;
   }
-  const ref = e.target.closest("[data-ref]");
-  if (ref) { refetchStop(ref.dataset.ref, true); return; }
   const bus = e.target.closest("[data-bus]");
   if (bus) {
     const [sn, tripId] = bus.dataset.bus.split("~");
@@ -5205,7 +5193,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.10 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.11 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
