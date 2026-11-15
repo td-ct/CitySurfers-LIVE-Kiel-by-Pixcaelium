@@ -3252,7 +3252,7 @@ function updateFhNotification() {
   const title = "🏠 Finde nach Hause: " + arr.length +
     (arr.length === 1 ? " mögliche Fahrt" : " mögliche Fahrten");
   const text = arr.map(c => "Linie " + c.line + " → " + c.dir + ", " + c.station +
-    " " + c.clock + " Uhr (" + (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")").join(" · ");
+    " " + c.clock + " Uhr (" + (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")").join("\n");
   nativeCall("notify", "fh-scan", title, text, "hinweise");
 }
 setInterval(() => {
@@ -3442,7 +3442,7 @@ function openFhDlg(kind, id) {
         nativeCall("requestNotifPerm");   // Freigabe für System-Hinweise (falls noch nicht erteilt)
       }
       try { wrap.remove(); } catch (err) {}
-      renderAddrFavs(); renderStopFavs();
+      renderAddrFavs(); renderStopFavs(); renderFhInd();   // offene 🏠-Statusliste aktualisieren
       setLocNote(cfg.on ? "🏠 Finde-nach-Hause für „" + name + "“ aktiviert." : "🏠 Finde-nach-Hause für „" + name + "“ deaktiviert.");
       if (cfg.on) fhScan();
     }
@@ -4081,7 +4081,7 @@ function renderAlarmInd() {
         key: "wecker-gesamt",
         title: "⏰ " + entries.length + (entries.length === 1 ? " Wecker" : " Wecker") +
           (sorted[0].a.name ? " · nächster: " + sorted[0].a.name : ""),
-        text: entries.map(en => en.a.name + " – " + en.cond + en.when).join(" · "),
+        text: entries.map(en => en.a.name + " – " + en.cond + en.when).join("\n"),
         tab: sorted[0].a.tabSn || "",
         actions: acts
       }]));
@@ -4134,19 +4134,40 @@ function renderFhInd() {
   fhInd.classList.toggle("empty", !n);
   fhInd.textContent = "🏠" + (n ? " " + n : "");
   if (fhList.hidden) return;
-  if (fhOff) {
-    fhList.innerHTML = '<div class="alrow"><span class="afsname dim">Finde nach Hause ist global aus (🏠-Knopf „nach Hause“ unten).</span></div>';
-    return;
+  let html = "";
+  if (fhOff)
+    html += '<div class="alrow"><span class="afsname dim">Finde nach Hause ist global aus (🏠-Knopf „nach Hause“ unten).</span></div>';
+  if (n)
+    html += '<div class="alrow"><span class="afsname dim">Aktive Hinweise:</span></div>' +
+      [...fhCandidates.values()]
+      .sort((a, b) => (a.los || 0) - (b.los || 0))
+      .map(c => '<div class="alrow"><span class="afsname">🏠 ' + escapeHtml(c.line) + " → " + escapeHtml(c.dir) +
+        " · " + escapeHtml(c.station) + " " + escapeHtml(c.clock) + " Uhr (" +
+        (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")</span></div>").join("");
+  else if (!fhOff)
+    html += '<div class="alrow"><span class="afsname dim">Gerade keine aktiven Finde-nach-Hause-Hinweise.</span></div>';
+  // Einstellungen pro Ziel (Adress- und Haltestellenfavoriten): aufgelistet,
+  // über ✎ im ursprünglichen 🏠-Dialog änderbar, über ✗ löschbar
+  const sets = [];
+  addrFavs.forEach((f, i) => { if (f.fh) sets.push({ kind: "addr", id: i, name: f.label || f.name, cfg: f.fh }); });
+  for (const sn in fhStopCfg) {
+    const c = fhStopCfg[sn]; if (!c) continue;
+    const st = stops.find(x => x.shortName === sn);
+    sets.push({ kind: "stop", id: sn, name: st ? st.name : sn, cfg: c });
   }
-  if (!n) {
-    fhList.innerHTML = '<div class="alrow"><span class="afsname dim">Gerade keine aktiven Finde-nach-Hause-Hinweise.</span></div>';
-    return;
-  }
-  fhList.innerHTML = [...fhCandidates.values()]
-    .sort((a, b) => (a.los || 0) - (b.los || 0))
-    .map(c => '<div class="alrow"><span class="afsname">🏠 ' + escapeHtml(c.line) + " → " + escapeHtml(c.dir) +
-      " · " + escapeHtml(c.station) + " " + escapeHtml(c.clock) + " Uhr (" +
-      (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")</span></div>").join("");
+  html += '<div class="alrow"><span class="afsname dim">Einstellungen (pro Ziel):</span></div>';
+  if (!sets.length)
+    html += '<div class="alrow"><span class="afsname dim">Noch kein Ziel eingerichtet – 🏠 bei den Favoriten antippen.</span></div>';
+  else
+    html += sets.map(t => {
+      fhDefaults(t.cfg);
+      return '<div class="alrow" title="🏠-Einstellungen für „' + escapeHtml(t.name) + '“">' +
+        '<span class="afsname">' + (t.cfg.on ? "🏠 " : "🏠 (aus) ") + escapeHtml(t.name) +
+        " · bis " + t.cfg.posR + " m · spätestens in " + t.cfg.losWin + " min los · Ziel " + t.cfg.tgtR + " m</span>" +
+        '<button class="afbtn" data-fhedit="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Einstellungen ändern (öffnet den 🏠-Dialog)">✎</button>' +
+        '<button class="afbtn" data-fhdel="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Finde nach Hause für dieses Ziel löschen">✗</button></div>';
+    }).join("");
+  fhList.innerHTML = html;
 }
 fhInd.addEventListener("click", e => {
   e.stopPropagation();
@@ -4156,6 +4177,32 @@ fhInd.addEventListener("click", e => {
 });
 document.addEventListener("click", e => {
   if (!fhList.hidden && !e.target.closest("#fhList") && !e.target.closest("#fhInd")) fhList.hidden = true;
+});
+fhList.addEventListener("click", e => {
+  const edit = e.target.closest("[data-fhedit]");
+  if (edit) {
+    e.stopPropagation();
+    const p = edit.dataset.fhedit.split(":");
+    openFhDlg(p[0], p[0] === "addr" ? Number(p[1]) : p[1]);   // ursprünglicher 🏠-Dialog
+    return;
+  }
+  const del = e.target.closest("[data-fhdel]");
+  if (del) {
+    e.stopPropagation();
+    const p = del.dataset.fhdel.split(":");
+    let name = "";
+    if (p[0] === "addr") {
+      const f = addrFavs[Number(p[1])];
+      if (f) { name = f.label || f.name; delete f.fh; saveAddrFavs(); renderAddrFavs(); }
+    } else {
+      const st = stops.find(x => x.shortName === p[1]);
+      name = st ? st.name : p[1];
+      delete fhStopCfg[p[1]];
+      saveFhStopCfg(); renderStopFavs();
+    }
+    setLocNote("🏠 Finde-nach-Hause für „" + name + "“ gelöscht.");
+    renderFhInd();   // Liste sofort ohne den gelöschten Eintrag neu aufbauen
+  }
 });
 alarmList.addEventListener("click", e => {
   const mute = e.target.closest("[data-amute]");
@@ -5221,7 +5268,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.12 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.13 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
