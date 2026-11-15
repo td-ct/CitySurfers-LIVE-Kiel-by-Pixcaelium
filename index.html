@@ -336,6 +336,11 @@
   .routecon .rcdur { color: #7dd3fc; font-weight: 600; }
   .routesec { font-size: .85rem; color: #cbd5e1; padding: 2px 0 2px 6px; }
   .routesec .rcline { font-weight: 600; color: #7dd3fc; }
+  .routecon[data-rcopen] { cursor: pointer; }
+  .routecon.on { border-color: #38bdf8; }
+  .routecon .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
+  .routecon .rchint { color: #7dd3fc; }
+  .rtsec { cursor: pointer; }
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
     border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
   .pagefoot { margin: 14px 8px 20px; padding: 10px; font-size: .78rem; }
@@ -411,6 +416,15 @@
   #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
   #tabsbar .tabx:hover { color: #f87171; }
   #tabsbar .tabal { color: #f59e0b; font-size: 0.95em; }
+  .subtabbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+  .subtab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #1e3a5f;
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap;
+    color: #cbd5e1; background: #0f172a; font-size: 0.8rem; user-select: none; }
+  .subtab.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
+  .subtab .stt { font-weight: 700; }
+  .subtab .tabx { background: none; border: none; color: #64748b; cursor: pointer;
+    padding: 0 0 0 2px; font-size: 0.75rem; }
+  .subtab .tabx:hover { color: #f87171; }
   #apiStats { position: fixed; top: 42px; right: 12px; z-index: 56; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
     min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
@@ -2281,7 +2295,8 @@ let activeTab = -1;
 // Fahrtverlauf unabhängig vom aktiven Reiter finden (für Wecker in Hintergrund-Reitern)
 function tripById(tripId) {
   if (currentTrip && currentTrip.tripId === tripId) return currentTrip;
-  for (const t of tabs) if (t.trip && t.trip.tripId === tripId) return t.trip;
+  for (const t of tabs) if (t.trips)
+    for (const b of t.trips) if (b.trip && b.trip.tripId === tripId) return b.trip;
   return null;
 }
 function tabAlarmCount(sn) {
@@ -2313,8 +2328,8 @@ function saveActiveTab() {
   const t = tabs[activeTab];
   if (!t) return;
   t.sn = currentStop ? currentStop.shortName : t.sn;
-  t.bus = currentBus;
-  if (currentTrip && currentBus && currentTrip.tripId === currentBus.tripId) t.trip = currentTrip;
+  // Unter-Reiter der Fahrten: currentBus ist die Referenz auf t.trips[t.activeTrip],
+  // currentTrip hängt an currentBus.trip – beides bleibt dadurch im Reiter gesichert
 }
 function activateTab(i, refetch) {
   saveActiveTab();
@@ -2323,8 +2338,11 @@ function activateTab(i, refetch) {
   const t = tabs[i];
   const stop = t ? stops.find(s => s.shortName === t.sn) : null;
   currentStop = stop || null;
-  currentBus = t ? (t.bus || null) : null;
-  currentTrip = t ? (t.trip || null) : null;
+  currentBus = null; currentTrip = null;
+  if (t && t.trips) {
+    const ab = t.trips[t.activeTrip];
+    if (ab) { currentBus = ab; currentTrip = ab.trip || null; }
+  }
   stationPanelOpen = true;      // Einfrier-Zustand gehört zum vorherigen Reiter
   stationPanelCache = "";
   if (stop) { search.value = stop.name; sugBox.hidden = true; }
@@ -2336,7 +2354,7 @@ function activateTab(i, refetch) {
 function openTab(sn) {
   const i = tabs.findIndex(t => t.sn === sn);
   if (i >= 0) { activateTab(i); return; }
-  tabs.push({ sn: sn, bus: null, trip: null });
+  tabs.push({ sn: sn, trips: [], activeTrip: -1 });
   activateTab(tabs.length - 1);
 }
 function closeTab(i) {
@@ -2418,11 +2436,72 @@ function selectBus(sn, tripId) {
   const i = tabs.findIndex(t => t.sn === sn);
   if (i < 0) openTab(sn);                       // Reiter fehlt: öffnen
   else if (i !== activeTab) activateTab(i, false);
-  currentBus = { sn, tripId, stationOpen: true, tripOpen: false };
-  if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
+  const t = tabs[activeTab];
+  if (!t.trips) t.trips = [];
+  let bi = t.trips.findIndex(b => b.tripId === tripId);
+  if (bi < 0) {
+    // Unter-Reiter-Titel vorab: Abfahrtszeit an der geklickten Station; sobald der
+    // Fahrtverlauf geladen ist, steht dort die Abfahrtszeit an der ersten Station
+    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    t.trips.push({ sn: sn, tripId: tripId, stationOpen: true, tripOpen: false,
+      time: (dep && (dep.actualTime || dep.plannedTime)) || "", trip: null });
+    bi = t.trips.length - 1;
+  }
+  t.activeTrip = bi;
+  currentBus = t.trips[bi];
+  currentTrip = currentBus.trip || null;
   const stop = stops.find(s => s.shortName === sn);
   if (stop) currentStop = stop;
   renderTabs();
+  renderPanels();
+}
+
+// Unter-Reiter der Fahrten im Bus-Panel: umschalten bzw. schließen (✕).
+// Titel = Abfahrtszeit an der ersten Station der Fahrt (Soll, mit Echtzeit aktualisiert)
+function tripTitleTime(tr) {
+  const s0 = tr.stops && tr.stops[0];
+  if (!s0) return "";
+  if (s0.time) return s0.time;
+  const dl = tr.delay[s0.key || (s0.shortName + "|" + tr.tripId)];
+  return (dl && (dl.actualTime || dl.plannedTime)) || s0.plannedTime || "";
+}
+function tripTitleSync() {
+  if (currentBus && currentTrip && currentTrip.stops && currentTrip.stops.length) {
+    const tm = tripTitleTime(currentTrip);
+    if (tm) currentBus.time = tm;
+  }
+}
+function activateTripTab(bi) {
+  const t = tabs[activeTab];
+  if (!t || !t.trips) return;
+  const b = t.trips[bi];
+  if (!b || b === currentBus) return;
+  t.activeTrip = bi;
+  currentBus = b;
+  currentTrip = b.trip || null;
+  renderPanels();
+}
+function closeTripTab(bi) {
+  const t = tabs[activeTab];
+  if (!t || !t.trips || !t.trips[bi]) return;
+  const b = t.trips[bi];
+  // Wecker dieser Fahrt: Rückfrage wie beim Stationsreiter, dann mitlöschen
+  const tAlarms = [...alarms].filter(([k]) => k.indexOf(String(b.tripId) + "|") === 0);
+  if (tAlarms.length) {
+    if (!confirm("Für diese Fahrt " + (tAlarms.length > 1 ? "sind " + tAlarms.length + " Wecker" : "ist ein Wecker") +
+        " gestellt. Beim Schließen wird " + (tAlarms.length > 1 ? "werden sie" : "wird er") +
+        " gelöscht. Fahrt-Reiter trotzdem schließen?")) return;
+    for (const [k] of tAlarms) { alarms.delete(k); stopRinging(k, true); firedAlarms.delete(k); }
+    saveAlarms();
+    renderAlarmInd();
+  }
+  t.trips.splice(bi, 1);
+  if (t.activeTrip > bi) t.activeTrip--;
+  else if (t.activeTrip === bi) t.activeTrip = Math.min(bi, t.trips.length - 1);
+  const nb = t.trips[t.activeTrip];
+  if (nb) { currentBus = nb; currentTrip = nb.trip || null; }
+  else { currentBus = null; currentTrip = null; }
+  renderTabs();       // ⏰-Hinweis am Stationsreiter kann sich ändern
   renderPanels();
 }
 
@@ -2532,7 +2611,17 @@ function renderBusPanel() {
   if (!bArm) for (const k of ringing.keys()) if (k.indexOf(tPfx) === 0) { bFire = true; break; }
   if (!bFire) for (const k of firedAlarms) if (typeof k === "string" && k.indexOf(tPfx) === 0) { bFire = true; break; }
   const bellCls = bFire ? "abell fired" : bArm ? "abell on" : "abell";
-  let inner =
+  // Unter-Reiter: jede geöffnete Fahrt dieser Station als eigener kleiner Reiter,
+  // Titel = Abfahrtszeit an der ersten Station (mit Echtzeit aktualisiert)
+  let inner = "";
+  const subTab = tabs[activeTab];
+  if (subTab && subTab.trips && subTab.trips.length) {
+    inner += '<div class="subtabbar">' + subTab.trips.map((b, bi) =>
+      '<div class="subtab' + (b === currentBus ? " on" : "") + '" data-bt="' + bi +
+      '" title="Fahrtverlauf dieser Verbindung"><span class="stt">' + escapeHtml(b.time || "…") + "</span>" +
+      '<button class="tabx" data-btx="' + bi + '" title="Fahrt-Reiter schließen">✕</button></div>').join("") + "</div>";
+  }
+  inner +=
     '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
     '<button class="' + bellCls + '" data-linalarm="' + escapeHtml(String(currentBus.tripId)) +
@@ -2689,6 +2778,7 @@ async function selectTrip(sn, tripId, force) {
   // die Stationen und bisherigen Inhalte werden nicht gelöscht.
   if (!reuse) currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, missing: {}, progressIdx: -1, loading: true };
   else currentTrip.loading = true;
+  if (currentBus) currentBus.trip = currentTrip;   // Verlauf gehört zu diesem Fahrt-Unter-Reiter
   if (currentBus) currentBus.tripOpen = true;   // Fahrtverlauf auftauen
   if (force) {
     for (const k of [...tripDelayCache.keys()]) {
@@ -2702,7 +2792,7 @@ async function selectTrip(sn, tripId, force) {
     // nur mit der Zeit ist der Fahrtverlauf eindeutig der richtigen Abfahrt zugeordnet.
     const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
     await dbTrip(tripId, dep ? dep.plannedTime : null);
-    if (currentBus && currentBus.tripId === tripId) renderBusPanel();
+    if (currentBus && currentBus.tripId === tripId) { tripTitleSync(); renderBusPanel(); }
     return;
   }
   try {
@@ -2739,6 +2829,7 @@ async function selectTrip(sn, tripId, force) {
       };
     }
     currentTrip.loading = false;
+    tripTitleSync();
     // Soll-Zeiten aller Haltestellen automatisch mitladen (mit Cache-TTL, Batches)
     await kvgFillPlanned();
   } catch (e) {
@@ -3786,9 +3877,14 @@ function kvgExportState() {
   try {
     saveActiveTab();
     localStorage.setItem("kvg-view", JSON.stringify({
-      tabs: tabs.map(t => ({ sn: t.sn,
-        bus: t.bus ? { sn: t.bus.sn, tripId: t.bus.tripId,
-                        tripOpen: !!t.bus.tripOpen } : null })),
+      tabs: tabs.map(t => {
+        const trips = (t.trips || []).map(b =>
+          ({ sn: b.sn, tripId: b.tripId, tripOpen: !!b.tripOpen }));
+        const ab = (t.trips || [])[t.activeTrip];
+        return { sn: t.sn,
+          bus: ab ? { sn: ab.sn, tripId: ab.tripId, tripOpen: !!ab.tripOpen } : null,
+          trips: trips };
+      }),
       active: Math.max(0, activeTab) }));
   } catch (e) {}
   const o = {};
@@ -3893,6 +3989,10 @@ stationPanel.addEventListener("click", e => {
   }
 });
 busPanel.addEventListener("click", e => {
+  const btx = e.target.closest("[data-btx]");
+  if (btx) { closeTripTab(Number(btx.dataset.btx)); return; }
+  const bt = e.target.closest("[data-bt]");
+  if (bt) { activateTripTab(Number(bt.dataset.bt)); return; }
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
   const sec = e.target.closest("[data-sec]");
@@ -4890,6 +4990,7 @@ setInterval(() => {
   }
   if (stationPanel && !stationPanel.hidden) renderStationPanel();
   if (busPanel && !busPanel.hidden) renderBusPanel();
+  if (routePanel && !routePanel.hidden) renderRoutePanel();   // Route-Verlauf: GPS-Balken/Uhrzeit live
   alarmTick();
   if (window.KvgNative) {
     // Sammel-Benachrichtigungen regelmäßig frisch halten: geschlossene
@@ -4975,7 +5076,10 @@ try {
 // und ggf. gewählter Buslinie inkl. Fahrtverlauf öffnen (z. B. nach Import).
 try {
   const sv = JSON.parse(localStorage.getItem("kvg-view") || "null");
-  const openOne = (sn, bus) => {
+  const openOne = (sn, bus, tripsArr) => {
+    const list = (Array.isArray(tripsArr) && tripsArr.length) ? tripsArr : (bus ? [bus] : []);
+    if (!list.length) { selectStop(sn); return; }
+    for (const tb of list) if (tb && tb.tripId) selectBus(sn, tb.tripId);
     if (bus && bus.tripId) {
       selectBus(sn, bus.tripId);
       if (bus.tripOpen) {
@@ -4994,7 +5098,7 @@ try {
     } else selectStop(sn);
   };
   if (sv && Array.isArray(sv.tabs) && sv.tabs.length) {
-    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus); });
+    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus, t.trips); });
     if (tabs.length) activateTab(Math.min(sv.active || 0, tabs.length - 1), false);
   } else if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
     openOne(sv.sn, sv.bus);   // altes Format (einzelner Reiter, v1.0.10)
@@ -5221,6 +5325,108 @@ let routeTabOpen = false, routeTabActive = false;
 const routePanel = document.getElementById("routePanel");
 const routeSel = { start: null, dest: null, time: "" };   // je: {label, kind, key, name, sn, lat, lon, lid, locType}
 let routeCons = [], routeLoading = false, routeSearchErr = null;
+let routeChosen = [];      // geöffnete Verbindungen als Unter-Reiter: {sig, con, secOpen[], at[], prog[]}
+let routeActive = -1;      // aktiver Route-Unter-Reiter
+function routeSig(c) {
+  return c.dep + "|" + c.arr + "|" + c.secs.map(s => s.kind === "jny" ? s.line + "@" + s.dep : s.kind).join(">");
+}
+function openRouteCon(idx) {
+  const c = routeCons[idx];
+  if (!c) return;
+  const sig = routeSig(c);
+  let ri = routeChosen.findIndex(r => r.sig === sig);
+  if (ri < 0) {
+    routeChosen.push({ sig: sig, con: c, secOpen: c.secs.map(() => false), at: [], prog: [] });
+    ri = routeChosen.length - 1;
+  }
+  routeActive = ri;
+  renderRoutePanel();
+}
+// HAFAS-Haltestellenname -> KVG-Stationskürzel (antippbar im ausklappbaren Verlauf)
+function routeStopMatch(nm) {
+  const norm = q => String(q || "").toLowerCase().replace(/\(db\)/g, "").replace(/[^a-zäöüß0-9]/g, "");
+  const n = norm(nm);
+  if (!n || n.length < 5) return null;
+  for (const st of stops) {
+    const m = norm(st.name);
+    if (!m || m.length < 5) continue;
+    if (m === n || (n.length >= m.length && n.endsWith(m)) || (m.length >= n.length && m.endsWith(n))) return st.shortName;
+  }
+  return null;
+}
+// Ausklappbarer Haltestellen-Verlauf eines Routen-Abschnitts: gleiche Optik wie der
+// Fahrtverlauf der Stationsansicht (Gep./Aktuell, Verspätung, GPS-Fortschrittsbalken,
+// blinkende Uhrzeit an der eigenen Haltestelle, klickbare Stationsnamen)
+function routeSecStopsHTML(rc, si) {
+  const sec = rc.con.secs[si];
+  const sts = sec.stops || [];
+  if (!sts.length) return "";
+  const pos = getPos();
+  const gpsR = sec.rail ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
+  let atIdx = null;
+  if (pos) {
+    for (let i = 0; i < sts.length; i++) {
+      const st = sts[i];
+      if (st.lat == null) continue;
+      if (dist(pos, { lat: st.lat, lon: st.lon }) >= gpsR) continue;
+      // Plausibilität: Systemzeit muss zur (gegebenenfalls aktualisierten) Abfahrtszeit passen
+      const eff = st.dR || st.dS || st.aR || st.aS || "";
+      const [h0, m0] = eff.split(":").map(Number);
+      if (isFinite(h0) && isFinite(m0)) {
+        const n0 = new Date();
+        const nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+        if (nowMin0 < h0 * 60 + m0 - 3 || nowMin0 > h0 * 60 + m0 + 5) continue;
+      }
+      atIdx = i;
+      break;
+    }
+  }
+  // Fortschritt (Balken) persistieren: Radius verlassen -> bis dahin alles „done“
+  if (atIdx == null && rc.at[si] != null) {
+    rc.prog[si] = Math.max(rc.prog[si] == null ? -1 : rc.prog[si], rc.at[si]);
+    rc.at[si] = null;
+  }
+  if (atIdx != null) rc.at[si] = atIdx;
+  const done = rc.prog[si] == null ? -1 : rc.prog[si];
+  let html = '<div class="trip"><div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  const last = sts.length - 1;
+  for (let i = 0; i < sts.length; i++) {
+    const st = sts[i];
+    const planned = st.dS || st.aS || "";
+    let actual = st.dR || st.dS || st.aR || st.aS || "";
+    let delayHtml = "";
+    const [ph, pm] = (planned || "").split(":").map(Number);
+    const [ah, am] = (actual || "").split(":").map(Number);
+    if (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am)) {
+      const dMin = (ah * 60 + am) - (ph * 60 + pm);
+      delayHtml = '<span class="tdelay ' + (dMin > 0 ? "up" : dMin < 0 ? "down" : "ok") + '">' +
+        (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
+    }
+    // GPS-Live an der eigenen Haltestelle: laufende Uhrzeit als Ist-Abfahrt, blinkend
+    if (atIdx != null && i === atIdx && isFinite(ph) && isFinite(pm)) {
+      const nowD = new Date();
+      const clock = String(nowD.getHours()).padStart(2, "0") + ":" + String(nowD.getMinutes()).padStart(2, "0");
+      const dMin = (nowD.getHours() * 60 + nowD.getMinutes()) - (ph * 60 + pm);
+      if (Math.abs(dMin) < 720) {
+        actual = clock;
+        delayHtml = '<span class="tdelay ' + (dMin > 0 ? "up" : dMin < 0 ? "down" : "ok") + '">' +
+          (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
+      }
+    }
+    const hereIdx = atIdx != null ? atIdx : done;
+    const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
+      (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
+    const kvg = routeStopMatch(st.name);
+    html += '<div class="trow' + rowCls + '">' +
+      '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
+      '<span class="takt' + (i === atIdx ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
+      delayHtml +
+      '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
+        (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
+        ">" + escapeHtml(st.name) + "</span></div>";
+  }
+  return html + "</div>";
+}
 
 function routeNowStr() {
   const n = new Date(), p = x => String(x).padStart(2, "0");
@@ -5317,7 +5523,7 @@ async function routeTripSearch() {
     depLocL: [{ type: dep.locType, lid: dep.lid }],
     arrLocL: [{ type: arr.locType, lid: arr.lid }],
     outDate: when.date, outTime: when.time,
-    numF: 6, getPasslist: false, getPolyline: false });
+    numF: 6, getPasslist: true, getPolyline: false });   // Passlist: Haltestellen je Abschnitt für den ausklappbaren Verlauf
   const locL = (res.common && res.common.locL) || [];
   const prodL = (res.common && res.common.prodL) || [];
   const out = [];
@@ -5335,7 +5541,17 @@ async function routeTripSearch() {
         line = ln; dir = sec.jny.dirTxt || "";
         secs.push({ kind: "jny", line: ln, dir: dir, from: from.name, to: to.name,
           dep: dbHHMM(sec.dep && (sec.dep.dTimeR || sec.dep.dTimeS)),
-          arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)) });
+          arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)),
+          rail: (prod.cls || 32) < 32,   // Schiene: größerer GPS-Radius (250 m statt 75 m)
+          stops: (sec.jny.stopL || []).map(p => {
+            const lc = locL[p.locX] || {};
+            const crd = lc.crd || {};
+            return { name: lc.name || "?",
+              lat: crd.y != null ? crd.y / 1e6 : null,
+              lon: crd.x != null ? crd.x / 1e6 : null,
+              dS: dbHHMM(p.dTimeS), dR: dbHHMM(p.dTimeR),
+              aS: dbHHMM(p.aTimeS), aR: dbHHMM(p.aTimeR) };
+          }) });
       } else {
         secs.push({ kind: sec.type === "BIKE" ? "bike" : "walk", from: from.name, to: to.name,
           mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) });
@@ -5374,7 +5590,7 @@ function closeRouteTab() {
 function renderRoutePanel() {
   const show = routeTabOpen && routeTabActive;
   routePanel.hidden = !show;
-  if (!show) { routePanel.innerHTML = ""; return; }
+  if (!show) { routePanel.innerHTML = ""; delete routePanel.dataset.last; return; }
   const a = routeSel.start, b = routeSel.dest;
   let h = '<div class="sechead"><span class="sarr">▾</span>🧭 Route: ' +
     escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") + "</div>";
@@ -5389,8 +5605,11 @@ function renderRoutePanel() {
   } else if (!routeCons.length) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Noch keine Suche – „▶ Suchen“ ruft die nächsten Verbindungen ab.</div>';
   } else {
-    h += routeCons.slice(0, 3).map(c => {
-      let x = '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
+    h += routeCons.slice(0, 3).map((c, ci) => {
+      const chosen = routeChosen.some(r => r.sig === routeSig(c));
+      let x = '<div class="routecon' + (chosen ? " on" : "") + '" data-rcopen="' + ci +
+        '" title="Antippen: Verbindung als Unter-Reiter mit genauerem Verlauf öffnen">' +
+        '<div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
         "<span>" + c.dur + " min</span>" +
         (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
       for (const sec of c.secs) {
@@ -5403,12 +5622,74 @@ function renderRoutePanel() {
             escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") + "</div>";
         }
       }
-      return x + "</div>";
+      return x + '<div class="routesec rchint">▸ Verbindung als Unter-Reiter öffnen' +
+        (chosen ? " (geöffnet)" : "") + "</div></div>";
     }).join("");
   }
-  routePanel.innerHTML = h;
+  // Gewählte Routen als parallele Unter-Reiter, Titel = Abfahrtszeit an der ersten
+  // Station (Soll, mit Echtzeit aktualisiert); darunter der genaue Verlauf mit
+  // ausklappbaren Abschnitten (Haltestellen wie in der Stationsansicht)
+  if (routeChosen.length) {
+    h += '<div class="subtabbar">' + routeChosen.map((r, ri) =>
+      '<div class="subtab' + (ri === routeActive ? " on" : "") + '" data-rtb="' + ri +
+      '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
+      escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '"><span class="stt">' + escapeHtml(r.con.dep) + "</span>" +
+      ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>').join("") + "</div>";
+    const rc = routeChosen[routeActive] || routeChosen[0];
+    if (rc) {
+      const c = rc.con;
+      h += '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
+        "<span>" + c.dur + " min</span>" +
+        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
+      c.secs.forEach((sec, si) => {
+        if (sec.kind === "jny") {
+          const open = !!rc.secOpen[si];
+          h += '<div class="routesec rtsec" data-rtsec="' + si +
+            '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"><span class="rcline">' +
+            escapeHtml(sec.line) + "</span> Richtung " + escapeHtml(sec.dir || "?") + " · ab " +
+            escapeHtml(sec.from || "?") + " " + sec.dep + " → an " + escapeHtml(sec.to || "?") + " " + sec.arr +
+            ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span></div>";
+          if (open) h += routeSecStopsHTML(rc, si);
+        } else {
+          h += '<div class="routesec">' + (sec.kind === "bike" ? "🚲" : "🚶") + " " + sec.mins + " min · " +
+            escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") + "</div>";
+        }
+      });
+      h += "</div>";
+    }
+  }
+  // nur bei geändertem Inhalt neu bauen; laufende Eingabe im Abfahrtsfeld bleibt erhalten
+  const actEl = document.activeElement;
+  const keepTime = (actEl && actEl.id === "routeTime") ? actEl.value : null;
+  if (routePanel.dataset.last !== h) {
+    routePanel.dataset.last = h;
+    routePanel.innerHTML = h;
+    if (keepTime != null) {
+      const ti = document.getElementById("routeTime");
+      if (ti) { ti.value = keepTime; ti.focus(); }
+    }
+  }
 }
 routePanel.addEventListener("click", e => {
+  const rtbx = e.target.closest("[data-rtbx]");
+  if (rtbx) {
+    routeChosen.splice(Number(rtbx.dataset.rtbx), 1);
+    if (routeActive >= routeChosen.length) routeActive = routeChosen.length - 1;
+    renderRoutePanel();
+    return;
+  }
+  const rtb = e.target.closest("[data-rtb]");
+  if (rtb) { routeActive = Number(rtb.dataset.rtb); renderRoutePanel(); return; }
+  const rsec = e.target.closest("[data-rtsec]");
+  if (rsec) {
+    const rc = routeChosen[routeActive];
+    if (rc) { const si = Number(rsec.dataset.rtsec); rc.secOpen[si] = !rc.secOpen[si]; renderRoutePanel(); }
+    return;
+  }
+  const rcop = e.target.closest("[data-rcopen]");
+  if (rcop) { openRouteCon(Number(rcop.dataset.rcopen)); return; }
+  const so = e.target.closest("[data-stopopen]");
+  if (so) { openTab(so.dataset.stopopen); return; }   // Haltestelle im Abschnitts-Verlauf: eigener Reiter
   if (e.target.closest("[data-rtnow2]")) {
     routeSel.time = "";
     const ti = document.getElementById("routeTime");
