@@ -391,6 +391,15 @@
   #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
   #tabsbar .tabx:hover { color: #f87171; }
   #tabsbar .tabal { color: #f59e0b; font-size: 0.95em; }
+  .subtabbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+  .subtab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #1e3a5f;
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap;
+    color: #cbd5e1; background: #0f172a; font-size: 0.8rem; user-select: none; }
+  .subtab.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
+  .subtab .stt { font-weight: 700; }
+  .subtab .tabx { background: none; border: none; color: #64748b; cursor: pointer;
+    padding: 0 0 0 2px; font-size: 0.75rem; }
+  .subtab .tabx:hover { color: #f87171; }
   #apiStats { position: fixed; top: 42px; right: 12px; z-index: 56; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; font-size: 0.75rem;
     min-width: 240px; max-width: 300px; box-shadow: 0 8px 22px #000000cc; }
@@ -2260,7 +2269,8 @@ let activeTab = -1;
 // Fahrtverlauf unabhängig vom aktiven Reiter finden (für Wecker in Hintergrund-Reitern)
 function tripById(tripId) {
   if (currentTrip && currentTrip.tripId === tripId) return currentTrip;
-  for (const t of tabs) if (t.trip && t.trip.tripId === tripId) return t.trip;
+  for (const t of tabs) if (t.trips)
+    for (const b of t.trips) if (b.trip && b.trip.tripId === tripId) return b.trip;
   return null;
 }
 function tabAlarmCount(sn) {
@@ -2287,8 +2297,8 @@ function saveActiveTab() {
   const t = tabs[activeTab];
   if (!t) return;
   t.sn = currentStop ? currentStop.shortName : t.sn;
-  t.bus = currentBus;
-  if (currentTrip && currentBus && currentTrip.tripId === currentBus.tripId) t.trip = currentTrip;
+  // Unter-Reiter der Fahrten: currentBus ist die Referenz auf t.trips[t.activeTrip],
+  // currentTrip hängt an currentBus.trip – beides bleibt dadurch im Reiter gesichert
 }
 function activateTab(i, refetch) {
   saveActiveTab();
@@ -2296,8 +2306,11 @@ function activateTab(i, refetch) {
   const t = tabs[i];
   const stop = t ? stops.find(s => s.shortName === t.sn) : null;
   currentStop = stop || null;
-  currentBus = t ? (t.bus || null) : null;
-  currentTrip = t ? (t.trip || null) : null;
+  currentBus = null; currentTrip = null;
+  if (t && t.trips) {
+    const ab = t.trips[t.activeTrip];
+    if (ab) { currentBus = ab; currentTrip = ab.trip || null; }
+  }
   stationPanelOpen = true;      // Einfrier-Zustand gehört zum vorherigen Reiter
   stationPanelCache = "";
   if (stop) { search.value = stop.name; sugBox.hidden = true; }
@@ -2309,7 +2322,7 @@ function activateTab(i, refetch) {
 function openTab(sn) {
   const i = tabs.findIndex(t => t.sn === sn);
   if (i >= 0) { activateTab(i); return; }
-  tabs.push({ sn: sn, bus: null, trip: null });
+  tabs.push({ sn: sn, trips: [], activeTrip: -1 });
   activateTab(tabs.length - 1);
 }
 function closeTab(i) {
@@ -2385,11 +2398,72 @@ function selectBus(sn, tripId) {
   const i = tabs.findIndex(t => t.sn === sn);
   if (i < 0) openTab(sn);                       // Reiter fehlt: öffnen
   else if (i !== activeTab) activateTab(i, false);
-  currentBus = { sn, tripId, stationOpen: true, tripOpen: false };
-  if (currentTrip && currentTrip.tripId !== tripId) currentTrip = null;
+  const t = tabs[activeTab];
+  if (!t.trips) t.trips = [];
+  let bi = t.trips.findIndex(b => b.tripId === tripId);
+  if (bi < 0) {
+    // Unter-Reiter-Titel vorab: Abfahrtszeit an der geklickten Station; sobald der
+    // Fahrtverlauf geladen ist, steht dort die Abfahrtszeit an der ersten Station
+    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    t.trips.push({ sn: sn, tripId: tripId, stationOpen: true, tripOpen: false,
+      time: (dep && (dep.actualTime || dep.plannedTime)) || "", trip: null });
+    bi = t.trips.length - 1;
+  }
+  t.activeTrip = bi;
+  currentBus = t.trips[bi];
+  currentTrip = currentBus.trip || null;
   const stop = stops.find(s => s.shortName === sn);
   if (stop) currentStop = stop;
   renderTabs();
+  renderPanels();
+}
+
+// Unter-Reiter der Fahrten im Bus-Panel: umschalten bzw. schließen (✕).
+// Titel = Abfahrtszeit an der ersten Station der Fahrt (Soll, mit Echtzeit aktualisiert)
+function tripTitleTime(tr) {
+  const s0 = tr.stops && tr.stops[0];
+  if (!s0) return "";
+  if (s0.time) return s0.time;
+  const dl = tr.delay[s0.key || (s0.shortName + "|" + tr.tripId)];
+  return (dl && (dl.actualTime || dl.plannedTime)) || s0.plannedTime || "";
+}
+function tripTitleSync() {
+  if (currentBus && currentTrip && currentTrip.stops && currentTrip.stops.length) {
+    const tm = tripTitleTime(currentTrip);
+    if (tm) currentBus.time = tm;
+  }
+}
+function activateTripTab(bi) {
+  const t = tabs[activeTab];
+  if (!t || !t.trips) return;
+  const b = t.trips[bi];
+  if (!b || b === currentBus) return;
+  t.activeTrip = bi;
+  currentBus = b;
+  currentTrip = b.trip || null;
+  renderPanels();
+}
+function closeTripTab(bi) {
+  const t = tabs[activeTab];
+  if (!t || !t.trips || !t.trips[bi]) return;
+  const b = t.trips[bi];
+  // Wecker dieser Fahrt: Rückfrage wie beim Stationsreiter, dann mitlöschen
+  const tAlarms = [...alarms].filter(([k]) => k.indexOf(String(b.tripId) + "|") === 0);
+  if (tAlarms.length) {
+    if (!confirm("Für diese Fahrt " + (tAlarms.length > 1 ? "sind " + tAlarms.length + " Wecker" : "ist ein Wecker") +
+        " gestellt. Beim Schließen wird " + (tAlarms.length > 1 ? "werden sie" : "wird er") +
+        " gelöscht. Fahrt-Reiter trotzdem schließen?")) return;
+    for (const [k] of tAlarms) { alarms.delete(k); stopRinging(k, true); firedAlarms.delete(k); }
+    saveAlarms();
+    renderAlarmInd();
+  }
+  t.trips.splice(bi, 1);
+  if (t.activeTrip > bi) t.activeTrip--;
+  else if (t.activeTrip === bi) t.activeTrip = Math.min(bi, t.trips.length - 1);
+  const nb = t.trips[t.activeTrip];
+  if (nb) { currentBus = nb; currentTrip = nb.trip || null; }
+  else { currentBus = null; currentTrip = null; }
+  renderTabs();       // ⏰-Hinweis am Stationsreiter kann sich ändern
   renderPanels();
 }
 
@@ -2498,7 +2572,17 @@ function renderBusPanel() {
   if (!bArm) for (const k of ringing.keys()) if (k.indexOf(tPfx) === 0) { bFire = true; break; }
   if (!bFire) for (const k of firedAlarms) if (typeof k === "string" && k.indexOf(tPfx) === 0) { bFire = true; break; }
   const bellCls = bFire ? "abell fired" : bArm ? "abell on" : "abell";
-  let inner =
+  // Unter-Reiter: jede geöffnete Fahrt dieser Station als eigener kleiner Reiter,
+  // Titel = Abfahrtszeit an der ersten Station (mit Echtzeit aktualisiert)
+  let inner = "";
+  const subTab = tabs[activeTab];
+  if (subTab && subTab.trips && subTab.trips.length) {
+    inner += '<div class="subtabbar">' + subTab.trips.map((b, bi) =>
+      '<div class="subtab' + (b === currentBus ? " on" : "") + '" data-bt="' + bi +
+      '" title="Fahrtverlauf dieser Verbindung"><span class="stt">' + escapeHtml(b.time || "…") + "</span>" +
+      '<button class="tabx" data-btx="' + bi + '" title="Fahrt-Reiter schließen">✕</button></div>').join("") + "</div>";
+  }
+  inner +=
     '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
     '<button class="' + bellCls + '" data-linalarm="' + escapeHtml(String(currentBus.tripId)) +
@@ -2655,6 +2739,7 @@ async function selectTrip(sn, tripId, force) {
   // die Stationen und bisherigen Inhalte werden nicht gelöscht.
   if (!reuse) currentTrip = { tripId, sn, stops: null, route: "", direction: "", delay: {}, missing: {}, progressIdx: -1, loading: true };
   else currentTrip.loading = true;
+  if (currentBus) currentBus.trip = currentTrip;   // Verlauf gehört zu diesem Fahrt-Unter-Reiter
   if (currentBus) currentBus.tripOpen = true;   // Fahrtverlauf auftauen
   if (force) {
     for (const k of [...tripDelayCache.keys()]) {
@@ -2668,7 +2753,7 @@ async function selectTrip(sn, tripId, force) {
     // nur mit der Zeit ist der Fahrtverlauf eindeutig der richtigen Abfahrt zugeordnet.
     const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
     await dbTrip(tripId, dep ? dep.plannedTime : null);
-    if (currentBus && currentBus.tripId === tripId) renderBusPanel();
+    if (currentBus && currentBus.tripId === tripId) { tripTitleSync(); renderBusPanel(); }
     return;
   }
   try {
@@ -2705,6 +2790,7 @@ async function selectTrip(sn, tripId, force) {
       };
     }
     currentTrip.loading = false;
+    tripTitleSync();
     // Soll-Zeiten aller Haltestellen automatisch mitladen (mit Cache-TTL, Batches)
     await kvgFillPlanned();
   } catch (e) {
@@ -3752,9 +3838,14 @@ function kvgExportState() {
   try {
     saveActiveTab();
     localStorage.setItem("kvg-view", JSON.stringify({
-      tabs: tabs.map(t => ({ sn: t.sn,
-        bus: t.bus ? { sn: t.bus.sn, tripId: t.bus.tripId,
-                        tripOpen: !!t.bus.tripOpen } : null })),
+      tabs: tabs.map(t => {
+        const trips = (t.trips || []).map(b =>
+          ({ sn: b.sn, tripId: b.tripId, tripOpen: !!b.tripOpen }));
+        const ab = (t.trips || [])[t.activeTrip];
+        return { sn: t.sn,
+          bus: ab ? { sn: ab.sn, tripId: ab.tripId, tripOpen: !!ab.tripOpen } : null,
+          trips: trips };
+      }),
       active: Math.max(0, activeTab) }));
   } catch (e) {}
   const o = {};
@@ -3859,6 +3950,10 @@ stationPanel.addEventListener("click", e => {
   }
 });
 busPanel.addEventListener("click", e => {
+  const btx = e.target.closest("[data-btx]");
+  if (btx) { closeTripTab(Number(btx.dataset.btx)); return; }
+  const bt = e.target.closest("[data-bt]");
+  if (bt) { activateTripTab(Number(bt.dataset.bt)); return; }
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
   const sec = e.target.closest("[data-sec]");
@@ -4941,7 +5036,10 @@ try {
 // und ggf. gewählter Buslinie inkl. Fahrtverlauf öffnen (z. B. nach Import).
 try {
   const sv = JSON.parse(localStorage.getItem("kvg-view") || "null");
-  const openOne = (sn, bus) => {
+  const openOne = (sn, bus, tripsArr) => {
+    const list = (Array.isArray(tripsArr) && tripsArr.length) ? tripsArr : (bus ? [bus] : []);
+    if (!list.length) { selectStop(sn); return; }
+    for (const tb of list) if (tb && tb.tripId) selectBus(sn, tb.tripId);
     if (bus && bus.tripId) {
       selectBus(sn, bus.tripId);
       if (bus.tripOpen) {
@@ -4960,7 +5058,7 @@ try {
     } else selectStop(sn);
   };
   if (sv && Array.isArray(sv.tabs) && sv.tabs.length) {
-    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus); });
+    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus, t.trips); });
     if (tabs.length) activateTab(Math.min(sv.active || 0, tabs.length - 1), false);
   } else if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
     openOne(sv.sn, sv.bus);   // altes Format (einzelner Reiter, v1.0.10)
@@ -5305,7 +5403,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.15 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.16 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
