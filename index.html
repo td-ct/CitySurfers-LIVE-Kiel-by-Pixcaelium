@@ -145,7 +145,7 @@
   #addrSearch { padding-right: 176px; }
   .suggestions {
     position: absolute; top: 100%; left: 0; right: 0; z-index: 10; background: #1e293b;
-    border: 1px solid #334155; border-radius: 0 0 10px 10px; max-height: 60vh; overflow-y: auto;
+    border: 1px solid #334155; border-radius: 0 0 10px 10px; max-height: calc(100vh - 80px); overflow-y: auto;
   }
   .suggestions > div { padding: 11px 14px; cursor: pointer; }
   .suggestions > div[data-sn] { display: block; } /* Buszeilen UNTER der Stationszeile */
@@ -157,13 +157,17 @@
   #addrSug .atype { color: #64748b; font-size: 0.8rem; white-space: nowrap; }
   #addrSug hr.sugsep { margin: 0; border: none; border-top: 1px solid #334155; }
   .ddbtn.active { background: #00519e; border-color: #4d8fd6; color: #fff; }
+  .depann { border: 1px solid #334155; background: #0f172a; color: #cbd5e1; border-radius: 6px;
+    padding: 2px 8px; font-size: 0.9rem; line-height: 1.4; cursor: pointer; vertical-align: middle; }
+  .depann:hover { background: #334155; color: #e2e8f0; }
+  .depann.all { border-color: #eab308; color: #eab308; }
   .flatrow { display: flex; align-items: center; gap: 8px; }
   .flatrow .mqwrap { flex: 1 1 auto; overflow: hidden; white-space: nowrap; min-width: 30px; }
   .flatrow .fdst { color: #94a3b8; font-size: 0.85rem; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
   #addrSug { position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
     background: #1e293b; border: 1px solid #334155; border-radius: 0 0 10px 10px;
-    max-height: 60vh; overflow-y: auto; }
+    max-height: calc(100vh - 80px); overflow-y: auto; }
 
   /* Zeile 2: Haltestellensuche */
   .searchbox { position: relative; margin-bottom: 6px; }
@@ -247,7 +251,7 @@
      (auch der 📍 GPS-Knopf), dünner gelber Rahmen als Erkennungszeichen */
   #addrFavPanel, #stopFavPanel { position: fixed; top: 42px; right: 12px; z-index: 50; background: #1e293b;
     border: 1px solid #eab308; border-radius: 10px; padding: 8px; min-width: 260px; max-width: 360px;
-    max-height: 60vh; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 0.9rem; }
+    max-height: calc(100vh - 56px); overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 0.9rem; }
   #addrFavPanel .afsrow, #stopFavPanel .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
   #addrFavPanel .afsrow:hover, #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
@@ -1017,6 +1021,7 @@ function gpsAdoptForList(kind, p) {
 function gpsAdoptDispatch(p) {
   if (gpsTakeTarget === "addrFav" || gpsTakeTarget === "stopFav") gpsAdoptForList(gpsTakeTarget, p);
   else if (gpsTakeTarget === "addr") adoptGpsPos(p);
+  else if (gpsTakeTarget === "addrSave") saveGpsAddrFav(p);
   else gpsAdoptForStops(p);
 }
 function gpsTakeOverFor(kind) {
@@ -1608,9 +1613,9 @@ function renderAddrFavs() {
     '<span class="dim">' + (sortGps.addrFav
       ? 'Sortierung: gespeicherter GPS-Standort (±' + sortGps.addrFav.acc + ' m)'
       : 'Sortierung: aktuelle Position') + '</span></div>' +
-    '<button class="chip ok afsave" id="addrFavSave" title="Aktuell aktive Adresse oder GPS-Standort speichern">＋ Aktuelle Position speichern</button>';
+    '<button class="chip ok afsave" id="addrFavSave" title="Aktuelle GPS-Position als Adressfavorit speichern – ist GPS aus oder ungenau, öffnet der GPS-Status und wartet auf eine gute Ortung (Übernehmen nimmt früher, Abbrechen verwirft)">＋ GPS Position speichern</button>';
   if (!getPos()) {
-    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Position aktiv (Adresse wählen oder GPS aktivieren).</span></div>';
+    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Position aktiv – „＋ GPS Position speichern“ schaltet GPS selbst ein.</span></div>';
   }
   if (!addrFavs.length) {
     inner += '<div class="afsrow"><span class="afsname dim">Noch keine Adressfavoriten gespeichert.</span></div>';
@@ -1630,8 +1635,35 @@ function renderAddrFavs() {
       "</div>";
   });
   addrFavPanel.innerHTML = inner;
-  const saveBtn = document.getElementById("addrFavSave");
-  if (saveBtn) saveBtn.disabled = !getPos();
+}
+
+// ---------- „＋ GPS Position speichern“: GPS-Position als Adressfavorit ----------
+// Gute Ortung: sofort die gewohnte Maske (Alias frei benennbar, im Adressfeld stehen
+// die Koordinaten in verständlicher Form, exakt hinterlegt wie bei jedem Favorit).
+// GPS aus oder ungenau: GPS-Status öffnen und auf gute Ortung warten – „Übernehmen“
+// nimmt die Ortung früher, „Abbrechen“ schließt alles, ohne zu speichern.
+function gpsAddrSaveFlow() {
+  gpsTakeTarget = "addrSave";
+  if (!("geolocation" in navigator) || !isSecure()) {
+    setLocNote("GPS nicht verfügbar – Position lässt sich nicht erfassen.");
+    return;
+  }
+  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
+    saveGpsAddrFav(myPos);
+    return;
+  }
+  gpsWasOff = gpsState === "off";
+  if (gpsState === "off") gpsStart();
+  openGpsDlg("takeover");
+  setLocNote("GPS-Ortung läuft – nach guter Ortung (oder „Übernehmen“) öffnet die Maske zum Speichern.");
+}
+function saveGpsAddrFav(p) {
+  if (!p) return;
+  const coordLabel = p.lat.toFixed(6) + ", " + p.lon.toFixed(6);   // verständlich und per parseLocText wieder einlesbar
+  addrFavs.push({ name: "GPS-Position", lat: p.lat, lon: p.lon, label: coordLabel });
+  saveAddrFavs();
+  renderAddrFavs();
+  openFavDlg(addrFavs.length - 1);   // gewohnte Maske: Alias frei benennbar, Koordinaten genau hinterlegt
 }
 
 // ---------- Maske: Alias-Name und Adresse eines Adressfavoriten zusammen bearbeiten ----------
@@ -1743,13 +1775,7 @@ addrFavPanel.addEventListener("click", e => {
     return;
   }
   if (e.target.closest("#addrFavSave")) {
-    const pos = getPos();
-    if (!pos) return;
-    const def = pos.label || ("Standort " + pos.lat.toFixed(4) + ", " + pos.lon.toFixed(4));
-    addrFavs.push({ name: def, lat: pos.lat, lon: pos.lon, label: pos.label || "" });
-    saveAddrFavs();
-    renderAddrFavs();
-    openFavDlg(addrFavs.length - 1);   // Alias und Adresse direkt in der Maske bearbeitbar
+    gpsAddrSaveFlow();   // GPS nötigenfalls einschalten und gute Ortung abwarten, dann Maske
     return;
   }
   const row = e.target.closest("[data-afi]");
@@ -2350,6 +2376,11 @@ function renderPanels() {
 
 let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
 let stationPanelCache = "";
+// ⏱/🌐-Umschalter hinter dem Stationsnamen („Abfahrten: …“): ⏱ = nur erreichbare
+// Abfahrten (Fußweg berücksichtigt), 🌐 = ungefiltert ALLE Abfahrten der
+// KVG-Live-Ansicht. Persistiert (kvg-depall, im ⇅-Zustand enthalten).
+let depShowAll = false;
+try { depShowAll = localStorage.getItem("kvg-depall") === "1"; } catch (e) {}
 function renderStationPanel() {
   if (!currentStop) { stationPanel.hidden = true; stationPanel.innerHTML = ""; return; }
   const v = stopViews.get(currentStop.shortName);
@@ -2371,6 +2402,11 @@ function renderStationPanel() {
   let inner = '<div class="sechead" data-ssec="1"><span class="sarr">' +
     (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
     escapeHtml(currentStop.name) +
+    ' <button class="depann' + (depShowAll ? " all" : "") + '" data-depann="1" title="' +
+      (depShowAll
+        ? "Alle Abfahrten der KVG-Live-Ansicht werden angezeigt (auch nicht erreichbare, rot) – Klick: nur erreichbare"
+        : "Nur erreichbare Abfahrten (Fußweg berücksichtigt) – Klick: ALLE Abfahrten der KVG-Live-Ansicht anzeigen") +
+      '">' + (depShowAll ? "🌐" : "⏱") + "</button>" +
     (stationPanelOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') +
     "</div>";
   if (!stationPanelOpen) {
@@ -2391,10 +2427,13 @@ function renderStationPanel() {
       '" title="Diese Haltestelle neu abfragen">↻</button></div>';
   if (v && v.fetched) {
     const lines = busLinesHTML(v);
-    if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000) {
-      // alle Abfahrten länger als 2 Minuten weg: automatisch neu abfragen
+    if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
+      // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen
       refetchStop(currentStop.shortName, false);
       return;
+    }
+    if (!lines.length && v.deps.length) {
+      inner += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 🌐-Knopf oben zeigt alle Abfahrten.</small>';
     }
     inner += lines.map(l => l.html).join("");
   } else {
@@ -3654,7 +3693,7 @@ function openAlarmDialog(tripId, preSn) {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-depall"];
 function kvgExportState() {
   // Aktuell geöffnete Reiter (jeweils Kette Haltestelle -> Buslinie ->
   // Fahrtverlauf) mit in den Export nehmen; sie werden beim Import
@@ -3739,6 +3778,14 @@ stationPanel.addEventListener("click", e => {
   if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const ann = e.target.closest("[data-depann]");
+  if (ann) {   // ⏱/🌐: erreichbare Abfahrten oder ALLE (ungefiltert) anzeigen
+    depShowAll = !depShowAll;
+    try { localStorage.setItem("kvg-depall", depShowAll ? "1" : "0"); } catch (err) {}
+    renderViews();
+    renderPanels();
+    return;
+  }
   const ssec = e.target.closest("[data-ssec]");
   if (ssec) {
     stationPanelOpen = !stationPanelOpen;   // zugeklappt = eingefroren
@@ -3804,6 +3851,28 @@ busPanel.addEventListener("click", e => {
 // ---------- Haltestellenfavoriten (Liste, wie bei den Adressen) ----------
 const stopFavBtn = document.getElementById("stopFavBtn");
 const stopFavPanel = document.getElementById("stopFavPanel");
+
+// ---------- Immer nur EINE der beiden Listen (Adressen / Haltestellen) offen ----------
+// Adressvorschläge, Adressfavoriten, Haltestellenliste und Haltestellenfavoriten
+// schließen sich gegenseitig: Öffnet man eine Liste, klappt automatisch jede
+// andere ein. Der hidden-Zugriff läuft dafür über einen Setter auf dem Element –
+// alle bestehenden Stellen im Code (Öffnen, Schließen, Toggle) bleiben unverändert.
+function exclList(el, others) {
+  let v = el.hidden;
+  Object.defineProperty(el, "hidden", {
+    get() { return v; },
+    set(x) {
+      v = !!x;
+      if (!v) for (const o of others) { if (o && !o.hidden) o.hidden = true; }
+      if (v) el.setAttribute("hidden", ""); else el.removeAttribute("hidden");
+    },
+    configurable: true
+  });
+}
+exclList(addrSug, [addrFavPanel, sugBox, stopFavPanel]);
+exclList(addrFavPanel, [addrSug, sugBox, stopFavPanel]);
+exclList(sugBox, [addrSug, addrFavPanel, stopFavPanel]);
+exclList(stopFavPanel, [addrSug, addrFavPanel, sugBox]);
 const stopFavCount = document.getElementById("stopFavCount");
 function renderStopFavs() {
   if (stopFavCount) stopFavCount.textContent = favs.length;
@@ -4495,6 +4564,14 @@ async function refetchStop(sn, manual) {
   renderPanels();
 }
 
+// Abfahrten wirklich weg (länger als 2 Minuten abgefahren)? Nicht verwechseln mit
+// „für den Fußweg nicht mehr erreichbar“: Eine weit entfernte Station hat laufend
+// Abfahrten, die man zu Fuß nicht mehr schafft – die sind NICHT weg, nur unerreichbar.
+function depsReallyGone(v) {
+  const ageSec = (Date.now() - v.fetchTs) / 1000;
+  return !(v.deps || []).some(d => (d.actualRelativeTime || 0) - ageSec > -120);
+}
+
 // ---------- Buszeilen rendern ----------
 function busLinesHTML(v) {
   if (!v || !v.deps) return [];
@@ -4504,7 +4581,7 @@ function busLinesHTML(v) {
   for (const d of v.deps) {
     const rel = d.actualRelativeTime - ageSec;
     const losMin = Math.round((rel - walkSec) / 60);
-    if (losMin < -2) continue;   // mehr als 2 Minuten abgefahren: nicht mehr anzeigen
+    if (!depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 🌐 sichtbar
     const plat = v.platforms && v.platforms[d.tripId];
     const cls = losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed";
     const now = new Date();
@@ -4548,8 +4625,12 @@ function renderView(sn, el) {
       // alle Abfahrten länger als 2 Minuten weg: Station neu laden (max. alle 30 s)
       if (!lines.length) {
         info.className = "rowinfo dim";
-        info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
-        if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
+        if (depsReallyGone(v)) {
+          info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
+          if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
+        } else {
+          info.textContent = "keine erreichbaren Abfahrten (Fußweg zu lang) – 🌐 in der Stationsansicht zeigt alle";
+        }
         return;
       }
       const newHTML = lines.map(l => l.html).join("");
@@ -5060,7 +5141,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.8 · Build: 14.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.1.9 · Build: 15.11.2026</div>
 </div>
 </body>
 </html>
