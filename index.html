@@ -313,7 +313,8 @@
     letter-spacing: .05em; color: #64748b; margin: 10px 0 4px; }
   .achips { display: flex; flex-wrap: wrap; gap: 6px; }
   .achip { border: 1px solid #1e3a5f; border-radius: 999px; padding: 4px 10px;
-    font-size: .8rem; cursor: pointer; background: #0f1a30; color: #cbd5e1; user-select: none; }
+    font-size: .8rem; cursor: pointer; background: #0f1a30; color: #cbd5e1; user-select: none;
+    text-decoration: none; display: inline-block; }
   .achip.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
   .doder { text-align: center; color: #7dd3fc; font-weight: 600; margin: 6px 0; }
   .dstages { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
@@ -550,7 +551,7 @@
     </div>
     <div class="searchbox" id="addrBox">
       <input type="search" id="addrSearch" placeholder="Startadresse, Koordinaten (54.32, 10.13), Locator (JO49sk), Karten-Link …" autocomplete="off" />
-      <button class="gpsbtn" id="posBtn" title="GPS als Startpunkt der Adresssuche: Position übernehmen bzw. aktualisieren (grün = in der Nähe, gelb = über 200 m entfernt, grau = GPS aus)">GPS</button>
+      <button class="gpsbtn" id="posBtn" title="GPS als Startpunkt der Adresssuche: grau = einschalten bzw. Position übernehmen, gelb = neu orten (ohne Dialog), grün = GPS ausschalten">GPS</button>
       <button class="ddbtn" id="addrDdBtn" title="Passende Adressen als Auswahlliste anzeigen" aria-label="Adressvorschläge anzeigen">▾</button>
       <button class="addrclr" id="addrClearBtn" title="Suchtext leeren – ist eine Adresse aktiv, wird sie abgewählt (zurück zu GPS)">✕</button>
       <div class="suggestions" id="addrSug" hidden></div>
@@ -566,7 +567,7 @@
     </div>
     <div class="searchbox">
       <input type="search" id="stopSearch" placeholder="Haltestelle suchen oder aus Liste wählen …" autocomplete="off" />
-      <button class="gpsbtn" id="gpsGoBtn" title="GPS für die Haltestellensuche: Position übernehmen bzw. aktualisieren, Liste sortiert danach (grün = in der Nähe, gelb = über 200 m entfernt, grau = GPS aus)">GPS</button>
+      <button class="gpsbtn" id="gpsGoBtn" title="GPS für die Haltestellensuche, Liste sortiert danach: grau = einschalten bzw. Position übernehmen, gelb = neu orten (ohne Dialog), grün = GPS ausschalten">GPS</button>
       <button class="ddbtn" id="listModeBtn" title="Listenansicht wechseln: Hierarchisch (nach Haltestellen) oder Abfahrten in Laufweite (nächste 30 Minuten, gemeinsam nach Fußweg sortiert)" aria-label="Listenansicht wechseln">☰</button>
       <button class="ddbtn" id="ddBtn" title="Alle Haltestellen anzeigen" aria-label="Alle Haltestellen anzeigen">▾</button>
       <button class="addrclr stopclr" id="stopClearBtn" title="Suchfeld leeren – steht die ausgewählte Station drin, wird ihr Reiter geschlossen (mit Wecker-Rückfrage)">✕</button>
@@ -897,6 +898,7 @@ function gpsStop() {
   if (watchId != null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
   gpsState = "off";
+  gpsSilentAdopt = null;   // laufende stille Neu-Ortung abbrechen
   renderGpsBtn();
   renderAcc();
   updateGpsBtns();   // Knöpfe zurück auf grau (GPS aus)
@@ -920,6 +922,15 @@ function onPos(pos) {
       lat: myPos.lat, lon: myPos.lon, accuracy: myPos.accuracy, ts: Date.now()
     }));
   } catch (e) {}
+  // Gelber GPS-Knopf gedrückt: frische Ortung ohne Dialog übernehmen, sobald sie gut ist
+  if (gpsSilentAdopt) {
+    if (myPos.accuracy != null && myPos.accuracy > GPS_ACC_DIRECT_M) return;   // noch zu grob: weiter warten
+    const k = gpsSilentAdopt;
+    gpsSilentAdopt = null;
+    gpsTakeTarget = k;
+    gpsAdoptDispatch(myPos);
+    return;
+  }
   if (addrPos) {
     if (firstFix) setLocNote("Adresse aktiv – GPS läuft im Hintergrund, gilt aber nicht. ✕ im Adressfeld kehrt zum GPS zurück.");
     if (gpsDlgMode === "takeover" && !gpsDlg.hidden && pos.coords.accuracy <= getAccThresh()) { gpsDlg.hidden = true; gpsAdoptDispatch(myPos); }
@@ -1054,6 +1065,8 @@ function updateGpsDlg() {
 // GPS-Knopf-Zustand: "off" = grau (GPS aus), "busy" = blau pulsierend (Suche
 // läuft), "ok" = grün (keine Position oder aktuelle Ortung ≤ 200 m von der
 // gespeicherten), "stale" = gelb (weiter als 200 m davon entfernt).
+// Klick-Semantik (gpsBtnClick): grau = einschalten/übernehmen, gelb = neu orten
+// ohne Dialog, grün = GPS ausschalten.
 function gpsBtnState(stored) {
   if (gpsState === "searching") return "busy";
   if (gpsState !== "on" || !myPos) return "off";
@@ -1122,6 +1135,9 @@ function gpsTakeOver() {
 // GPS-Übernahme (Startpunkt + Haltestellenliste), "addrFav"/"stopFav" =
 // GPS-Standort nur als Sortier-Ursprung der jeweiligen Favoritenliste hinterlegen.
 let gpsTakeTarget = "stops";
+// Gelber GPS-Knopf gedrückt: dieser Kontext wartet auf den nächsten GUTEN Fix und
+// übernimmt ihn dann ohne Dialog (gpsSilentAdopt = gpsTakeTarget-Kontext).
+let gpsSilentAdopt = null;
 function gpsAdoptForList(kind, p) {
   if (!p) return;
   sortGps[kind] = { lat: p.lat, lon: p.lon, acc: Math.round(p.accuracy || 0), t: Date.now() };
@@ -1159,15 +1175,47 @@ function gpsTakeOverFor(kind) {
   if (gpsState === "off") gpsStart();
   openGpsDlg("takeover");
 }
+// ---------- Einheitliche GPS-Knopf-Semantik (alle farbigen GPS-Knöpfe) ----------
+// grau = einschalten bzw. Position übernehmen (Dialog nur bei schlechter Ortung),
+// gelb = neue Ortung ohne Dialog übernehmen (Knopf wird wieder grün),
+// grün = GPS ausschalten (Knöpfe werden grau, erneuter Druck ortet wieder),
+// blau pulsierend = Suche läuft, Klick wird ignoriert.
+function gpsBtnClick(kind, stored) {
+  const st = gpsBtnState(stored);
+  if (st === "busy") return;
+  if (st === "ok") {
+    gpsStop();
+    setLocNote("GPS ausgeschaltet – die GPS-Knöpfe sind wieder grau; ein erneuter Druck ortet neu.");
+    return;
+  }
+  if (st === "stale") { gpsSilentRefresh(kind); return; }
+  if (kind === "stops") { gpsTakeTarget = "stops"; gpsTakeOver(); return; }   // wie bisher: Übernahme für die Haltestellensuche
+  gpsTakeOverFor(kind);
+}
+// Gelb: frische Ortung ohne Dialog. Liegt schon eine gute Ortung vor, wird sie
+// sofort übernommen; sonst läuft das GPS (nötigenfalls angeschaltet) und der
+// nächste ausreichend genaue Fix wird automatisch übernommen.
+function gpsSilentRefresh(kind) {
+  if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
+    gpsTakeTarget = kind;
+    gpsAdoptDispatch(myPos);
+    return;
+  }
+  gpsWasOff = gpsState === "off";
+  if (gpsState === "off") gpsStart();
+  gpsSilentAdopt = kind;
+  setLocNote("Neue Ortung läuft – wird ohne Dialog übernommen, sobald sie genau genug ist.");
+}
 
 // ---------- GPS je Stationsreiter (Kopfzeile „Abfahrten: …“) ----------
 // Jeder Stationsreiter hält seine EIGENE GPS-Position (kvg-tabgps, sn → Position),
 // bis der GPS-Knopf der Kopfzeile sie per Klick aktualisiert. Die alte globale
 // depGps-Position gilt weiter als geerbter Ursprung für Reiter ohne eigene.
 let depGpsTargetSn = null;   // Reiter, für den die laufende GPS-Übernahme gilt
-function depGpsToggle() {   // GPS-Knopf der Kopfzeile: Position DIESES Reiters übernehmen bzw. aktualisieren
+function depGpsToggle() {   // GPS-Knopf der Kopfzeile: grau = Position DIESES Reiters übernehmen, gelb = neu orten, grün = GPS aus
   depGpsTargetSn = currentStop ? currentStop.shortName : null;
-  gpsTakeOverFor("dephead");
+  const own = (depGpsTargetSn && tabGps[depGpsTargetSn]) || depGps || null;
+  gpsBtnClick("dephead", own);
 }
 function depGpsAdopt(p) {   // Übernahme aus GPS-Dialog/-Fix: gilt für den angestoßenen Reiter
   tabGpsAdopt(p, depGpsTargetSn || (currentStop && currentStop.shortName));
@@ -1202,8 +1250,7 @@ function openGpsDlg(mode) {
 }
 gpsDlgBtn.addEventListener("click", gpsToggle);
 document.getElementById("gpsGoBtn").addEventListener("click", () => {
-  gpsTakeTarget = "stops";
-  gpsTakeOver();   // Position des Suchfelds übernehmen bzw. aktualisieren (Dialog bei schlechter Ortung)
+  gpsBtnClick("stops", stopGpsPos);   // grau: übernehmen (Dialog bei schlechter Ortung), gelb: neu orten, grün: GPS aus
 });
 document.getElementById("gpsDlgOk").addEventListener("click", () => {
   if (!myPos || gpsState !== "on") {
@@ -1307,7 +1354,7 @@ function adoptGpsPos(p) {
 // ungenau: GPS-Statusfenster öffnen (schaltet GPS nötigenfalls ein, wartet auf
 // ein gutes Signal, Abbrechen schaltet es danach wieder aus).
 posBtn.addEventListener("click", () => {
-  gpsTakeOverFor("addr");   // GPS als Startpunkt übernehmen bzw. Position aktualisieren (Dialog bei schlechter Ortung)
+  gpsBtnClick("addr", addrPos && addrPos.gps ? addrPos : null);   // grau: GPS als Startpunkt übernehmen, gelb: neu orten, grün: GPS aus
 });
 
 // ---------- Adresssuche (Alternative ohne GPS) ----------
@@ -1530,7 +1577,7 @@ async function searchAddress(q) {
     const isFav = addrFavs.some(f =>
       f.label === r.label && f.lat === Number(r.lat) && f.lon === Number(r.lon));
     return '<div data-addr="' + i + '"><span>' + escapeHtml(r.label) + "</span>" +
-      routeIconHTML(getPos(), { lat: Number(r.lat), lon: Number(r.lon) }, "Weg zu dieser Adresse im externen Routing (Google Maps, zu Fuß)") +
+      routeIconHTML({ lat: Number(r.lat), lon: Number(r.lon) }, "Diese Adresse an eine externe Karten-App übergeben (z. B. Google Maps)") +
       '<button class="star' + (isFav ? "" : " off") + '" data-afav="' + i +
       '" title="Adresse als Favorit speichern bzw. entfernen">★</button>' +
       '<span class="atype">' + escapeHtml(r.type) + "</span></div>";
@@ -1672,27 +1719,32 @@ function renderAddrChip() {
   if (!addrPos) { addrChip.innerHTML = ""; return; }
   addrChip.innerHTML =
     '<span class="chip mini dim2" title="Aktiver Standort: diese Adresse ist als Startpunkt eingeloggte">' + escapeHtml(addrPos.label) + "</span>" +
-    routeIconHTML(myPos, addrPos, "Weg von der GPS-Position bzw. dem letzten bekannten Standort zu dieser Adresse im externen Routing (Google Maps, zu Fuß)");
+    routeIconHTML(addrPos, "Aktiven Standort an eine externe Karten-App übergeben (z. B. Google Maps)");
 }
 
-// ---------- Externes Routing & Fußweg zwischen zwei Punkten ----------
-// Google-Maps-Weglink (zu Fuß): Start = aktuelle Position (falls vorhanden),
-// Ziel = angegebener Punkt; ohne Start nur das Ziel.
-function routeUrlG(from, to) {
-  const o = from ? "origin=" + from.lat + "," + from.lon + "&" : "";
-  return "https://www.google.com/maps/dir/?api=1&" + o +
-    "destination=" + to.lat + "," + to.lon + "&travelmode=walking";
+// ---------- Externe Karten-App & Fußweg zwischen zwei Punkten ----------
+// Standort an eine externe Karten-App übergeben (z. B. Google Maps): KEIN Routing,
+// nur der Ort selbst wird übergeben – die App öffnet mit Pin an dieser Stelle.
+function placeUrlG(to) {
+  return "https://www.google.com/maps/search/?api=1&query=" + to.lat + "," + to.lon;
 }
-// Kleines Route-Symbol (gefaltete Karte mit gestrichelter Route und Pfeil):
+// Echtes externes Routing mit Start und Ziel (z. B. Google Maps) – für den Knopf
+// im Routing-Reiter, wenn beides gesetzt ist. ÖPNV-Modus, passend zur App;
+// andere Routing-Apps können den universellen Maps-Link ebenfalls öffnen.
+function routeExtUrl(a, b) {
+  return "https://www.google.com/maps/dir/?api=1&origin=" + a.lat + "," + a.lon +
+    "&destination=" + b.lat + "," + b.lon + "&travelmode=transit";
+}
+// Kleines Karten-Symbol (gefaltete Karte mit gestrichelter Route und Pfeil):
 // ersetzt die frueheren "🗺 Route"-Chips und erscheint direkt an Adressen
 // und Haltestellen (Chips, Favoriten, Suchlisten, Panels).
 const ROUTE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">' +
   '<path d="M3 6.5l5.5-2 6 2 6.5-2v13l-6.5 2-6-2-5.5 2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>' +
   '<path d="M7.2 16.3c2.3-6.2 6.6-7.6 8.6-4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.4 2"/>' +
   '<path d="M17.4 10.5l-1.6-1.3-.4 2.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-function routeIconHTML(from, to, title) {
-  return '<a class="ricon" target="_blank" rel="noopener" href="' + routeUrlG(from, to) +
-    '" title="' + escapeHtml(title) + '" aria-label="Route im externen Routing öffnen">' + ROUTE_ICON + "</a>";
+function routeIconHTML(to, title) {
+  return '<a class="ricon" target="_blank" rel="noopener" href="' + placeUrlG(to) +
+    '" title="' + escapeHtml(title) + '" aria-label="Ort an eine externe Karten-App übergeben">' + ROUTE_ICON + "</a>";
 }
 // OSRM-Fußweg-Routing zwischen zwei Punkten (ohne Cache, für Dialoge):
 // liefert { m, est } bzw. null. Luftlinie × 1,3 als Schätzung, wenn der
@@ -1719,7 +1771,7 @@ function renderStopChip() {
   if (!s) { stopChip.innerHTML = ""; return; }
   stopChip.innerHTML =
     '<span class="chip mini dim2" title="Station im aktiven Reiter – ✕ am Reiterkopf schließt ihn (Wecker-Rückfrage inklusive)">🚏 ' + escapeHtml(s.name) + "</span>" +
-    routeIconHTML(getPos(), s, "Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)");   // grün/rot entfallen: der Reiter selbst zeigt die Auswahl, sein ✕ schließt ihn
+    routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)");   // grün/rot entfallen: der Reiter selbst zeigt die Auswahl, sein ✕ schließt ihn
 }
 
 // ---------- Adressfavoriten (oben rechts) ----------
@@ -1769,7 +1821,7 @@ function renderAddrFavs() {
       '<span class="afsname">⭐ ' + escapeHtml(f.name) +
         (origin ? ' <small class="dim">' + formatDist(dist(origin, f)) + '</small>' : '') +
         (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") + '</span>' +
-      routeIconHTML(origin, f, "Weg zu diesem Adressfavoriten im externen Routing (Google Maps, zu Fuß)") +
+      routeIconHTML(f, "Diesen Adressfavoriten an eine externe Karten-App übergeben (z. B. Google Maps)") +
       '<button class="afbtn" data-fh="addr:' + i + '" title="Finde nach Hause: Hinweise einstellen' +
         (f.fh && f.fh.on ? ' (aktiv)' : '') + '">' + (f.fh && f.fh.on ? "🏠" : "⌂") + "</button>" +
       '<button class="afbtn" data-afedit="' + i + '" title="Alias und Adresse bearbeiten">✎</button>' +
@@ -2110,7 +2162,7 @@ function rowHTML(s, pos) {
   return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
     '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
     '<span class="smeta">' + meta + "</span>" +
-    routeIconHTML(pos, s, "Weg von der aktuellen Position zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)") +
+    routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") +
     starHTML(s.shortName) +
     '<button class="rowref" data-ref="' + escapeHtml(s.shortName) +
       '" title="Nur diese Haltestelle neu abfragen">↻</button></div>' +
@@ -2358,10 +2410,6 @@ sugBox.addEventListener("click", e => {
   }
   const ref = e.target.closest("[data-ref]");
   if (ref) { refetchStop(ref.dataset.ref, true); return; }
-  const later = e.target.closest("[data-later]");
-  if (later) { laterDeps(later.dataset.later); return; }
-  const earlier = e.target.closest("[data-earlier]");
-  if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
   const bus = e.target.closest("[data-bus]");
   if (bus) {
     const [sn, tripId] = bus.dataset.bus.split("~");
@@ -2635,12 +2683,12 @@ function tabGpsBtnHTML(sn) {
   const own = (sn && tabGps[sn]) || depGps || null;   // GPS-Ursprung dieses Reiters (eigene oder geerbte Position)
   const st = gpsBtnState(own);
   const title = st === "off"
-    ? "GPS ist aus – Klick öffnet den GPS-Status und schaltet die Ortung ein"
-    : st === "stale"
-      ? "Aktuelle Ortung liegt mehr als 200 m von der gespeicherten Position entfernt – Klick: Position dieses Reiters aktualisieren"
-      : own
-        ? "GPS-Position (±" + Math.round(own.acc || 0) + " m) gilt für die Fußwege dieses Reiters – Klick: Position aktualisieren"
-        : "GPS-Position für die Fußwege dieses Reiters übernehmen";
+    ? "GPS ist aus – Klick schaltet die Ortung ein und übernimmt die Position für diesen Reiter"
+    : st === "busy"
+      ? "GPS-Suche läuft …"
+      : st === "stale"
+        ? "Aktuelle Ortung liegt mehr als 200 m von der gespeicherten Position entfernt – Klick: neu orten ohne Dialog"
+        : "GPS an (±" + Math.round(own.acc || 0) + " m) für die Fußwege dieses Reiters – Klick schaltet das GPS aus";
   return '<button class="gpsbtn' + gpsBtnCls(st) + '" data-depgps="1" title="' + title + '">GPS</button>';
 }
 function renderStationPanel() {
@@ -4213,7 +4261,7 @@ function renderStopFavs() {
     inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
       '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) +
         (s && origin ? ' <small class="dim">' + formatDist(dist(origin, s)) + '</small>' : '') + "</span>" +
-      (s ? routeIconHTML(origin, s, "Weg zu dieser Haltestelle im externen Routing (Google Maps, zu Fuß)") : "") +
+      (s ? routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") : "") +
       '<button class="afbtn" data-fh="stop:' + escapeHtml(sn) + '" title="Finde nach Hause: Hinweise einstellen' +
         (fhStopCfg[sn] && fhStopCfg[sn].on ? ' (aktiv)' : '') + '">' +
         (fhStopCfg[sn] && fhStopCfg[sn].on ? "🏠" : "⌂") + "</button>" +
@@ -5040,8 +5088,19 @@ function hafasAbsMs(date, t) {
   dt.setDate(dt.getDate() + day + Math.floor(h / 24));
   return dt.getTime();
 }
+// Betriebstag aus der NAH.SH-jid (endet auf TTMMJJJJ, z. B. „1|19685|1|100|16112026“):
+// Abfahrten nach Mitternacht tragen KEINEN Tagesoffset-Präfix, wenn ihr Betriebstag
+// vom Anfragedatum abweicht – ihre Zeit ist relativ zum BETRIEBSTAG aus der jid zu
+// lesen. Mit dem Anfragedatum gerechnet erscheinen Busse von morgen früh als
+// „heute früh“ (8–16 h in der Vergangenheit) und sprengen das „früher“-Paging.
+function hafasJidDate(jid, fallback) {
+  const m = String(jid || "").match(/(\d{2})(\d{2})(\d{4})$/);
+  return m ? (m[3] + m[2] + m[1]) : fallback;
+}
 // NAH.SH-Abfahrtstafel ab einem beliebigen Zeitpunkt (auch zurückliegend):
 // rohe Einträge mit absoluter Abfahrtszeit in ms. mask: 31 = Schiene, 32 = Bus.
+// Wirft bei API-Fehlern (z. B. HAMM-Rate-Limit), damit Aufrufer „fehlgeschlagen“
+// von „wirklich keine Abfahrten“ unterscheiden können.
 async function nahshBoardEntries(lid, T, mask) {
   const p = x => String(x).padStart(2, "0");
   const date = T.getFullYear() + p(T.getMonth() + 1) + p(T.getDate());
@@ -5049,7 +5108,12 @@ async function nahshBoardEntries(lid, T, mask) {
   const res = await dbFetch([{ meth: "StationBoard",
     req: { type: "DEP", stbLoc: { lid }, date, time,
       jnyFltrL: [{ type: "PROD", mode: "INC", value: mask }], maxJny: 120 } }]);
-  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  const s0 = res.svcResL && res.svcResL[0];
+  if ((!s0 || (s0.err && s0.err !== "OK")) && res.err)
+    throw new Error("NAH.SH-Fehler " + (res.err || (s0 && s0.err)));
+  const out = s0 && s0.res;
+  if ((!out || !out.jnyL) && s0 && s0.err && s0.err !== "OK")
+    throw new Error("NAH.SH-Fehler " + s0.err);
   if (!out || !out.jnyL) return [];
   const prodL = (out.common && out.common.prodL) || [];
   const list = [];
@@ -5058,7 +5122,7 @@ async function nahshBoardEntries(lid, T, mask) {
     const st = j.stbStop || {};
     const tS = st.dTimeS || st.dTimeR;
     if (!tS) continue;
-    const absMs = hafasAbsMs(date, tS);
+    const absMs = hafasAbsMs(hafasJidDate(j.jid, date), tS);
     if (absMs == null) continue;
     const nm = String(prod.name || "").replace(/^Bus\s+/i, "").trim();
     list.push({ tripId: j.jid, line: nm || "Bus", direction: j.dirTxt || "",
@@ -5074,6 +5138,7 @@ async function fetchPlannedDeps(sn) {
   if (!v || !stop) return;
   const lid = await nahshLocFor(stop);
   const list = [];
+  let ok = false;
   if (lid) {
     try {
       const now = Date.now();
@@ -5087,8 +5152,12 @@ async function fetchPlannedDeps(sn) {
           alerts: [], planned: true
         });
       }
+      ok = true;
     } catch (e) {}
+  } else {
+    ok = true;   // Haltestelle im NAH.SH-Fahrplan unbekannt: das ist ein Ergebnis (plannedLidOk=false)
   }
+  if (!ok) return;   // NAH.SH nicht erreichbar: Zustand unverändert, „später“ bleibt drückbar
   list.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
   v.planned = list;
   v.plannedTs = Date.now();
@@ -5113,7 +5182,7 @@ async function fetchEarlierDeps(sn) {
   else earliest = Date.now();
   const have = {};
   for (const d of (v.earlier || [])) have[d.jidKey] = 1;
-  let found = [];
+  let found = [], gotAny = false;
   for (let dMin = 3; dMin <= 192 && found.length < 6; dMin *= 2) {
     try {
       const cand = [];
@@ -5125,7 +5194,12 @@ async function fetchEarlierDeps(sn) {
       }
       cand.sort((a, b) => b.e.absMs - a.e.absMs);   // neueste zuerst
       found = cand;
+      gotAny = true;
     } catch (err) { break; }
+  }
+  if (!gotAny) {   // NAH.SH (z. B. Rate-Limit) nicht erreichbar: Button bleibt, erneut drücken
+    setLocNote("NAH.SH gerade nicht erreichbar – „früher“ bitte gleich noch einmal drücken.");
+    return;       // earlierTried/exhausted NICHT setzen
   }
   const add = found.slice(0, 6);
   if (add.length) {
@@ -5297,11 +5371,13 @@ function renderView(sn, el) {
           info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
           if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
         } else {
-          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle" + earlierHTML(v) + laterHTML(v);
+          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle";
         }
         return;
       }
-      const newHTML = earlierHTML(v) + lines.map(l => l.html).join("") + laterHTML(v);
+      // „früher“/„später“ gibt es nur im Stationsreiter (nach Wahl einer Station),
+      // nicht in dieser Stationsübersicht.
+      const newHTML = lines.map(l => l.html).join("");
       // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
       if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
       if (info.dataset.last !== newHTML) {
@@ -6013,11 +6089,16 @@ function renderRoutePanel() {
   const a = routeSel.start, b = routeSel.dest;
   let h = '<div class="sechead"><span class="sarr">▾</span>🧭 Route: ' +
     escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") + "</div>";
-  h += '<div class="dstage" style="margin:6px 0">Abfahrt <input type="time" class="rttime" id="routeTime" value="' +
+  h += '<div class="dstage" style="margin:6px 0; flex-wrap:wrap">Abfahrt <input type="time" class="rttime" id="routeTime" value="' +
     (routeSel.time || routeNowStr()) + '">' +
     ' <button class="achip" data-rtnow2="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button>' +
     ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶ Suchen</button>' +
-    routeProdBtns() + "</div>";
+    routeProdBtns() +
+    ' <button class="achip" data-rtedit="1" title="Start und Ziel im Routen-Dialog neu wählen (derselbe Dialog wie beim Planen der Route)">✎ Start/Ziel</button>' +
+    ((a && b && a.lat != null && b.lat != null)
+      ? ' <a class="achip" target="_blank" rel="noopener" href="' + routeExtUrl(a, b) +
+        '" title="Diese Route in einer externen Routing-App öffnen (z. B. Google Maps, ÖPNV-Modus)">🗺 Extern</a>'
+      : "") + "</div>";
   if (routeLoading) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
   } else if (routeSearchErr) {
@@ -6127,6 +6208,10 @@ routePanel.addEventListener("click", e => {
     }
     return;
   }
+  if (e.target.closest("[data-rtedit]")) {
+    openRouteDlg();   // derselbe Routen-Dialog wie beim Planen: Start/Ziel (und Zeit) neu wählen
+    return;
+  }
   if (e.target.closest("[data-rtsearch]")) {
     const ti = document.getElementById("routeTime");
     if (ti) routeSel.time = ti.value || "";
@@ -6148,17 +6233,17 @@ function routeFieldHTML(which) {
     '<button class="achip" data-rtpick="stopfav:' + which + '">⭐ Station</button>' +
     routeGpsChipHTML(which) + '</div>';
 }
-// GPS-Knopf fuer Start/Ziel im Route-Dialog: uebernimmt die aktuelle Position als
-// Endpunkt; bei gewaehlter GPS-Position aktualisiert der Klick sie (Farben wie
-// ueberall: grau = GPS aus, blau pulsierend = Suche, gruen <= 200 m, gelb > 200 m).
+// GPS-Knopf fuer Start/Ziel im Route-Dialog: grau = aktuelle Position uebernehmen,
+// gelb = neu orten ohne Dialog, gruen = GPS ausschalten (Farben wie ueberall:
+// grau = GPS aus, blau pulsierend = Suche, gruen <= 200 m, gelb > 200 m).
 // ✕ (data-rtclear) nimmt die Auswahl zurueck.
 let gpsTakeWhich = "start";   // Start/Ziel, fuer das die laufende GPS-Uebernahme gilt
 function routeGpsChipHTML(which) {
   const sel = routeSel[which];
   return '<button class="achip rtgps' + gpsBtnCls(gpsBtnState(sel && sel.gps ? sel : null)) +
-    '" data-rtgps="' + which + '" title="Aktuelle GPS-Position als ' +
+    '" data-rtgps="' + which + '" title="GPS-Position als ' +
     (which === "start" ? "Start" : "Ziel") +
-    ' übernehmen bzw. aktualisieren (grün = in der Nähe, gelb = über 200 m entfernt, grau = GPS aus)">◎ GPS</button>';
+    ': grau = übernehmen, gelb = neu orten (ohne Dialog), grün = GPS ausschalten">◎ GPS</button>';
 }
 function routeGpsSet(which, p) {
   if (!p) return;
@@ -6182,7 +6267,7 @@ function routeGpsSet(which, p) {
 function routeGpsAdopt(p) { routeGpsSet(gpsTakeWhich, p); }
 function routeGpsBtn(which) {
   gpsTakeWhich = which;
-  gpsTakeOverFor("route");
+  gpsBtnClick("route", routeSel[which] && routeSel[which].gps ? routeSel[which] : null);   // grau: übernehmen, gelb: neu orten, grün: GPS aus
 }
 function routeDlgHTML() {
   return '<div class="dlg">' +
@@ -6458,7 +6543,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.0 · Build: 16.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.1 · Build: 16.11.2026</div>
 </div>
 </body>
 </html>
