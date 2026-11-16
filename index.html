@@ -161,6 +161,16 @@
     padding: 2px 8px; font-size: 0.9rem; line-height: 1.4; cursor: pointer; vertical-align: middle; }
   .depann:hover { background: #334155; color: #e2e8f0; }
   .depann.all { border-color: #eab308; color: #eab308; }
+  .depann.small { padding: 1px 5px; font-size: 0.78rem; opacity: 0.8; }
+  .sechead .gpsbtn { padding: 2px 8px; font-size: 0.8rem; border-radius: 8px; vertical-align: middle; }
+  .ptag { color: #94a3b8; font-size: 0.68rem; border: 1px solid #334155; border-radius: 4px;
+    padding: 0 4px; margin-left: 6px; white-space: nowrap; }
+  .bl.planned .btime { color: #94a3b8; }
+  .bl.planned { cursor: default; }
+  .morewrap { text-align: center; margin: 6px 0 2px; }
+  .morelink { background: #0f172a; border: 1px solid #334155; color: #94a3b8; border-radius: 10px;
+    padding: 3px 22px; cursor: pointer; font-size: 0.85rem; line-height: 1.5; }
+  .morelink:hover { color: #e2e8f0; border-color: #4d8fd6; }
   .flatrow { display: flex; align-items: center; gap: 8px; }
   .flatrow .mqwrap { flex: 1 1 auto; overflow: hidden; white-space: nowrap; min-width: 30px; }
   .flatrow .fdst { color: #94a3b8; font-size: 0.85rem; white-space: nowrap; overflow: hidden;
@@ -1073,6 +1083,7 @@ function gpsAdoptDispatch(p) {
   if (gpsTakeTarget === "addrFav" || gpsTakeTarget === "stopFav") gpsAdoptForList(gpsTakeTarget, p);
   else if (gpsTakeTarget === "addr") adoptGpsPos(p);
   else if (gpsTakeTarget === "addrSave") saveGpsAddrFav(p);
+  else if (gpsTakeTarget === "dephead") depGpsAdopt(p);
   else gpsAdoptForStops(p);
 }
 function gpsTakeOverFor(kind) {
@@ -1084,12 +1095,43 @@ function gpsTakeOverFor(kind) {
   // gute Ortung: direkt hinterlegen; sonst Dialog (schaltet GPS nötigenfalls ein)
   if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
     if (kind === "addr") adoptGpsPos(myPos);
+    else if (kind === "dephead") depGpsAdopt(myPos);
     else gpsAdoptForList(kind, myPos);
     return;
   }
   gpsWasOff = gpsState === "off";
   if (gpsState === "off") gpsStart();
   openGpsDlg("takeover");
+}
+
+// ---------- GPS nur für Abfahrten + Stationsübersicht (Kopfzeile „Abfahrten: …“) ----------
+function depGpsSave() {
+  try { localStorage.setItem("kvg-depgps", depGps ? JSON.stringify(depGps) : "null"); } catch (e) {}
+}
+function depGpsRefresh() {
+  for (const v of stopViews.values()) v.meters = null;   // Fußwege neu berechnen
+  renderPanels();
+  if (currentStop) refetchStop(currentStop.shortName, true);
+  renderViews();
+  enrichVisible(true);
+}
+function depGpsAdopt(p) {
+  if (!p) return;
+  depGps = { lat: p.lat, lon: p.lon, acc: Math.round(p.accuracy || 0), ts: Date.now() };
+  depGpsSave();
+  depGpsRefresh();
+  setLocNote("📍 GPS-Position (±" + Math.round(p.accuracy || 0) +
+    " m) für Abfahrten und Stationsübersicht übernommen – Fußwege und erreichbare Verbindungen aktualisiert.");
+}
+function depGpsToggle() {
+  if (depGps) {   // aktiv (grün): zurück zum Startpunkt der Suchen
+    depGps = null;
+    depGpsSave();
+    depGpsRefresh();
+    setLocNote("GPS für Abfahrten und Stationsübersicht aus – Fußwege gelten wieder ab Startpunkt.");
+    return;
+  }
+  gpsTakeOverFor("dephead");
 }
 
 function openGpsDlg(mode) {
@@ -2268,6 +2310,8 @@ sugBox.addEventListener("click", e => {
   }
   const ref = e.target.closest("[data-ref]");
   if (ref) { refetchStop(ref.dataset.ref, true); return; }
+  const more = e.target.closest("[data-more]");
+  if (more) { moreDeps(more.dataset.more); return; }
   const bus = e.target.closest("[data-bus]");
   if (bus) {
     const [sn, tripId] = bus.dataset.bus.split("~");
@@ -2517,30 +2561,44 @@ function renderPanels() {
 
 let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
 let stationPanelCache = "";
-// ⏱/🌐-Umschalter hinter dem Stationsnamen („Abfahrten: …“): ⏱ = nur erreichbare
-// Abfahrten (Fußweg berücksichtigt), 🌐 = ungefiltert ALLE Abfahrten der
-// KVG-Live-Ansicht. Persistiert (kvg-depall, im ⇅-Zustand enthalten).
+// 🚶/💨-Umschalter hinter dem Stationsnamen („Abfahrten: …“): 🚶 = nur erreichbare
+// Abfahrten (Fußweg berücksichtigt), 💨 = auch zu Fuß nicht mehr erreichbare,
+// quasi abgefahrene Verbindungen. Persistiert (kvg-depall, im ⇅-Zustand enthalten).
+// GPS-Knopf daneben: Position nur für Abfahrten + Stationsübersicht (depGps).
 let depShowAll = false;
 try { depShowAll = localStorage.getItem("kvg-depall") === "1"; } catch (e) {}
+// GPS-Position NUR für Abfahrten + Stationsübersicht (Fußwege/Erreichbarkeit),
+// unabhängig vom Startpunkt der Suchen. 12 h gültig, danach verworfen.
+let depGps = null;
+try {
+  depGps = JSON.parse(localStorage.getItem("kvg-depgps") || "null");
+  if (depGps && (!depGps.ts || Date.now() - depGps.ts > 12 * 3600e3)) depGps = null;
+} catch (e) { depGps = null; }
+function walkOrigin() { return depGps || getPos(); }
 function renderStationPanel() {
   if (!currentStop) { stationPanel.hidden = true; stationPanel.innerHTML = ""; return; }
   const v = stopViews.get(currentStop.shortName);
   // Kopfzeile des Bereichs; nur der aufgeklappte Bereich wird aktualisiert,
   // der zugeklappte zeigt den eingefrorenen Stand. Die frühere separate
   // Stationsansicht (Name, Entfernung, Route-Icon, Stern, ↻) ist weg – der
-  // Stationsname steht nur noch hier, dahinter Favoritenstern und
-  // Aktualisieren, dann der ⏱/🌐-Umschalter.
+  // Stationsname steht nur noch hier, dahinter Favoritenstern, 🚶/💨-Umschalter
+  // und GPS, Aktualisieren (↻) ganz rechts.
   const head = '<div class="sechead" data-ssec="1"><span class="sarr">' +
     (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
     escapeHtml(currentStop.name) +
     starHTML(currentStop.shortName) +
+    ' <button class="depann small' + (depShowAll ? " all" : "") + '" data-depann="1" title="' +
+      (depShowAll
+        ? "Auch zu Fuß nicht mehr erreichbare (quasi abgefahrene) Verbindungen werden angezeigt – Klick: nur erreichbare"
+        : "Nur zu Fuß erreichbare Abfahrten – Klick: auch nicht mehr erreichbare (quasi abgefahrene) anzeigen") +
+      '">' + (depShowAll ? "💨" : "🚶") + "</button>" +
+    '<button class="gpsbtn' + (depGps ? " active" : "") + '" data-depgps="1" title="' +
+      (depGps
+        ? "GPS-Position (±" + Math.round(depGps.acc || 0) + " m) gilt für Abfahrten und Stationsübersicht – Klick: zurück zum Startpunkt"
+        : "GPS-Position für Abfahrten und Stationsübersicht übernehmen: Fußwege und erreichbare Verbindungen aktualisieren") +
+      '">GPS</button>' +
     '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
       '" title="Diese Haltestelle neu abfragen">↻</button>' +
-    ' <button class="depann' + (depShowAll ? " all" : "") + '" data-depann="1" title="' +
-      (depShowAll
-        ? "Alle Abfahrten der KVG-Live-Ansicht werden angezeigt (auch nicht erreichbare, rot) – Klick: nur erreichbare"
-        : "Nur erreichbare Abfahrten (Fußweg berücksichtigt) – Klick: ALLE Abfahrten der KVG-Live-Ansicht anzeigen") +
-      '">' + (depShowAll ? "🌐" : "⏱") + "</button>" +
     (stationPanelOpen ? "" : ' <span class="sfrozen">(eingefroren)</span>') +
     "</div>";
   if (!stationPanelOpen) {
@@ -2554,16 +2612,16 @@ function renderStationPanel() {
   }
   let body = "";
   if (v && v.fetched) {
-    const lines = busLinesHTML(v);
+    const lines = busLinesHTML(v, isDB(v.stop.shortName) ? (v.moreOpen ? 43200 : 21600) : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
       // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen
       refetchStop(currentStop.shortName, false);
       return;
     }
     if (!lines.length && v.deps.length) {
-      body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 🌐-Knopf oben zeigt alle Abfahrten.</small>';
+      body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 💨-Knopf oben zeigt alle Abfahrten.</small>';
     }
-    body += lines.map(l => l.html).join("");
+    body += lines.map(l => l.html).join("") + moreHTML(v);
   } else {
     body += '<small class="rowinfo dim">Daten werden geladen …</small>';
   }
@@ -2577,7 +2635,7 @@ function renderStationPanel() {
   stationPanel.hidden = false;
   // Kein Fußweg-Routing, solange der Fahrtverlauf offen ist: Luftlinie reicht
   // (spart Abfragen); im reinen Stations-Panel bleibt das exakte Routing aktiv.
-  if (v && v.meters == null && getPos() && !(currentBus && currentBus.tripOpen)) {
+  if (v && v.meters == null && walkOrigin() && !(currentBus && currentBus.tripOpen)) {
     walkMeters(currentStop).then(m => { if (m != null) { v.meters = m; renderStationPanel(); } });
   }
 }
@@ -2592,7 +2650,7 @@ function renderBusPanel() {
   if (!currentBus) { busPanel.hidden = true; busPanel.innerHTML = ""; return; }
   const stop = stops.find(s => s.shortName === currentBus.sn);
   const v = stopViews.get(currentBus.sn);
-  const pos = getPos();
+  const pos = walkOrigin();
   let meta;
   if (v && v.meters) {
     const pre = isEst(currentBus.sn) ? "~" : "";
@@ -2624,13 +2682,13 @@ function renderBusPanel() {
   inner +=
     '<div class="phead"><span class="pname">' + escapeHtml(stop ? stop.name : currentBus.sn) + "</span>" +
     '<span class="pmeta">' + meta + "</span>" + starHTML(currentBus.sn) +
+    '<button class="rowref" data-ref="' + escapeHtml(currentBus.sn) +
+      '" title="Diese Haltestelle neu abfragen">↻</button>' +
     '<button class="' + bellCls + '" data-linalarm="' + escapeHtml(String(currentBus.tripId)) +
       '" title="' + (bFire ? "Wecker ausgelöst – Dialog öffnen" :
         bArm ? "Wecker gestellt – antippen zum Ändern/Löschen" :
         "Wecker für eine Station dieser Linie stellen (lädt nötigenfalls den Fahrtverlauf)") + '">' +
-      (bArm || bFire ? "⏰" : "🔔") + "</button>" +
-    '<button class="rowref" data-ref="' + escapeHtml(currentBus.sn) +
-      '" title="Diese Haltestelle neu abfragen">↻</button></div>';
+      (bArm || bFire ? "⏰" : "🔔") + "</button></div>";
   // Jeder Block ist unabhängig auf-/zuklappbar; ein zugeklappter Block wird
   // nicht neu generiert (eingefrorener Stand, spart Daten und Aktualisierungen)
   const stOpen = !!currentBus.stationOpen;
@@ -2671,7 +2729,7 @@ function stationSectionHTML() {
     if (dep) {
       // kein Weg-Routing mehr im Fahrtverlauf: Luftlinie × 1,3 genügt als Schätzung
       const stopObj = stops.find(x => x.shortName === currentBus.sn);
-      const posNow = getPos();
+      const posNow = walkOrigin();
       const metersNow = v.meters || (stopObj && posNow ? dist(posNow, stopObj) * 1.3 : 0);
       const estAir = !v.meters && metersNow;
       const walkSec = metersNow ? metersNow / (WALK_SPEED_KMH * 1000 / 3600) : 0;
@@ -3959,8 +4017,12 @@ stationPanel.addEventListener("click", e => {
   if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const more = e.target.closest("[data-more]");
+  if (more) { moreDeps(more.dataset.more); return; }
+  const dg = e.target.closest("[data-depgps]");
+  if (dg) { depGpsToggle(); return; }
   const ann = e.target.closest("[data-depann]");
-  if (ann) {   // ⏱/🌐: erreichbare Abfahrten oder ALLE (ungefiltert) anzeigen
+  if (ann) {   // 🚶/💨: erreichbare Abfahrten oder ALLE (auch quasi abgefahrene) anzeigen
     depShowAll = !depShowAll;
     try { localStorage.setItem("kvg-depall", depShowAll ? "1" : "0"); } catch (err) {}
     renderViews();
@@ -4425,7 +4487,7 @@ function saveWalkCache() {
   try { localStorage.setItem("kvg-walk2", JSON.stringify(walkCache)); } catch (e) {}
 }
 async function walkMeters(stop) {
-  const pos = getPos();
+  const pos = walkOrigin();   // depGps (Abfahrten/Stationsübersicht) vorrangig
   if (!pos) return null;
   const c = walkCache[stop.shortName];
   // echte Wegdaten: 24 h gültig; Schätzung (~, Luftlinie × 1,3): nur 10 min, dann Router neu versuchen
@@ -4627,8 +4689,12 @@ async function dbDepartures(sn) {
   const d = dbStopOf(sn);
   if (!d) return null;
   const { date, time } = dbNow();
+  // jnyFltrL (Produkt-Bitmaske 31 = Schienenverkehr): Ohne Filter füllen Busse
+  // das 100er-Limit – am Hbf blieben so nur ~8 Züge in 1,5 h übrig. Mit Filter
+  // liefert EINE Abfrage rund 10 h Züge (Anzeige: 6 h, mit „mehr“ 12 h).
   const res = await dbFetch([{ meth: "StationBoard",
-    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time, maxJny: 100 } }]);
+    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time,
+      jnyFltrL: [{ type: "PROD", mode: "INC", value: "31" }], maxJny: 100 } }]);
   const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
   if (!out || !out.jnyL) return null;
   const prodL = (out.common && out.common.prodL) || [];
@@ -4838,6 +4904,92 @@ async function refetchStop(sn, manual) {
   renderPanels();
 }
 
+// ---------- „mehr“: Abfahrtsliste um geplante Abfahrten erweitern ----------
+// DB: Die Fahrplan-Einträge kommen bereits mit der Live-Abfrage (jnyFltrL liefert
+// nur Schienenverkehr, rund 10 h) – „mehr“ weitet nur den Anzeige-Horizont (12 h).
+// KVG: Das Live-Fenster ist kurz (~25 min); geplante Busabfahrten kommen aus dem
+// NAH.SH-Fahrplan (LocMatch + StationBoard), Zuordnung: max. 150 m von der KVG-Haltestelle.
+async function moreDeps(sn) {
+  const v = viewOf(sn);
+  if (!v) return;
+  v.moreOpen = true;
+  refetchStop(sn, true);                         // 1) Live-Abfahrten aktualisieren (rendert selbst)
+  if (!isDB(sn)) await fetchPlannedDeps(sn);     // 2) geplante Abfahrten auffüllen
+  renderPanels();
+  renderViews();
+}
+const nahshLocCache = JSON.parse(localStorage.getItem("kvg-nahshloc") || "{}"); // sn -> {lid, ok, ts}
+function saveNahshLocCache() {
+  try { localStorage.setItem("kvg-nahshloc", JSON.stringify(nahshLocCache)); } catch (e) {}
+}
+// NAH.SH-Haltestelle zu einer KVG-Haltestelle: LocMatch („Kiel <Name>“); der Treffer
+// muss höchstens 150 m von der KVG-Position entfernt sein (Namensgleichheit genügt nicht).
+async function nahshLocFor(stop) {
+  const c = nahshLocCache[stop.shortName];
+  if (c && c.lid && Date.now() - (c.ts || 0) < 30 * 86400e3) return c.lid;
+  if (c && c.ok === false && Date.now() - (c.ts || 0) < 7 * 86400e3) return null;
+  let ok = false, lid = null;
+  try {
+    const res = await dbFetch([{ meth: "LocMatch",
+      req: { input: { loc: { type: "S", name: "Kiel " + stop.name }, field: "S" } } }]);
+    const locs = (res.svcResL && res.svcResL[0] && res.svcResL[0].res &&
+      res.svcResL[0].res.match && res.svcResL[0].res.match.locL) || [];
+    let best = null, bestD = 1e9;
+    for (const l of locs) {
+      const crd = l.crd || {};
+      if (!crd.x || !crd.y) continue;
+      const d = dist({ lat: crd.y / 1e6, lon: crd.x / 1e6 }, stop);
+      if (d < bestD) { bestD = d; best = l; }
+    }
+    if (best && bestD <= 150 && best.lid) { ok = true; lid = best.lid; }
+  } catch (e) {}
+  nahshLocCache[stop.shortName] = { lid, ok, ts: Date.now() };
+  saveNahshLocCache();
+  return ok ? lid : null;
+}
+// Geplante KVG-Busabfahrten (Fahrplan, keine Echtzeit) über NAH.SH, Horizont 6 h.
+async function fetchPlannedDeps(sn) {
+  const v = viewOf(sn);
+  const stop = stops.find(s => s.shortName === sn);
+  if (!v || !stop) return;
+  const lid = await nahshLocFor(stop);
+  const list = [];
+  if (lid) {
+    const now = new Date();
+    const p = x => String(x).padStart(2, "0");
+    const date = now.getFullYear() + p(now.getMonth() + 1) + p(now.getDate());
+    const time = p(now.getHours()) + p(now.getMinutes()) + p(now.getSeconds());
+    try {
+      const res = await dbFetch([{ meth: "StationBoard",
+        req: { type: "DEP", stbLoc: { lid }, date, time,
+          jnyFltrL: [{ type: "PROD", mode: "INC", value: "32" }], maxJny: 120 } }]);
+      const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+      if (out && out.jnyL) {
+        const prodL = (out.common && out.common.prodL) || [];
+        for (const j of out.jnyL) {
+          const prod = prodL[j.prodX] || {};
+          const st = j.stbStop || {};
+          const tS = st.dTimeS || st.dTimeR;
+          if (!tS) continue;
+          const rel = dbRelMin(st.dTimeR || tS) * 60;
+          if (rel < -120 || rel > 6 * 3600 + 300) continue;   // nur die nächsten 6 h
+          const nm = String(prod.name || "").replace(/^Bus\s+/i, "").trim();
+          list.push({
+            tripId: j.jid, line: nm || "Bus", direction: j.dirTxt || "",
+            plannedTime: dbHHMM(tS), actualTime: dbHHMM(st.dTimeR || tS),
+            actualRelativeTime: rel, status: st.dTimeR ? "PREDICTED" : "PLANNED",
+            alerts: [], planned: true
+          });
+        }
+      }
+    } catch (e) {}
+  }
+  list.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  v.planned = list;
+  v.plannedTs = Date.now();
+  v.plannedTried = true;
+}
+
 // Abfahrten wirklich weg (länger als 2 Minuten abgefahren)? Nicht verwechseln mit
 // „für den Fußweg nicht mehr erreichbar“: Eine weit entfernte Station hat laufend
 // Abfahrten, die man zu Fuß nicht mehr schafft – die sind NICHT weg, nur unerreichbar.
@@ -4847,28 +4999,50 @@ function depsReallyGone(v) {
 }
 
 // ---------- Buszeilen rendern ----------
-function busLinesHTML(v) {
+// „mehr“-Link am Ende einer Abfahrtsliste (zentriert): Live-Abfahrten
+// aktualisieren und mit geplanten Abfahrten auffüllen (KVG-Busse: NAH.SH-Fahrplan,
+// DB: Fahrplan-Einträge kommen mit der Abfrage, der Horizont wird erweitert).
+function moreHTML(v) {
+  if (!v || !v.fetched) return "";
+  const extra = (v.moreOpen && !isDB(v.stop.shortName) && v.plannedTried && (!v.planned || !v.planned.length))
+    ? '<small class="rowinfo dim">Keine geplanten Abfahrten gefunden (Haltestelle im Fahrplan unbekannt).</small>' : "";
+  return '<div class="morewrap"><button class="morelink" data-more="' +
+    escapeHtml(v.stop.shortName) + '" title="Live-Abfahrten aktualisieren und um geplante Abfahrten erweitern">mehr</button></div>' + extra;
+}
+function busLinesHTML(v, horizonSec) {
   if (!v || !v.deps) return [];
   const ageSec = (Date.now() - v.fetchTs) / 1000;
+  const agePl = v.plannedTs ? (Date.now() - v.plannedTs) / 1000 : 0;
   const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
-  const out = [];
+  // Ende des Live-Fensters: Taucht eine geplante Fahrt in der Live-Auskunft auf,
+  // zeigt deren Zeile die Fahrt mit Echtzeit; die geplante Zeile entfällt automatisch.
+  let lastLiveRel = -Infinity;
   for (const d of v.deps) {
-    const rel = d.actualRelativeTime - ageSec;
+    const r = (d.actualRelativeTime || 0) - ageSec;
+    if (r > lastLiveRel) lastLiveRel = r;
+  }
+  const out = [];
+  for (const d of v.deps.concat(v.moreOpen && v.planned ? v.planned : [])) {
+    const rel = d.planned ? ((d.actualRelativeTime || 0) - agePl) : (d.actualRelativeTime - ageSec);
+    if (horizonSec && rel > horizonSec) continue;      // Anzeige-Horizont (Züge: 6 h, mit „mehr“ 12 h)
+    if (d.planned && rel <= lastLiveRel + 60) continue; // führt die Live-Auskunft bereits: als Live zeigen
     const losMin = Math.round((rel - walkSec) / 60);
-    if (!depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 🌐 sichtbar
+    if (!depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 💨 sichtbar
     const plat = v.platforms && v.platforms[d.tripId];
-    const cls = losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed";
+    const isPlan = d.planned || d.status === "PLANNED";
+    const cls = (losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed") + (isPlan ? " planned" : "");
+    const ptag = isPlan ? '<span class="ptag">geplant</span>' : "";
     const now = new Date();
     const t = new Date(now.getTime() + rel * 1000);
     const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
     const text = d.direction;
+    const clickable = !d.planned;   // geplante KVG-Zeilen: kein KVG-Trip, kein Fahrtenverlauf
     const bLink = escapeHtml(v.stop.shortName) + "~" + escapeHtml(d.tripId);
     // spätere Fahrten derselben Linie und Richtung (noch nicht abgefahren, ohne
-    // die oben angezeigte): "auch in vv, ww, … min" – geplante/Ist-Daten der
-    // geladenen Abfahrten, bis zu 5 Folgefahrten
+    // die oben angezeigte): "auch in vv, ww, … min" – nur Live-Fahrten, keine geplanten
     const nexts = [];
     for (const x of v.deps) {
-      if (x === d || x.line !== d.line || x.direction !== d.direction) continue;
+      if (x === d || x.planned || x.line !== d.line || x.direction !== d.direction) continue;
       const xrel = x.actualRelativeTime - ageSec;
       if (xrel <= rel) continue;   // nur spätere Fahrten
       const xl = Math.round((xrel - walkSec) / 60);
@@ -4885,11 +5059,11 @@ function busLinesHTML(v) {
           '" title="Fahrtverlauf dieser Verbindung öffnen">' + n.min + "</span>").join(", ") + " min</div>"
       : "";
     out.push({
-      html: '<div class="blwrap"><div class="' + cls + '" data-bus="' + bLink + '">' +
-        '<span class="dl blink" data-buslink="' + bLink + '">' + escapeHtml(d.line) + '</span>' +
+      html: '<div class="blwrap"><div class="' + cls + '"' + (clickable ? ' data-bus="' + bLink + '"' : "") + ">" +
+        '<span class="dl blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(d.line) + '</span>' +
         (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
-        '<span class="mqwrap"><span class="mqi blink" data-buslink="' + bLink + '">' + escapeHtml(text) + "</span></span>" +
-        '<span class="btime">' + clock + " · los in " + losMin + ' min</span></div>' + nextTxt + "</div>",
+        '<span class="mqwrap"><span class="mqi blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(text) + "</span></span>" +
+        '<span class="btime">' + clock + " · los in " + losMin + " min" + ptag + "</span></div>" + nextTxt + "</div>",
       losMin
     });
   }
@@ -4916,7 +5090,7 @@ function renderView(sn, el) {
       info.className = "rowinfo dim";
       info.textContent = "Daten werden geladen …";
     } else if (v.deps && v.deps.length) {
-      const lines = busLinesHTML(v);
+      const lines = busLinesHTML(v, isDB(sn) ? (v.moreOpen ? 43200 : 21600) : null);
       // alle Abfahrten länger als 2 Minuten weg: Station neu laden (max. alle 30 s)
       if (!lines.length) {
         info.className = "rowinfo dim";
@@ -4924,11 +5098,11 @@ function renderView(sn, el) {
           info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
           if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
         } else {
-          info.textContent = "keine erreichbaren Abfahrten (Fußweg zu lang) – 🌐 in der Stationsansicht zeigt alle";
+          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle" + moreHTML(v);
         }
         return;
       }
-      const newHTML = lines.map(l => l.html).join("");
+      const newHTML = lines.map(l => l.html).join("") + moreHTML(v);
       // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
       if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
       if (info.dataset.last !== newHTML) {
@@ -5983,7 +6157,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2 · Build: 15.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2 · Build: 16.11.2026</div>
 </div>
 </body>
 </html>
