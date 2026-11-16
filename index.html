@@ -365,6 +365,7 @@
   .rtsec { cursor: pointer; }
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
     border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
+  .rtswap { text-align: center; margin: 6px 0; }
   .pagefoot { margin: 14px 8px 20px; padding: 10px; font-size: .78rem; }
   .stata { width: 100%; box-sizing: border-box; height: 60px; margin: 4px 0 6px;
     background: #0f1a30; color: #cbd5e1; border: 1px solid #1e3a5f; border-radius: 8px;
@@ -531,7 +532,6 @@
       <input type="range" id="fontSlider" min="0.85" max="1.5" step="0.05" value="1" title="Textgröße" />
       A
     </span>
-    <button class="chip" id="stateBtn" title="Zustand (Favoriten, Adresse, Einstellungen) exportieren/importieren, z. B. für die Android-App">⇅ Zustand</button>
   </header>
 
   <div class="bigbtns" id="bigbtns">
@@ -607,6 +607,21 @@
         <button class="chip ok" id="aboutUpdate" hidden>🔃 Nach neuer Version suchen</button>
         <button class="chip" id="aboutMenu" hidden>⋮ App-Menü</button>
       </div>
+    </details>
+
+    <details class="legal" id="stateSec">
+      <summary>⇅ Export/Import</summary>
+      <p class="dim">Der komplette Zustand dieser App – Favoriten (Haltestellen und Adressen),
+        aktive Startadresse, letzte Position, Wecker, „Finde nach Hause“-Einstellungen und die
+        offenen Reiter – lässt sich hier als kompakter Code sichern (exportieren) und auf einem
+        anderen Gerät oder in der Android-App wieder einfügen (importieren), z. B. nach einer
+        Neuinstallation. Der Code bleibt vollständig auf dem Gerät, nichts wird versendet.</p>
+      <label class="dlabel" for="stateExp">Exportieren: Code kopieren und sichern</label>
+      <textarea class="stata" id="stateExp" readonly></textarea>
+      <button class="chip" id="stateCopy">Code kopieren</button>
+      <label class="dlabel" for="stateImp">Importieren: Code hier einfügen</label>
+      <textarea class="stata" id="stateImp" placeholder="Zustand-Code einfügen …"></textarea>
+      <button class="chip" id="stateGo">Übernehmen</button>
     </details>
 
     <details class="legal">
@@ -1661,18 +1676,70 @@ async function loginAddr() {   // Enter im Adressfeld oder geteilter Text (kein 
 }
 
 // Senden-Ziel (Android-Share/Teilen): Text im Adressfeld eintragen und prüfen
+// Von der Android-App aufgerufen (Teilen-Ziel der App, ACTION_SEND): Der geteilte
+// Text (Adresse, Koordinaten, Locator oder Karten-Link) wird als ZIEL in den
+// Routen-Dialog übernommen – der Dialog öffnet direkt, danach bedient man die
+// App wie gewohnt (Start wählen bzw. GPS nehmen und Route suchen).
 window.kvgImportLocation = function (text) {
   try {
-    if (!text) return "empty";
-    addrSearch.value = String(text).trim().slice(0, 500);
-    addrSearch._loc = null;
-    addrSug.hidden = true;
-    const loc = parseLocText(addrSearch.value);
-    if (loc) { selectCoord(loc); return "ok"; }
-    loginAddr();   // als Adresse prüfen (asynchron), erstes Ergebnis wird übernommen
+    const q = String(text || "").trim().slice(0, 500);
+    if (!q) return "empty";
+    // Koordinaten/Locator/geo:-URI/Karten-Link: lokal erkannt, direkt übernehmen
+    const loc = parseLocText(q);
+    if (loc) {
+      shareRouteDest({ label: loc.label, name: loc.label, lat: loc.lat, lon: loc.lon });
+      return "ok";
+    }
+    shareSearchAddr(q);   // als Adresse suchen (asynchron), erstes/fallback-Ergebnis wird Ziel
     return "pending";
   } catch (e) { return "error"; }
 };
+// Geteilten Text als Adresse auflösen und als Route-Ziel übernehmen:
+// erst Nominatim (Photon-Fallback wie bei der Adresssuche), dann NAH.SH-LocMatch
+// (deckt auch Haltestellen/POIs ab). Ohne Treffer: Hinweis, Dialog bleibt zu.
+async function shareSearchAddr(q) {
+  setLocNote("Prüfe geteilte Adresse …");
+  let hit = null;
+  try {
+    const res = await apiFetch("nom",
+      NOMINATIM + "?q=" + encodeURIComponent(q) + "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+    if (res.ok) {
+      const r = await res.json();
+      const x = (Array.isArray(r) ? r : [])[0];
+      if (x && x.lat != null) {
+        const nm = String(x.display_name || "").split(",").map(t => t.trim()).filter(Boolean);
+        const label = nm.slice(0, 3).join(", ");
+        hit = { label: label, name: label, lat: Number(x.lat), lon: Number(x.lon) };
+      }
+    }
+  } catch (e) {}
+  if (!hit) {
+    try {
+      const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: q, type: "ALL" } } });
+      const locL = (res.match && res.match.locL) || [];
+      const b = locL.find(x => x.lid);
+      if (b) hit = { label: b.name, name: b.name, lid: b.lid, locType: b.type || "A",
+        lat: b.crd ? b.crd.y / 1e6 : null, lon: b.crd ? b.crd.x / 1e6 : null };
+    } catch (e) {}
+  }
+  if (!hit) {
+    setLocNote("Geteilten Text nicht als Adresse erkannt: „" + q.slice(0, 60) + "“.");
+    return;
+  }
+  shareRouteDest(hit);
+}
+// Aufgelösten Ort als ZIEL in den Routen-Dialog eintragen (derselbe Dialog wie
+// beim Planen; ist er offen, wird nur das Zielfeld neu gerendert).
+function shareRouteDest(en) {
+  routeSel.dest = { label: en.label, kind: "addr", key: null, name: en.name || en.label,
+    sn: null, lat: en.lat != null ? en.lat : null, lon: en.lon != null ? en.lon : null,
+    lid: en.lid || null, locType: en.locType || null };
+  routeResolve(routeSel.dest).catch(() => {});   // Vorab-Auflösung; Fehler meldet die Suche
+  const d = document.getElementById("routeDlg");
+  if (d) d.innerHTML = routeDlgHTML();
+  else openRouteDlg();
+  setLocNote("📍 Geteilte Adresse als Ziel übernommen – Start wählen und Route suchen.");
+}
 
 function selectAddr(i) {
   const r = addrResults[i];
@@ -4089,40 +4156,32 @@ window.kvgImportState = function (code) {
     return "err";
   }
 };
-function openStateDialog() {
-  const wrap = document.createElement("div");
-  wrap.className = "dlgwrap";
-  wrap.innerHTML =
-    '<div class="dlg">' +
-    '<div class="dtitle">Zustand übertragen</div>' +
-    '<div class="dlabel">Exportieren (Favoriten, Startadresse, Einstellungen, geöffnete Haltestelle/Fahrt)</div>' +
-    '<textarea class="stata" readonly>' + kvgExportState() + "</textarea>" +
-    '<button class="chip stcopy">Code kopieren</button>' +
-    '<div class="dlabel">Importieren: Code hier einfügen</div>' +
-    '<textarea class="stata stimp" placeholder="Zustand-Code einfügen …"></textarea>' +
-    '<button class="chip stimp-go">Übernehmen</button>' +
-    '<div class="dbtns"><button class="acancel">Schließen</button></div>' +
-    "</div>";
-  document.body.appendChild(wrap);
-  wrap.addEventListener("click", e => {
-    if (e.target.closest(".stcopy")) {
-      const ta = wrap.querySelector(".stata");
-      try {
-        if (ta && ta.select) ta.select();
-        if (document.execCommand) document.execCommand("copy");
-        setLocNote("Zustand-Code kopiert.");
-      } catch (err) { setLocNote("Code markiert – bitte selbst kopieren."); }
-      return;
+// ⇅ Export/Import als aufklappbare Fuß-Sektion (unter „Über diese App“): beim
+// Öffnen wird der Export-Code frisch erzeugt; Kopieren/Übernehmen laufen direkt
+// in der Sektion – kein eigener Dialog/Overlay mehr, der Zustands-Knopf im
+// Kopf entfällt.
+(function initStateSec() {
+  const sec = document.getElementById("stateSec");
+  if (!sec) return;
+  sec.addEventListener("toggle", () => {
+    if (sec.open) {
+      const ta = document.getElementById("stateExp");
+      if (ta) ta.value = kvgExportState();
     }
-    if (e.target.closest(".stimp-go")) {
-      const ta = wrap.querySelector(".stimp");
-      if (ta && ta.value) kvgImportState(ta.value);
-      return;
-    }
-    if (e.target.closest(".acancel")) wrap.remove();
   });
-}
-document.getElementById("stateBtn").addEventListener("click", openStateDialog);
+  document.getElementById("stateCopy").addEventListener("click", () => {
+    const ta = document.getElementById("stateExp");
+    try {
+      if (ta && ta.select) ta.select();
+      if (document.execCommand) document.execCommand("copy");
+      setLocNote("Zustands-Code kopiert.");
+    } catch (err) { setLocNote("Code markiert – bitte selbst kopieren."); }
+  });
+  document.getElementById("stateGo").addEventListener("click", () => {
+    const ta = document.getElementById("stateImp");
+    if (ta && ta.value) kvgImportState(ta.value);
+  });
+})();
 
 // Panels-Klicks (↻ und Buslinien)
 stationPanel.addEventListener("click", e => {
@@ -6273,6 +6332,7 @@ function routeDlgHTML() {
   return '<div class="dlg">' +
     '<div class="dtitle">🧭 Route planen</div>' +
     '<label class="dlabel">Start</label>' + routeFieldHTML("start") +
+    '<div class="rtswap"><button class="achip" data-rtswap="1" title="Start und Ziel miteinander tauschen">⇅ Start und Ziel tauschen</button></div>' +
     '<label class="dlabel">Ziel</label>' + routeFieldHTML("dest") +
     '<label class="dlabel">Abfahrtszeit</label>' +
     '<div class="dstage"><input type="time" class="rttime" value="' + (routeSel.time || routeNowStr()) + '">' +
@@ -6298,6 +6358,13 @@ function openRouteDlg() {
     if (rg) { routeGpsBtn(rg.dataset.rtgps); return; }
     const clr = e.target.closest("[data-rtclear]");
     if (clr) { routeSel[clr.dataset.rtclear] = null; wrap.innerHTML = routeDlgHTML(); return; }
+    if (e.target.closest("[data-rtswap]")) {   // Start und Ziel miteinander tauschen
+      const s0 = routeSel.start;
+      routeSel.start = routeSel.dest;
+      routeSel.dest = s0;
+      wrap.innerHTML = routeDlgHTML();
+      return;
+    }
     if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
     if (e.target.closest(".acancel")) { wrap.remove(); return; }
     if (e.target.closest("[data-rtgo]")) {
@@ -6543,7 +6610,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.1 · Build: 16.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.2 · Build: 16.11.2026</div>
 </div>
 </body>
 </html>
