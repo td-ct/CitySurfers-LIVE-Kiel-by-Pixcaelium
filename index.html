@@ -366,6 +366,12 @@
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
     border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
   .rtswap { text-align: center; margin: 6px 0; }
+  .rtabg { margin: 2px 0 8px; border: 1px dashed #1e3a5f; border-radius: 8px; padding: 4px 8px 6px; }
+  .rtabgh { font-size: .78rem; color: #94a3b8; margin-bottom: 2px; }
+  .rtabgrow { padding: 3px 2px; font-size: .9rem; cursor: pointer; border-radius: 4px; }
+  .rtabgrow:hover { background: #1e293b; }
+  .rtabgrow.on { color: #4ade80; }
+  .rtabgrow:not(.on) { color: #cbd5e1; }
   .pagefoot { margin: 14px 8px 20px; padding: 10px; font-size: .78rem; }
   .stata { width: 100%; box-sizing: border-box; height: 60px; margin: 4px 0 6px;
     background: #0f1a30; color: #cbd5e1; border: 1px solid #1e3a5f; border-radius: 8px;
@@ -517,6 +523,7 @@
       <input type="text" id="favDlgName" autocomplete="off" placeholder="z. B. Zuhause, Arbeit, Oma" /></div>
     <div class="favfield"><label for="favDlgAddr">Adresse</label>
       <input type="text" id="favDlgAddr" autocomplete="off" placeholder="Straße Nr., PLZ Ort oder Koordinaten" /></div>
+    <div id="favDlgNahsh" class="dim"></div>
     <div id="favDlgMsg" class="dim"></div>
     <div class="acbtns">
       <button class="chip bad" id="favDlgCancel">Abbrechen</button>
@@ -1284,6 +1291,18 @@ gpsDlg.addEventListener("keydown", e => { if (e.key === "Escape") gpsDlg.hidden 
 gpsDlg.addEventListener("click", e => { if (e.target === gpsDlg && gpsDlgMode === "status") gpsDlg.hidden = true; });
 
 function setLocNote(t) { locNote.textContent = t; }
+// Sichtbares Sicherheitsnetz: Ungefangene JS-Fehler (z. B. in Klick-Handlern oder
+// asynchronen Fortsetzungen) landen sonst unsichtbar im Konsolen-Log und äußern
+// sich nur als „geöffnet, aber kein Inhalt“. Einmal pro Fehlersignatur anzeigen.
+const _errShown = {};
+window.addEventListener("error", e => {
+  try {
+    const sig = String(e && e.message || e);
+    if (_errShown[sig]) return;
+    _errShown[sig] = 1;
+    setLocNote("⚠️ Interner Fehler: " + sig.slice(0, 140) + " – ↻/Neu laden hilft meist. (Meldung einmalig, Details im Protokoll)");
+  } catch (x) {}
+});
 locBtn.addEventListener("click", () => {
   if (!gpsDlg.hidden && gpsDlgMode === "status") { gpsDlg.hidden = true; return; }
   openGpsDlg("status");
@@ -1734,7 +1753,8 @@ function shareRouteDest(en) {
   routeSel.dest = { label: en.label, kind: "addr", key: null, name: en.name || en.label,
     sn: null, lat: en.lat != null ? en.lat : null, lon: en.lon != null ? en.lon : null,
     lid: en.lid || null, locType: en.locType || null };
-  routeResolve(routeSel.dest).catch(() => {});   // Vorab-Auflösung; Fehler meldet die Suche
+  if (!routeSel.dest.lid) routeAbgleich("dest");   // NAH.SH-Abgleich mit sichtbaren Treffern
+  else { routeAbg.dest = null; rtdUpdate(); }
   const d = document.getElementById("routeDlg");
   if (d) d.innerHTML = routeDlgHTML();
   else openRouteDlg();
@@ -1862,6 +1882,14 @@ const addrFavCount = document.getElementById("addrFavCount");
 function saveAddrFavs() {
   try { localStorage.setItem("kvg-addrfavs", JSON.stringify(addrFavs)); } catch (e) {}
 }
+// NAH.SH-Zeile eines Adressfavoriten: gespeicherter Abgleich, Koordinaten-Favorit
+// (nah.sh-kompatible Koordinaten-lid) oder Hinweis, dass der Abgleich beim ersten
+// Routen einmalig gemacht und dann hier abgelegt wird.
+function favNahshLine(f) {
+  if (f.nahsh && f.nahsh.name) return f.nahsh.name;
+  if (parseLocText(f.label || "")) return "Koordinaten (nah.sh-kompatibel)";
+  return "Abgleich beim nächsten Routen";
+}
 function renderAddrFavs() {
   addrFavCount.textContent = addrFavs.length;
   if (addrFavPanel.hidden) return;
@@ -1887,7 +1915,8 @@ function renderAddrFavs() {
     inner += '<div class="afsrow" data-afi="' + i + '" title="Als Startadresse aktivieren">' +
       '<span class="afsname">⭐ ' + escapeHtml(f.name) +
         (origin ? ' <small class="dim">' + formatDist(dist(origin, f)) + '</small>' : '') +
-        (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") + '</span>' +
+        (f.label && f.label !== f.name ? '<br><small class="dim">' + escapeHtml(f.label) + '</small>' : "") +
+        '<br><small class="dim">NAH.SH: ' + escapeHtml(favNahshLine(f)) + "</small>" + '</span>' +
       routeIconHTML(f, "Diesen Adressfavoriten an eine externe Karten-App übergeben (z. B. Google Maps)") +
       '<button class="afbtn" data-fh="addr:' + i + '" title="Finde nach Hause: Hinweise einstellen' +
         (f.fh && f.fh.on ? ' (aktiv)' : '') + '">' + (f.fh && f.fh.on ? "🏠" : "⌂") + "</button>" +
@@ -1939,6 +1968,8 @@ function openFavDlg(i) {
   favDlgIdx = i;
   favDlgName.value = f.name || "";
   favDlgAddr.value = f.label || "";
+  document.getElementById("favDlgNahsh").textContent = "NAH.SH: " + favNahshLine(f) +
+    (f.nahsh ? "" : " – wird beim nächsten Routen einmalig abgeglichen.");
   favDlgMsg.textContent = "";
   favDlg.hidden = false;
   favDlgName.focus();
@@ -1970,6 +2001,7 @@ document.getElementById("favDlgOk").addEventListener("click", async () => {
     if (!resolved) resolved = await geocodeOne(addrText);
     if (!resolved) { favDlgMsg.textContent = "Adresse nicht gefunden – bitte ändern."; return; }
     f.lat = resolved.lat; f.lon = resolved.lon; f.label = resolved.label;
+    f.nahsh = null;   // alter NAH.SH-Abgleich passt nicht mehr: beim nächsten Routen neu machen
   } else if (!f.label) {
     f.label = f.name;   // ältere Einträge ohne Adresse: Alias als Adresse führen
   }
@@ -2719,9 +2751,15 @@ const stationPanel = document.getElementById("stationPanel");
 const busPanel = document.getElementById("busPanel");
 
 function renderPanels() {
-  renderStationPanel();
-  renderBusPanel();
-  renderRoutePanel();
+  // Sicherheitsnetz: Wirft ein Panel beim Rendern (z. B. überraschende Daten),
+  // dürfen die anderen Panels nicht mit leer bleiben – der Fehler wird sichtbar
+  // statt als schwarzes Loch („nur der Reiter oben, kein Inhalt“).
+  for (const fn of [renderStationPanel, renderBusPanel, renderRoutePanel]) {
+    try { fn(); } catch (e) {
+      try { setLocNote("⚠️ Anzeige-Fehler (" + (fn.name || "Panel") + "): " +
+        String(e && e.message || e) + " – ↻/neu laden hilft meist."); } catch (e2) {}
+    }
+  }
 }
 
 let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
@@ -2793,7 +2831,19 @@ function renderStationPanel() {
   if (v && v.fetched) {
     const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
-      // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen
+      // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen.
+      // Vorher IMMER Kopf + Hinweis rendern: die Abfrage dauert einen Moment (und kann
+      // bei hängender/schlechter Verbindung länger stocken) – der Reiter darf nie leer
+      // bleiben, nur weil die alten Daten weg sind („nur der Reiter, kein Inhalt“).
+      body += '<small class="rowinfo dim">Alle angezeigten Abfahrten sind abgefahren – werde neu geladen …</small>';
+      stationPanelCache = body;
+      const innerStale = head + body;
+      if (stationPanel.dataset.last !== innerStale) {
+        stationPanel.dataset.last = innerStale;
+        stationPanel.innerHTML = innerStale;
+        marqueeify(stationPanel);
+      }
+      stationPanel.hidden = false;
       refetchStop(currentStop.shortName, false);
       return;
     }
@@ -4317,9 +4367,11 @@ function renderStopFavs() {
   });
   sns.forEach(sn => {
     const s = stops.find(x => x.shortName === sn);
+    const nn = nahshNameForStop(sn);
     inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
       '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) +
-        (s && origin ? ' <small class="dim">' + formatDist(dist(origin, s)) + '</small>' : '') + "</span>" +
+        (s && origin ? ' <small class="dim">' + formatDist(dist(origin, s)) + '</small>' : '') +
+        (nn ? '<br><small class="dim">NAH.SH: ' + escapeHtml(nn) + "</small>" : "") + "</span>" +
       (s ? routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") : "") +
       '<button class="afbtn" data-fh="stop:' + escapeHtml(sn) + '" title="Finde nach Hause: Hinweise einstellen' +
         (fhStopCfg[sn] && fhStopCfg[sn].on ? ' (aktiv)' : '') + '">' +
@@ -4327,6 +4379,16 @@ function renderStopFavs() {
       '<button class="afbtn" data-sfdel="' + escapeHtml(sn) + '" title="Aus Favoriten entfernen">✗</button></div>';
   });
   stopFavPanel.innerHTML = inner;
+  // NAH.SH-Namen der Favoriten einmalig im Hintergrund nachziehen (LocMatch mit
+  // ≤ 150-m-Abgleich, danach 30 Tage im Cache) – die Zeile erscheint dann sofort
+  const miss = favs.filter(sn => !isDB(sn) && !nahshLocCache[sn]);
+  if (miss.length && Date.now() - (renderStopFavs._abg || 0) > 30000) {
+    renderStopFavs._abg = Date.now();
+    miss.forEach(sn => {
+      const stop = stops.find(s => s.shortName === sn);
+      if (stop) nahshLocFor(stop).then(() => { if (!stopFavPanel.hidden) renderStopFavs(); }).catch(() => {});
+    });
+  }
 }
 stopFavBtn.addEventListener("click", e => {
   e.stopPropagation();
@@ -5968,8 +6030,11 @@ function routeFavList(kind) {   // kind "addr" | "stop"
   const pos = getPos();
   let items;
   if (kind === "addr") {
-    items = addrFavs.map(f => ({ label: f.label || f.name, kind: "addr", key: "addr:" + f.name,
-      name: f.name, lat: f.lat, lon: f.lon }));
+    // Alias als Label (im Routing-Menü sichtbar), Adresse als Unterzeile; die
+    // NAH.SH-Suche läuft später über die ADRESSE (name), nicht über den Alias.
+    items = addrFavs.map(f => ({ label: f.name, sub: (f.label && f.label !== f.name) ? f.label : "",
+      kind: "addr", key: "addr:" + f.name,
+      name: f.label || f.name, lat: f.lat, lon: f.lon }));
   } else {
     items = favs.map(sn => {
       const st = stops.find(x => x.shortName === sn);
@@ -6042,6 +6107,162 @@ async function routeResolve(sel) {
   if (!best) throw new Error("Ort nicht gefunden: " + sel.name);
   sel.lid = best.lid; sel.locType = best.type;
   return sel;
+}
+
+// ---------- NAH.SH-Abgleich: Start/Ziel gegen den NAH.SH-Fahrplan ----------
+// Adressen und Stationen (aus Favoriten, Nominatim oder Teilen) werden beim
+// Routen gegen NAH.SH gegengecheckt: Unter dem Start-/Zielfeld des Route-Dialogs
+// erscheinen die NAH.SH-Treffer, der nächste wird automatisch übernommen, jeder
+// andere lässt sich antippen. Die gewählte NAH.SH-Adresse wird am Favorit
+// gespeichert (Abgleich nur einmal). Koordinaten-Favoriten (GPS-Positionen,
+// Koordinatetexte) gehen als NAH.SH-kompatible Koordinaten-lid direkt in die
+// Anfrage – kein LocMatch-Raten mehr.
+const routeAbg = { start: null, dest: null };
+function coordLid(label, lat, lon) {
+  return "A=2@O=" + String(label || "Position").slice(0, 64) +
+    "@X=" + Math.round(lon * 1e6) + "@Y=" + Math.round(lat * 1e6) + "@U=101@L=980000001@";
+}
+function lidName(lid) {
+  const m = String(lid || "").match(/O=([^@]*)/);
+  return m ? m[1] : "";
+}
+function favByKey(key) {
+  if (!key) return null;
+  const p = String(key).split(":");
+  if (p[0] === "addr") return addrFavs.find(f => f.name === p.slice(1).join(":")) || null;
+  return null;
+}
+function persistFavNahsh(key, nahsh) {
+  const f = favByKey(key);
+  if (!f) return;
+  f.nahsh = nahsh;
+  saveAddrFavs();
+  renderAddrFavs();   // dritte Zeile im Favoriten-Panel gleich mitziehen
+}
+// NAH.SH-Name einer Haltestelle (DB: eigene lid, KVG: LocMatch-Cache) – ohne API-Ruf
+function nahshNameForStop(sn) {
+  const d = isDB(sn) ? dbStopOf(sn) : null;
+  if (d && d.lid) return lidName(d.lid) || d.name;
+  const c = nahshLocCache[sn];
+  return (c && c.lid) ? lidName(c.lid) : null;
+}
+function rtdUpdate() {   // offenen Route-Dialog neu rendern (ohne Toggle-Nebenwirkung)
+  const d = document.getElementById("routeDlg");
+  if (d) d.innerHTML = routeDlgHTML();
+}
+function routeAbgHTML(which) {
+  const sel = routeSel[which];
+  if (!sel || sel.gps) return "";
+  const st = routeAbg[which];
+  let rows = "", note = "";
+  if (st && st.sel !== sel) { /* veraltet */ }
+  else if (st && st.loading) rows = '<div class="rtabgrow dim">Abgleich läuft …</div>';
+  else if (st && st.err) rows = '<div class="rtabgrow dim">' + escapeHtml(st.err) + "</div>";
+  else if (st && st.cands && st.cands.length) {
+    note = st.note || "";
+    rows = st.cands.map((c, i) =>
+      '<div class="rtabgrow' + (i === st.chosen ? " on" : "") + '" data-abg="' + which + ":" + i + '" title="' +
+      (i === st.chosen ? "Aktuell gewählter NAH.SH-Eintrag" : "Diesen NAH.SH-Eintrag übernehmen") +
+      (sel.key ? " (wird im Favorit gespeichert)" : "") + '">' +
+      (i === st.chosen ? "✓ " : "") + escapeHtml(c.name) +
+      (c.d != null ? ' <small class="dim">· ' + formatDist(c.d) + "</small>" : "") +
+      (c.kind === "coord" ? ' <small class="dim">· Koordinaten</small>' : "") +
+      (i !== st.chosen ? ' <small class="dim">⤴ übernehmen</small>' : "") + "</div>").join("");
+  } else if (sel.lid) {
+    rows = '<div class="rtabgrow on">✓ NAH.SH: ' + escapeHtml(sel.nahshName || lidName(sel.lid) || "?") + "</div>";
+  } else return "";
+  return '<div class="rtabg"><div class="rtabgh">NAH.SH-Abgleich' + (note ? " " + escapeHtml(note) : "") +
+    (st && st.cands && st.cands.length > 1 ? ' <small class="dim">– falscher Treffer? anderen antippen</small>' : "") +
+    "</div>" + rows + "</div>";
+}
+async function abgCands(st, sel, typeHint) {
+  const res = await routeHafas("LocMatch", { input: { field: "S",
+    loc: { name: (typeHint ? "Kiel " : "") + sel.name, type: "ALL" } } });
+  const locL = (res.match && res.match.locL) || [];
+  st.cands = [];
+  for (const x of locL) {
+    if (!x.lid || !x.name) continue;
+    const crd = x.crd || {};
+    const lat = crd.y != null ? crd.y / 1e6 : null, lon = crd.x != null ? crd.x / 1e6 : null;
+    st.cands.push({ name: x.name, lid: x.lid, type: x.type || "A", kind: "loc",
+      d: (lat != null && sel.lat != null) ? dist({ lat: lat, lon: lon }, sel) : null });
+  }
+  if (typeHint)   // Station: Typ S zuerst, dann nach Entfernung
+    st.cands.sort((a, b) => ((a.type === "S" ? 0 : 1) - (b.type === "S" ? 0 : 1)) || (a.d == null ? 1e12 : a.d) - (b.d == null ? 1e12 : b.d));
+  else if (sel.lat != null)
+    st.cands.sort((a, b) => (a.d == null ? 1e12 : a.d) - (b.d == null ? 1e12 : b.d));
+  if (sel.lat != null && sel.lon != null)   // zuverlässiger Fallback: Koordinaten-lid
+    st.cands.push({ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
+      lid: coordLid(sel.name, sel.lat, sel.lon), type: "A", d: 0, kind: "coord" });
+}
+function routeAbgApply(which, name, lid, type) {
+  const sel = routeSel[which];
+  if (!sel) return;
+  sel.lid = lid; sel.locType = type || "A"; sel.nahshName = name;
+  if (sel.key) persistFavNahsh(sel.key, { name: name, lid: lid, type: type || "A" });   // Abgleich nur einmal
+}
+function routeAbgPick(which, i, auto) {
+  const sel = routeSel[which];
+  const st = routeAbg[which];
+  if (!sel || !st || st.sel !== sel || !st.cands || !st.cands[i]) return;
+  const c = st.cands[i];
+  routeAbgApply(which, c.name, c.lid, c.type || "A");
+  st.chosen = i;
+  if (!auto) {
+    setLocNote("🧭 NAH.SH-Eintrag übernommen: " + c.name + (sel.key ? " – im Favorit gespeichert." : "."));
+    rtdUpdate();
+  }
+}
+async function routeAbgleich(which) {
+  const sel = routeSel[which];
+  if (!sel || sel.gps || sel.lid) return;
+  const st = { sel: sel, loading: true, cands: null, chosen: -1, err: "", note: "" };
+  routeAbg[which] = st;
+  rtdUpdate();
+  try {
+    if (sel.sn) {   // Station: eigene, koordinatenverifizierte lid
+      const d = isDB(sel.sn) ? dbStopOf(sel.sn) : null;
+      let lid = (d && d.lid) || null;
+      if (!lid) {
+        const stop = stops.find(s => s.shortName === sel.sn);
+        lid = stop ? await nahshLocFor(stop).catch(() => null) : null;
+      }
+      if (lid) {
+        routeAbgApply(which, lidName(lid) || sel.name, lid, "S");
+        st.note = "(verifizierte Haltestelle)";
+      } else {
+        st.note = "(Haltestelle nicht verifiziert – bitte Treffer wählen)";
+        await abgCands(st, sel, "S");
+      }
+    } else {        // Adresse/POI: LocMatch-Treffer + Koordinaten-Fallback
+      await abgCands(st, sel, null);
+    }
+  } catch (e) {
+    st.err = "NAH.SH-Abgleich fehlgeschlagen: " + String((e && e.message) || e);
+  }
+  st.loading = false;
+  if (routeSel[which] !== sel) return;   // Feld wurde inzwischen anders belegt
+  if (!sel.lid && st.cands && st.cands.length) {
+    // Auto-Wahl: nächstgelegener Treffer ≤ 1 km (Stationen immer den Typ-S-Treffer),
+    // sonst die NAH.SH-Koordinaten (zuverlässig, kein Raten)
+    let bi = -1, bd = 1e9;
+    st.cands.forEach((c, i) => {
+      if (c.kind === "coord") return;
+      const lim = sel.sn ? 1e9 : 1000;
+      if (c.d != null && c.d < Math.min(bd, lim)) { bd = c.d; bi = i; }
+    });
+    if (bi < 0) bi = st.cands.findIndex(c => c.kind === "coord");
+    if (bi >= 0) routeAbgPick(which, bi, true);
+  }
+  if (!sel.lid && !st.err && sel.lat != null) {   // gar kein Treffer: Koordinaten-lid
+    routeAbgApply(which, "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
+      coordLid(sel.name, sel.lat, sel.lon), "A");
+    st.cands = (st.cands || []).concat([{ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
+      lid: sel.lid, type: "A", d: 0, kind: "coord" }]);
+    st.chosen = st.cands.length - 1;
+    st.note = "(Koordinaten, nah.sh-kompatibel)";
+  }
+  rtdUpdate();
 }
 function hafasDurMin(d) {   // "HHMMSS" -> Minuten
   if (!d || d.length < 4) return 0;
@@ -6331,9 +6552,9 @@ function routeGpsBtn(which) {
 function routeDlgHTML() {
   return '<div class="dlg">' +
     '<div class="dtitle">🧭 Route planen</div>' +
-    '<label class="dlabel">Start</label>' + routeFieldHTML("start") +
+    '<label class="dlabel">Start</label>' + routeFieldHTML("start") + routeAbgHTML("start") +
     '<div class="rtswap"><button class="achip" data-rtswap="1" title="Start und Ziel miteinander tauschen">⇅ Start und Ziel tauschen</button></div>' +
-    '<label class="dlabel">Ziel</label>' + routeFieldHTML("dest") +
+    '<label class="dlabel">Ziel</label>' + routeFieldHTML("dest") + routeAbgHTML("dest") +
     '<label class="dlabel">Abfahrtszeit</label>' +
     '<div class="dstage"><input type="time" class="rttime" value="' + (routeSel.time || routeNowStr()) + '">' +
       ' <button class="achip" data-rtnow="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button></div>' +
@@ -6362,7 +6583,14 @@ function openRouteDlg() {
       const s0 = routeSel.start;
       routeSel.start = routeSel.dest;
       routeSel.dest = s0;
+      routeAbg.start = null; routeAbg.dest = null;   // Abgleich-Zustand gehört zur alten Feldbelegung
       wrap.innerHTML = routeDlgHTML();
+      return;
+    }
+    const abg = e.target.closest("[data-abg]");   // NAH.SH-Abgleich: Treffer wählen
+    if (abg) {
+      const p = abg.dataset.abg.split(":");
+      routeAbgPick(p[0], Number(p[1]), false);
       return;
     }
     if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
@@ -6404,21 +6632,38 @@ function openRoutePicker(kind, which) {
     listEl().innerHTML = entries.map((en, i) =>
       '<div class="rtrow" data-rt="' + i + '" title="Klick: übernehmen">' +
       '<span class="rtname">' + (en.star || "") + escapeHtml(en.label) + "</span>" +
+      (en.sub ? '<span class="rtsmall">' + escapeHtml(en.sub) + "</span>" : "") +
       (en.distTxt ? '<span class="rtsmall">' + en.distTxt + "</span>" : "") + "</div>").join("");
   }
   function pickEntry(en) {
+    const f = (en.key && String(en.key).indexOf("addr:") === 0) ? favByKey(en.key) : null;
+    const coordFav = f ? parseLocText(f.label || "") : null;   // Koordinaten-Favorit (GPS, Koordinatetext)?
     routeSel[which] = { label: en.label, kind: en.kkind, key: en.key || null, name: en.name,
       sn: en.sn || null, lat: en.lat, lon: en.lon, lid: null, locType: null };
+    const sel = routeSel[which];
+    routeAbg[which] = null;
+    if (f && f.nahsh && !coordFav) {
+      // Abgleich steht im Favorit: NAH.SH-Adresse direkt übernehmen (einmal gemacht)
+      sel.lid = f.nahsh.lid; sel.locType = f.nahsh.type || "A"; sel.nahshName = f.nahsh.name;
+      routeAbg[which] = { sel: sel, loading: false, cands: [{ name: f.nahsh.name, lid: f.nahsh.lid,
+        type: f.nahsh.type || "A", d: 0, kind: "loc" }], chosen: 0, err: "", note: "(aus Favorit)" };
+    } else if (coordFav) {
+      // Koordinaten-Favorit: NAH.SH-kompatible Koordinaten-lid, kein LocMatch-Raten
+      sel.lid = coordLid(f.name, sel.lat, sel.lon); sel.locType = "A"; sel.nahshName = "Koordinaten";
+      routeAbg[which] = { sel: sel, loading: false, cands: [{ name: "Koordinaten " +
+        sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5), lid: sel.lid, type: "A", d: 0, kind: "coord" }],
+        chosen: 0, err: "", note: "(Koordinaten, nah.sh-kompatibel)" };
+    }
     routeBump(en.key);
     wrap.remove();
     const d = document.getElementById("routeDlg");
     if (d) d.innerHTML = routeDlgHTML();
-    routeResolve(routeSel[which]).catch(() => {});   // Vorab-Auflösung; Fehler meldet die Suche
+    if (!sel.lid) routeAbgleich(which);   // Vorab-Abgleich mit sichtbaren Treffern unter dem Feld
   }
   const pos = getPos();
   if (kind === "addrfav" || kind === "stopfav") {
     rows(routeFavList(kind === "addrfav" ? "addr" : "stop").map(it => ({
-      label: it.label, kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
+      label: it.label, sub: it.sub || "", kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
       lat: it.lat, lon: it.lon, star: "⭐ ",
       distTxt: (pos && it.lat != null) ? formatDist(dist(pos, it)) : "" })));
   } else if (kind === "stop") {
@@ -6448,8 +6693,9 @@ function openRoutePicker(kind, which) {
       const words = qv.toLowerCase().split(/\s+/).filter(Boolean);
       let found = addrFavs
         .filter(f => words.every(w => (f.name || "").toLowerCase().includes(w) || (f.label || "").toLowerCase().includes(w)))
-        .map(f => ({ label: f.label || f.name, kkind: "addr", key: "addr:" + f.name,
-          name: f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
+        .map(f => ({ label: f.name, sub: (f.label && f.label !== f.name) ? f.label : "",
+          kkind: "addr", key: "addr:" + f.name,
+          name: f.label || f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
       try {
         const res = await apiFetch("nom",
           NOMINATIM + "?q=" + encodeURIComponent(qv) + "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
@@ -6610,7 +6856,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.2 · Build: 16.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.3 · Build: 16.11.2026</div>
 </div>
 </body>
 </html>
