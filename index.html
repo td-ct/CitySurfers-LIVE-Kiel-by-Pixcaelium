@@ -337,7 +337,12 @@
   .routepick { display: flex; gap: 6px; flex-wrap: wrap; }
   .routepick .achip { flex: 1 1 calc(50% - 3px); text-align: center; }
   .routefield { display: flex; align-items: center; gap: 8px; }
+  .routefield .achip.rtgps { flex: 0 0 auto; }
   .routefield .routelab { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .routepick .achip.rtgps { flex: 0 0 auto; }
+  .achip.rtgps.active { color: #4ade80; border-color: #4ade80; }
+  .achip.rtgps.stale { color: #facc15; border-color: #facc15; }   /* GPS an, aber ueber 200 m von der gewaehlten Position weg */
+  .achip.rtgps.busy { animation: pulse 1.2s ease-in-out infinite; color: #4d8fd6; border-color: #4d8fd6; }
   .rtq { box-sizing: border-box; width: 100%; background: #0f172a; color: #e2e8f0;
     border: 1px solid #1e3a5f; border-radius: 8px; padding: 8px 10px; font-size: .9rem;
     margin-bottom: 6px; }
@@ -1068,6 +1073,11 @@ function updateGpsBtns(force) {
   gpsBtnSig = sig;
   posBtn.className = "gpsbtn" + gpsBtnCls(sAddr);
   document.getElementById("gpsGoBtn").className = "gpsbtn" + gpsBtnCls(sStop);
+  // GPS-Knoepfe im Route-Dialog (Start/Ziel) nachziehen, falls er offen ist
+  document.querySelectorAll("[data-rtgps]").forEach(b => {
+    const g = routeSel[b.dataset.rtgps];
+    b.className = "achip rtgps" + gpsBtnCls(gpsBtnState(g && g.gps ? g : null));
+  });
   renderPanels();
 }
 // Eigene GPS-Position des Haltestellen-Suchfelds setzen/löschen (Liste sortiert danach)
@@ -1126,18 +1136,22 @@ function gpsAdoptDispatch(p) {
   else if (gpsTakeTarget === "addr") adoptGpsPos(p);
   else if (gpsTakeTarget === "addrSave") saveGpsAddrFav(p);
   else if (gpsTakeTarget === "dephead") depGpsAdopt(p);
+  else if (gpsTakeTarget === "route") routeGpsAdopt(p);
   else gpsAdoptForStops(p);
 }
 function gpsTakeOverFor(kind) {
   gpsTakeTarget = kind;
   if (!("geolocation" in navigator) || !isSecure()) {
-    setLocNote("GPS nicht verfügbar – Liste lässt sich nicht nach GPS-Standort sortieren.");
+    setLocNote(kind === "route"
+      ? "GPS nicht verfügbar – Route lässt sich nicht per GPS-Position planen."
+      : "GPS nicht verfügbar – Liste lässt sich nicht nach GPS-Standort sortieren.");
     return;
   }
   // gute Ortung: direkt hinterlegen; sonst Dialog (schaltet GPS nötigenfalls ein)
   if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
     if (kind === "addr") adoptGpsPos(myPos);
     else if (kind === "dephead") depGpsAdopt(myPos);
+    else if (kind === "route") routeGpsAdopt(myPos);
     else gpsAdoptForList(kind, myPos);
     return;
   }
@@ -6124,13 +6138,51 @@ function routeFieldHTML(which) {
   const sel = routeSel[which];
   if (sel) {
     return '<div class="routefield"><span class="routelab">📍 ' + escapeHtml(sel.label) + "</span>" +
+      (sel.gps ? routeGpsChipHTML(which) : "") +
       '<button class="achip" data-rtclear="' + which + '" title="Auswahl löschen">✕</button></div>';
   }
   return '<div class="routepick">' +
     '<button class="achip" data-rtpick="addr:' + which + '">🔍 Adresse</button>' +
     '<button class="achip" data-rtpick="addrfav:' + which + '">⭐ Adresse</button>' +
     '<button class="achip" data-rtpick="stop:' + which + '">🚏 Station</button>' +
-    '<button class="achip" data-rtpick="stopfav:' + which + '">⭐ Station</button></div>';
+    '<button class="achip" data-rtpick="stopfav:' + which + '">⭐ Station</button>' +
+    routeGpsChipHTML(which) + '</div>';
+}
+// GPS-Knopf fuer Start/Ziel im Route-Dialog: uebernimmt die aktuelle Position als
+// Endpunkt; bei gewaehlter GPS-Position aktualisiert der Klick sie (Farben wie
+// ueberall: grau = GPS aus, blau pulsierend = Suche, gruen <= 200 m, gelb > 200 m).
+// ✕ (data-rtclear) nimmt die Auswahl zurueck.
+let gpsTakeWhich = "start";   // Start/Ziel, fuer das die laufende GPS-Uebernahme gilt
+function routeGpsChipHTML(which) {
+  const sel = routeSel[which];
+  return '<button class="achip rtgps' + gpsBtnCls(gpsBtnState(sel && sel.gps ? sel : null)) +
+    '" data-rtgps="' + which + '" title="Aktuelle GPS-Position als ' +
+    (which === "start" ? "Start" : "Ziel") +
+    ' übernehmen bzw. aktualisieren (grün = in der Nähe, gelb = über 200 m entfernt, grau = GPS aus)">◎ GPS</button>';
+}
+function routeGpsSet(which, p) {
+  if (!p) return;
+  const e = routeSel[which] && routeSel[which].gps ? routeSel[which] : {};
+  e.kind = "addr"; e.gps = true;
+  e.label = "GPS-Position (±" + Math.round(p.accuracy || 0) + " m)";
+  e.name = e.label;
+  e.lat = p.lat; e.lon = p.lon;
+  // NAH.SH nimmt Koordinaten direkt als lid (live getestet, auch als Ziel):
+  // kein LocMatch-Umweg, kein 1-km-Radius noetig
+  e.lid = "A=2@O=GPS-Position@X=" + Math.round(p.lon * 1e6) + "@Y=" +
+    Math.round(p.lat * 1e6) + "@U=101@L=980000001@";
+  e.locType = "A";
+  routeSel[which] = e;
+  const w = document.getElementById("routeDlg");
+  if (w) w.innerHTML = routeDlgHTML();   // Feldzeile (mit x) neu rendern
+  updateGpsBtns(true);
+  setLocNote("📍 GPS-Position (±" + Math.round(p.accuracy || 0) + " m) als " +
+    (which === "start" ? "Start" : "Ziel") + " der Route übernommen.");
+}
+function routeGpsAdopt(p) { routeGpsSet(gpsTakeWhich, p); }
+function routeGpsBtn(which) {
+  gpsTakeWhich = which;
+  gpsTakeOverFor("route");
 }
 function routeDlgHTML() {
   return '<div class="dlg">' +
@@ -6157,6 +6209,8 @@ function openRouteDlg() {
     if (e.target === wrap) { wrap.remove(); return; }
     const pick = e.target.closest("[data-rtpick]");
     if (pick) { const parts = pick.dataset.rtpick.split(":"); openRoutePicker(parts[0], parts[1]); return; }
+    const rg = e.target.closest("[data-rtgps]");
+    if (rg) { routeGpsBtn(rg.dataset.rtgps); return; }
     const clr = e.target.closest("[data-rtclear]");
     if (clr) { routeSel[clr.dataset.rtclear] = null; wrap.innerHTML = routeDlgHTML(); return; }
     if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
