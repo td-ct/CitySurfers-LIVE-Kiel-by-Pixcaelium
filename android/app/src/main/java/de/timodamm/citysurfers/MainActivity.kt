@@ -1,4 +1,4 @@
-package de.timodamm.kvglive
+package de.timodamm.citysurfers
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -14,6 +14,7 @@ import android.view.inputmethod.EditorInfo
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -44,7 +45,7 @@ class MainActivity : Activity() {
             "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html"
         private const val REQ_PERMS = 41
         // App-interner Broadcast: Wecker-Aktion aus einem Benachrichtigungs-Button
-        const val ACTION_ALARM_ACTION = "de.timodamm.kvglive.ALARM_ACTION"
+        const val ACTION_ALARM_ACTION = "de.timodamm.citysurfers.ALARM_ACTION"
     }
 
     private lateinit var web: WebView
@@ -64,6 +65,7 @@ class MainActivity : Activity() {
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            allowFileAccess = true
             setGeolocationEnabled(true)
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_DEFAULT
@@ -82,6 +84,16 @@ class MainActivity : Activity() {
                         try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
                     }
                 } else false
+            }
+            // Laesst sich die uebernommene Seite nicht laden (unlesbar, entfernt,
+            // Zugriff verweigert), wird sie entsorgt und die gebuendelte Seite
+            // geladen - statt auf der Fehlerseite "Website nicht verfuegbar"
+            // haengen zu bleiben.
+            override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
+                if (req.isForMainFrame && req.url.toString() == Uri.fromFile(webFile()).toString()) {
+                    webFile().delete()
+                    view.post { view.loadUrl(DEFAULT_URL) }
+                }
             }
             override fun onPageFinished(view: WebView, url: String) {
                 // Sprung aus einer Wecker-Benachrichtigung, falls die Seite
@@ -221,9 +233,39 @@ class MainActivity : Activity() {
 
     private fun webFile(): File = File(File(filesDir, "web"), "index.html")
 
+    private fun readPageText(f: File): String? = try {
+        if (f.isFile && f.length() > 0) f.readText() else null
+    } catch (e: Exception) { null }
+
+    private fun bundledPageText(): String? = try {
+        assets.open("index.html").bufferedReader().use { it.readText() }
+    } catch (e: Exception) { null }
+
+    private fun pageVerOf(t: String?): String? =
+        t?.let { Regex("Version (\\d+\\.\\d+\\.\\d+)").find(it)?.groupValues?.get(1) }
+
+    private fun cmpVer(a: String, b: String): Int {
+        val pa = a.split('.').map { it.toInt() }
+        val pb = b.split('.').map { it.toInt() }
+        for (i in 0..2) {
+            val d = pa.getOrElse(i) { 0 } - pb.getOrElse(i) { 0 }
+            if (d != 0) return if (d > 0) 1 else -1
+        }
+        return 0
+    }
+
     private fun currentTarget(): String {
         val f = webFile()
-        return if (f.exists()) Uri.fromFile(f).toString() else DEFAULT_URL
+        // Die uebernommene Seite wird nur genutzt, wenn sie NEUER ist als die
+        // gebuendelte; ist die gebuendelte aktueller (neue APK installiert),
+        // wird die alte uebernommene Seite automatisch entsorgt. Eine defekte
+        // Datei ohne Versionsnummer faellt ebenfalls auf die gebuendelte zurueck.
+        val adopted = pageVerOf(readPageText(f))
+        val bundled = pageVerOf(bundledPageText())
+        if (adopted != null && (bundled == null || cmpVer(adopted, bundled) > 0))
+            return Uri.fromFile(f).toString()
+        if (f.exists()) f.delete()
+        return DEFAULT_URL
     }
 
     /** Aktuelle Seite von einer URL laden und dauerhaft in die App übernehmen. */
@@ -241,15 +283,22 @@ class MainActivity : Activity() {
                 if (conn.responseCode in 200..299) {
                     body = conn.inputStream.bufferedReader().use { it.readText() }
                     if (body.contains("<script>") && body.length > 10000) {
-                        val dir = File(filesDir, "web")
-                        dir.mkdirs()
-                        val tmp = File(dir, "index.html.tmp")
-                        tmp.writeText(body)
-                        val f = webFile()
-                        if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
-                        getSharedPreferences("kvglive", MODE_PRIVATE)
-                            .edit().putString("webUrl", url).apply()
-                        ok = true
+                        val newVer = Regex("Version (\\d+\\.\\d+\\.\\d+)").find(body)?.groupValues?.get(1)
+                        val bundledVer = pageVerOf(bundledPageText())
+                        if (newVer != null && bundledVer != null && cmpVer(newVer, bundledVer) <= 0) {
+                            msg = "Geladene Version $newVer ist nicht neuer als die gebuendelte Seite ($bundledVer) - nicht uebernommen."
+                        } else {
+                            val dir = File(filesDir, "web")
+                            dir.mkdirs()
+                            val tmp = File(dir, "index.html.tmp")
+                            tmp.writeText(body)
+                            val f = webFile()
+                            if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+                            getSharedPreferences("citysurfers", MODE_PRIVATE)
+                                .edit().putString("webUrl", url).apply()
+                            // Plausibilitaet: ist die uebernommene Datei lesbar?
+                            ok = readPageText(f)?.let { it.contains("<script>") && it.length > 10000 } ?: false
+                        }
                     } else msg = "Geladene Datei sieht nicht wie die Seite aus."
                 } else msg = "HTTP ${conn.responseCode}"
             } catch (e: Exception) { msg = e.message ?: e.toString() }
@@ -301,8 +350,13 @@ class MainActivity : Activity() {
                     body = conn.inputStream.bufferedReader().use { it.readText() }
                     val newVer = Regex("Version (\\d+\\.\\d+\\.\\d+)").find(body)?.groupValues?.get(1) ?: "?"
                     if (body.contains("<script>") && body.length > 10000) {
-                        if (newVer == curVer) {
+                        val bundledVer = pageVerOf(bundledPageText())
+                        if (newVer == "?") {
+                            msg = "Versionsnummer der geladenen Seite nicht erkannt."
+                        } else if (newVer == curVer) {
                             msg = "Die Seite ist bereits aktuell (Version $newVer)."
+                        } else if (bundledVer != null && cmpVer(newVer, bundledVer) <= 0) {
+                            msg = "Geladene Version $newVer ist nicht neuer als die gebuendelte Seite ($bundledVer) - nichts uebernommen."
                         } else {
                             val dir = File(filesDir, "web")
                             dir.mkdirs()
@@ -310,10 +364,11 @@ class MainActivity : Activity() {
                             tmp.writeText(body)
                             val f = webFile()
                             if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
-                            getSharedPreferences("kvglive", MODE_PRIVATE)
+                            getSharedPreferences("citysurfers", MODE_PRIVATE)
                                 .edit().putString("webUrl", url).apply()
-                            ok = true
-                            msg = "Neue Web-Version $newVer übernommen."
+                            // Plausibilitaet: ist die uebernommene Datei lesbar?
+                            ok = readPageText(f)?.let { it.contains("<script>") && it.length > 10000 } ?: false
+                            msg = if (ok) "Neue Web-Version $newVer uebernommen." else "Uebernahme fehlgeschlagen (Datei unlesbar)."
                         }
                     } else msg = "Geladene Datei sieht nicht wie die Seite aus."
                 } else msg = "HTTP ${conn.responseCode}"
@@ -437,21 +492,21 @@ class MainActivity : Activity() {
                 "https://…/cslk.html",
             ) { u ->
                 if (u.isNotBlank()) {
-                    getSharedPreferences("kvglive", MODE_PRIVATE)
+                    getSharedPreferences("citysurfers", MODE_PRIVATE)
                         .edit().putString("url", "").apply()   // Override-URL zurücksetzen
                     adoptWebVersion(if (u.startsWith("http")) u.trim() else "https://" + u.trim())
                 }
             }
             3 -> {
                 webFile().delete()
-                getSharedPreferences("kvglive", MODE_PRIVATE)
+                getSharedPreferences("citysurfers", MODE_PRIVATE)
                     .edit().putString("url", "").putString("webUrl", "").apply()
                 web.loadUrl(DEFAULT_URL)
             }
             4 -> {
                 val input = EditText(this)
                 input.hint = "https://… oder file:///android_asset/index.html"
-                input.setText(getSharedPreferences("kvglive", MODE_PRIVATE)
+                input.setText(getSharedPreferences("citysurfers", MODE_PRIVATE)
                     .getString("url", ""))
                 AlertDialog.Builder(this)
                     .setTitle("Seiten-URL")
@@ -460,7 +515,7 @@ class MainActivity : Activity() {
                         var u = input.text.toString().trim()
                         if (u.isNotEmpty()) {
                             if (!u.startsWith("http") && !u.startsWith("file://")) u = "https://$u"
-                            getSharedPreferences("kvglive", MODE_PRIVATE)
+                            getSharedPreferences("citysurfers", MODE_PRIVATE)
                                 .edit().putString("url", u).apply()
                             web.loadUrl(u)
                         }

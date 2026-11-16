@@ -1,4 +1,4 @@
-package de.timodamm.kvglive
+package de.timodamm.citysurfers
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -43,7 +43,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
         // Vibrations-/Wach-Sicherung direkt im Receiver (auch bei gesperrtem Bildschirm)
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "kvglive:alarm")
+        val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "citysurfers:alarm")
         wl.acquire(20000L)
 
         // Tonart -> Geräteklang (Wecker/Klingelton/Nachricht)

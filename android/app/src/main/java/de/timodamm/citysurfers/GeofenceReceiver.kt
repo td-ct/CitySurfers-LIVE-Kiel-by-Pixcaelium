@@ -1,4 +1,4 @@
-package de.timodamm.kvglive
+package de.timodamm.citysurfers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -14,7 +14,7 @@ import org.json.JSONObject
  */
 object GeofenceStore {
     private fun prefs(ctx: Context) =
-        ctx.getSharedPreferences("kvglive_geofence", Context.MODE_PRIVATE)
+        ctx.getSharedPreferences("citysurfers_geofence", Context.MODE_PRIVATE)
 
     /** Alle Zäune + Feuflags weg (bei jeder Neuregistrierung); Ereignisse bleiben.
      *  Schlüssel: "f<id>" Zaun, "fired<id>" einmal-feuern, "events" Liste. */
