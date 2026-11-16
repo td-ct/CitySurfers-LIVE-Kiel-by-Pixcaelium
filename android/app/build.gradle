@@ -4,14 +4,14 @@ plugins {
 }
 
 android {
-    namespace 'de.timodamm.kvglive'
+    namespace 'de.timodamm.citysurfers'
     compileSdk 34
 
     defaultConfig {
-        applicationId 'de.timodamm.kvglive'
+        applicationId 'de.timodamm.citysurfers'
         minSdk 24
         targetSdk 34
-        versionCode 44
+        versionCode 45
         versionName '1.2'
         manifestPlaceholders = [appLabel: "@string/app_name"]
     }

@@ -1,4 +1,4 @@
-package de.timodamm.kvglive
+package de.timodamm.citysurfers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -30,7 +30,7 @@ class AlarmActionReceiver : BroadcastReceiver() {
 /** Nachhol-Liste der Benachrichtigungs-Aktionen (SharedPreferences, max. 20). */
 object AlarmActionStore {
     private fun prefs(ctx: Context) =
-        ctx.getSharedPreferences("kvglive_alarmactions", Context.MODE_PRIVATE)
+        ctx.getSharedPreferences("citysurfers_alarmactions", Context.MODE_PRIVATE)
 
     fun record(ctx: Context, akey: String, mode: String) {
         val p = prefs(ctx)
