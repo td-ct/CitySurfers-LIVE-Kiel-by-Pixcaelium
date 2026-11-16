@@ -2310,8 +2310,10 @@ sugBox.addEventListener("click", e => {
   }
   const ref = e.target.closest("[data-ref]");
   if (ref) { refetchStop(ref.dataset.ref, true); return; }
-  const more = e.target.closest("[data-more]");
-  if (more) { moreDeps(more.dataset.more); return; }
+  const later = e.target.closest("[data-later]");
+  if (later) { laterDeps(later.dataset.later); return; }
+  const earlier = e.target.closest("[data-earlier]");
+  if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
   const bus = e.target.closest("[data-bus]");
   if (bus) {
     const [sn, tripId] = bus.dataset.bus.split("~");
@@ -2612,7 +2614,7 @@ function renderStationPanel() {
   }
   let body = "";
   if (v && v.fetched) {
-    const lines = busLinesHTML(v, isDB(v.stop.shortName) ? (v.moreOpen ? 43200 : 21600) : null);
+    const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
       // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen
       refetchStop(currentStop.shortName, false);
@@ -2621,7 +2623,7 @@ function renderStationPanel() {
     if (!lines.length && v.deps.length) {
       body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 💨-Knopf oben zeigt alle Abfahrten.</small>';
     }
-    body += lines.map(l => l.html).join("") + moreHTML(v);
+    body += earlierHTML(v) + lines.map(l => l.html).join("") + laterHTML(v);
   } else {
     body += '<small class="rowinfo dim">Daten werden geladen …</small>';
   }
@@ -4017,8 +4019,10 @@ stationPanel.addEventListener("click", e => {
   if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
-  const more = e.target.closest("[data-more]");
-  if (more) { moreDeps(more.dataset.more); return; }
+  const later = e.target.closest("[data-later]");
+  if (later) { laterDeps(later.dataset.later); return; }
+  const earlier = e.target.closest("[data-earlier]");
+  if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
   const dg = e.target.closest("[data-depgps]");
   if (dg) { depGpsToggle(); return; }
   const ann = e.target.closest("[data-depann]");
@@ -4691,7 +4695,7 @@ async function dbDepartures(sn) {
   const { date, time } = dbNow();
   // jnyFltrL (Produkt-Bitmaske 31 = Schienenverkehr): Ohne Filter füllen Busse
   // das 100er-Limit – am Hbf blieben so nur ~8 Züge in 1,5 h übrig. Mit Filter
-  // liefert EINE Abfrage rund 10 h Züge (Anzeige: 6 h, mit „mehr“ 12 h).
+  // liefert EINE Abfrage rund 10 h Züge (Anzeige: 6 h, mit „später“ seitenweise weiter).
   const res = await dbFetch([{ meth: "StationBoard",
     req: { type: "DEP", stbLoc: { lid: d.lid }, date, time,
       jnyFltrL: [{ type: "PROD", mode: "INC", value: "31" }], maxJny: 100 } }]);
@@ -4904,17 +4908,30 @@ async function refetchStop(sn, manual) {
   renderPanels();
 }
 
-// ---------- „mehr“: Abfahrtsliste um geplante Abfahrten erweitern ----------
-// DB: Die Fahrplan-Einträge kommen bereits mit der Live-Abfrage (jnyFltrL liefert
-// nur Schienenverkehr, rund 10 h) – „mehr“ weitet nur den Anzeige-Horizont (12 h).
-// KVG: Das Live-Fenster ist kurz (~25 min); geplante Busabfahrten kommen aus dem
-// NAH.SH-Fahrplan (LocMatch + StationBoard), Zuordnung: max. 150 m von der KVG-Haltestelle.
-async function moreDeps(sn) {
+// ---------- „später“/„früher“: Abfahrtsliste seitenweise blättern ----------
+// „später“ (unten): je Klick sechs weitere Einträge. KVG-Busse: Das Live-Fenster
+// ist kurz (~25 min); geplante Abfahrten kommen aus dem NAH.SH-Fahrplan
+// (LocMatch + StationBoard, Zuordnung max. 150 m von der KVG-Haltestelle).
+// DB: Die Fahrplan-Einträge kommen bereits mit der Live-Abfrage (rund 10 h) –
+// „später“ schaltet je Klick sechs Einträge jenseits des 6-h-Fensters frei.
+// „früher“ (oben): je Klick sechs bereits abgefahrene Verbindungen über die
+// NAH.SH-Abfahrtstafel mit zurückliegender Anfragezeit (nur Planzeit).
+async function laterDeps(sn) {
   const v = viewOf(sn);
   if (!v) return;
   v.moreOpen = true;
-  refetchStop(sn, true);                         // 1) Live-Abfahrten aktualisieren (rendert selbst)
-  if (!isDB(sn)) await fetchPlannedDeps(sn);     // 2) geplante Abfahrten auffüllen
+  v.fwdShown = (v.fwdShown || 0) + 6;
+  refetchStop(sn, true);                 // 1) Live-Abfahrten aktualisieren (rendert selbst)
+  if (!isDB(sn) && (!v.plannedTried || Date.now() - (v.plannedTs || 0) > 600000)) {
+    try { await fetchPlannedDeps(sn); } catch (e) {}   // 2) Fahrplan auffüllen (max. 10 min alt)
+  }
+  renderPanels();
+  renderViews();
+}
+async function earlierDeps(sn) {
+  const v = viewOf(sn);
+  if (!v) return;
+  try { await fetchEarlierDeps(sn); } catch (e) {}
   renderPanels();
   renderViews();
 }
@@ -4947,7 +4964,48 @@ async function nahshLocFor(stop) {
   saveNahshLocCache();
   return ok ? lid : null;
 }
-// Geplante KVG-Busabfahrten (Fahrplan, keine Echtzeit) über NAH.SH, Horizont 6 h.
+// HAFAS-Zeit („HHMMSS“, ggf. mit Tagesoffset-Präfix) am Datum „YYYYMMDD“ in
+// lokale Millisekunden umrechnen (setDate statt Addition: DST-sicher).
+function hafasAbsMs(date, t) {
+  if (!t) return null;
+  const s = String(t);
+  const s6 = (s.length > 6 ? s.slice(-6) : s).padStart(6, "0");
+  const day = s.length > 6 ? (parseInt(s.slice(0, s.length - 6), 10) || 0) : 0;
+  const y = parseInt(date.slice(0, 4), 10), mo = parseInt(date.slice(4, 6), 10), d = parseInt(date.slice(6, 8), 10);
+  if (!y || !mo || !d) return null;
+  const h = parseInt(s6.slice(0, 2), 10) || 0;   // Stunden > 23 = Überlauf in den Folgetag
+  const dt = new Date(y, mo - 1, d, h % 24, parseInt(s6.slice(2, 4), 10) || 0, parseInt(s6.slice(4, 6), 10) || 0);
+  dt.setDate(dt.getDate() + day + Math.floor(h / 24));
+  return dt.getTime();
+}
+// NAH.SH-Abfahrtstafel ab einem beliebigen Zeitpunkt (auch zurückliegend):
+// rohe Einträge mit absoluter Abfahrtszeit in ms. mask: 31 = Schiene, 32 = Bus.
+async function nahshBoardEntries(lid, T, mask) {
+  const p = x => String(x).padStart(2, "0");
+  const date = T.getFullYear() + p(T.getMonth() + 1) + p(T.getDate());
+  const time = p(T.getHours()) + p(T.getMinutes()) + p(T.getSeconds());
+  const res = await dbFetch([{ meth: "StationBoard",
+    req: { type: "DEP", stbLoc: { lid }, date, time,
+      jnyFltrL: [{ type: "PROD", mode: "INC", value: mask }], maxJny: 120 } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  if (!out || !out.jnyL) return [];
+  const prodL = (out.common && out.common.prodL) || [];
+  const list = [];
+  for (const j of out.jnyL) {
+    const prod = prodL[j.prodX] || {};
+    const st = j.stbStop || {};
+    const tS = st.dTimeS || st.dTimeR;
+    if (!tS) continue;
+    const absMs = hafasAbsMs(date, tS);
+    if (absMs == null) continue;
+    const nm = String(prod.name || "").replace(/^Bus\s+/i, "").trim();
+    list.push({ tripId: j.jid, line: nm || "Bus", direction: j.dirTxt || "",
+      plannedTime: dbHHMM(tS), actualTime: dbHHMM(st.dTimeR || tS),
+      hasRT: !!st.dTimeR, absMs });
+  }
+  return list;
+}
+// Geplante KVG-Busabfahrten (Fahrplan) über NAH.SH, Horizont 6 h.
 async function fetchPlannedDeps(sn) {
   const v = viewOf(sn);
   const stop = stops.find(s => s.shortName === sn);
@@ -4955,32 +5013,17 @@ async function fetchPlannedDeps(sn) {
   const lid = await nahshLocFor(stop);
   const list = [];
   if (lid) {
-    const now = new Date();
-    const p = x => String(x).padStart(2, "0");
-    const date = now.getFullYear() + p(now.getMonth() + 1) + p(now.getDate());
-    const time = p(now.getHours()) + p(now.getMinutes()) + p(now.getSeconds());
     try {
-      const res = await dbFetch([{ meth: "StationBoard",
-        req: { type: "DEP", stbLoc: { lid }, date, time,
-          jnyFltrL: [{ type: "PROD", mode: "INC", value: "32" }], maxJny: 120 } }]);
-      const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
-      if (out && out.jnyL) {
-        const prodL = (out.common && out.common.prodL) || [];
-        for (const j of out.jnyL) {
-          const prod = prodL[j.prodX] || {};
-          const st = j.stbStop || {};
-          const tS = st.dTimeS || st.dTimeR;
-          if (!tS) continue;
-          const rel = dbRelMin(st.dTimeR || tS) * 60;
-          if (rel < -120 || rel > 6 * 3600 + 300) continue;   // nur die nächsten 6 h
-          const nm = String(prod.name || "").replace(/^Bus\s+/i, "").trim();
-          list.push({
-            tripId: j.jid, line: nm || "Bus", direction: j.dirTxt || "",
-            plannedTime: dbHHMM(tS), actualTime: dbHHMM(st.dTimeR || tS),
-            actualRelativeTime: rel, status: st.dTimeR ? "PREDICTED" : "PLANNED",
-            alerts: [], planned: true
-          });
-        }
+      const now = Date.now();
+      for (const e of await nahshBoardEntries(lid, new Date(), "32")) {
+        const rel = (e.absMs - now) / 1000;
+        if (rel < -120 || rel > 6 * 3600 + 300) continue;   // nur die nächsten 6 h
+        list.push({
+          tripId: e.tripId, line: e.line, direction: e.direction,
+          plannedTime: e.plannedTime, actualTime: e.actualTime,
+          actualRelativeTime: rel, status: e.hasRT ? "PREDICTED" : "PLANNED",
+          alerts: [], planned: true
+        });
       }
     } catch (e) {}
   }
@@ -4988,6 +5031,60 @@ async function fetchPlannedDeps(sn) {
   v.planned = list;
   v.plannedTs = Date.now();
   v.plannedTried = true;
+  v.plannedLidOk = !!lid;
+}
+// „früher“: bis zu sechs bereits abgefahrene Verbindungen vor dem Listenanfang
+// nachladen. Die Abfragezeit wandert adaptiv nach hinten (3 min, dann
+// verdoppelnd bis 192 min), bis sechs noch nicht geladene Einträge vor der
+// frühesten sichtbaren Abfahrt dastehen oder der Rahmen erschöpft ist.
+async function fetchEarlierDeps(sn) {
+  const v = viewOf(sn);
+  const stop = stops.find(s => s.shortName === sn);
+  if (!v || !stop) return;
+  const isdb = isDB(sn);
+  const lid = isdb ? ((dbStopOf(sn) || {}).lid || null) : await nahshLocFor(stop);
+  if (!lid) { v.earlierTried = true; return; }
+  // früheste zurzeit sichtbare Abfahrt (absolut)
+  let earliest;
+  if (v.earlier && v.earlier.length) earliest = v.earlier[0].absMs;
+  else if (v.deps && v.deps.length) earliest = v.fetchTs + (v.deps[0].actualRelativeTime || 0) * 1000;
+  else earliest = Date.now();
+  const have = {};
+  for (const d of (v.earlier || [])) have[d.jidKey] = 1;
+  let found = [];
+  for (let dMin = 3; dMin <= 192 && found.length < 6; dMin *= 2) {
+    try {
+      const cand = [];
+      for (const e of await nahshBoardEntries(lid, new Date(earliest - dMin * 60000), isdb ? "31" : "32")) {
+        if (e.absMs >= earliest || e.absMs < earliest - 12 * 3600e3) continue;
+        const k = e.tripId + "@" + e.absMs;
+        if (have[k]) continue;   // bereits geladen
+        cand.push({ e, k });
+      }
+      cand.sort((a, b) => b.e.absMs - a.e.absMs);   // neueste zuerst
+      found = cand;
+    } catch (err) { break; }
+  }
+  const add = found.slice(0, 6);
+  if (add.length) {
+    add.reverse();   // zeitlich aufsteigend (älteste zuerst)
+    const now = Date.now();
+    v.earlier = v.earlier || [];
+    for (const c of add) {
+      v.earlier.push({
+        tripId: c.e.tripId, line: c.e.line, direction: c.e.direction,
+        plannedTime: c.e.plannedTime, actualTime: c.e.actualTime,
+        status: c.e.hasRT ? "PREDICTED" : "PLANNED",
+        actualRelativeTime: (c.e.absMs - now) / 1000,
+        alerts: [], earlier: true, planned: !isdb, absMs: c.e.absMs, jidKey: c.k
+      });
+    }
+    v.earlier.sort((a, b) => a.absMs - b.absMs);
+    v.earlierTs = now;
+  } else if (v.earlier && v.earlier.length) {
+    v.earlierExhausted = true;   // nichts mehr zu holen: „früher“ ausblenden
+  }
+  v.earlierTried = true;
 }
 
 // Abfahrten wirklich weg (länger als 2 Minuten abgefahren)? Nicht verwechseln mit
@@ -4999,37 +5096,74 @@ function depsReallyGone(v) {
 }
 
 // ---------- Buszeilen rendern ----------
-// „mehr“-Link am Ende einer Abfahrtsliste (zentriert): Live-Abfahrten
-// aktualisieren und mit geplanten Abfahrten auffüllen (KVG-Busse: NAH.SH-Fahrplan,
-// DB: Fahrplan-Einträge kommen mit der Abfrage, der Horizont wird erweitert).
-function moreHTML(v) {
+// Zeitfenster der Liste (gemeinsame Basis für Zeilen und Blätter-Links):
+// frühere Einträge (per „früher“ geladen), Live-Fenster, geplante Einträge
+// (KVG: NAH.SH-Fahrplan) bzw. Züge jenseits des 6-h-Fensters (DB, „später“).
+function depWindow(v, horizonSec) {
+  const w = { ageSec: (Date.now() - v.fetchTs) / 1000,
+    agePl: v.plannedTs ? (Date.now() - v.plannedTs) / 1000 : 0,
+    ageEr: v.earlierTs ? (Date.now() - v.earlierTs) / 1000 : 0,
+    fwd: v.moreOpen ? (v.fwdShown || 0) : 0,
+    lastLiveRel: -Infinity, plannedVisible: [], plannedMore: false,
+    dbBeyond: 0, dbMore: false };
+  for (const d of v.deps) {
+    const r = (d.actualRelativeTime || 0) - w.ageSec;
+    if (r > w.lastLiveRel) w.lastLiveRel = r;
+    if (horizonSec && r > horizonSec) w.dbBeyond++;
+  }
+  w.dbMore = w.dbBeyond > w.fwd;
+  // geplante KVG-Fahrten: diejenigen überspringen, die die Live-Auskunft bereits führt
+  for (const d of (v.planned || [])) {
+    const rel = (d.actualRelativeTime || 0) - w.agePl;
+    if (rel <= w.lastLiveRel + 60) continue;
+    if (w.plannedVisible.length < w.fwd) w.plannedVisible.push(d); else w.plannedMore = true;
+  }
+  return w;
+}
+// „früher“-Link über der Liste (zentriert): je Klick sechs abgefahrene Verbindungen
+function earlierHTML(v) {
   if (!v || !v.fetched) return "";
-  const extra = (v.moreOpen && !isDB(v.stop.shortName) && v.plannedTried && (!v.planned || !v.planned.length))
-    ? '<small class="rowinfo dim">Keine geplanten Abfahrten gefunden (Haltestelle im Fahrplan unbekannt).</small>' : "";
-  return '<div class="morewrap"><button class="morelink" data-more="' +
-    escapeHtml(v.stop.shortName) + '" title="Live-Abfahrten aktualisieren und um geplante Abfahrten erweitern">mehr</button></div>' + extra;
+  if (v.earlierExhausted || (v.earlierTried && (!v.earlier || !v.earlier.length))) return "";
+  return '<div class="morewrap"><button class="morelink" data-earlier="' +
+    escapeHtml(v.stop.shortName) + '" title="Die sechs vorherigen (abgefahrenen) Abfahrten nachladen">früher</button></div>';
+}
+// „später“-Link unter der Liste (zentriert): je Klick sechs weitere Einträge
+function laterHTML(v) {
+  if (!v || !v.fetched) return "";
+  const isdb = isDB(v.stop.shortName);
+  const w = depWindow(v, isdb ? 21600 : null);
+  const link = '<div class="morewrap"><button class="morelink" data-later="' +
+    escapeHtml(v.stop.shortName) + '" title="Live-Abfahrten aktualisieren und sechs weitere Abfahrten nachladen">später</button></div>';
+  if (isdb) return w.dbMore ? link : "";
+  if (!v.plannedTried) return link;
+  if (w.plannedMore) return link;
+  if (w.plannedVisible.length) return "";   // alles angezeigt
+  return '<div class="morewrap"><small class="rowinfo dim">' +
+    (v.plannedLidOk ? "Keine geplanten Abfahrten in den nächsten Stunden."
+      : "Keine geplanten Abfahrten gefunden (Haltestelle im NAH.SH-Fahrplan unbekannt).") + "</small></div>";
 }
 function busLinesHTML(v, horizonSec) {
   if (!v || !v.deps) return [];
-  const ageSec = (Date.now() - v.fetchTs) / 1000;
-  const agePl = v.plannedTs ? (Date.now() - v.plannedTs) / 1000 : 0;
+  const w = depWindow(v, horizonSec);
   const walkSec = v.meters ? v.meters / (WALK_SPEED_KMH * 1000 / 3600) : 0;
-  // Ende des Live-Fensters: Taucht eine geplante Fahrt in der Live-Auskunft auf,
-  // zeigt deren Zeile die Fahrt mit Echtzeit; die geplante Zeile entfällt automatisch.
-  let lastLiveRel = -Infinity;
-  for (const d of v.deps) {
-    const r = (d.actualRelativeTime || 0) - ageSec;
-    if (r > lastLiveRel) lastLiveRel = r;
-  }
   const out = [];
-  for (const d of v.deps.concat(v.moreOpen && v.planned ? v.planned : [])) {
-    const rel = d.planned ? ((d.actualRelativeTime || 0) - agePl) : (d.actualRelativeTime - ageSec);
-    if (horizonSec && rel > horizonSec) continue;      // Anzeige-Horizont (Züge: 6 h, mit „mehr“ 12 h)
-    if (d.planned && rel <= lastLiveRel + 60) continue; // führt die Live-Auskunft bereits: als Live zeigen
+  // zeitlich aufsteigend: frühere Einträge vor dem Live-Fenster, danach Live,
+  // dann die per „später“ freigeschalteten geplanten Einträge
+  const seq = (v.earlier || []).concat(v.deps, w.plannedVisible);
+  let rank = 0;   // DB: schon sichtbare Einträge jenseits des 6-h-Fensters
+  for (const d of seq) {
+    const rel = d.earlier ? ((d.actualRelativeTime || 0) - w.ageEr)
+              : d.planned ? ((d.actualRelativeTime || 0) - w.agePl)
+              : (d.actualRelativeTime - w.ageSec);
+    // DB-Paging: jenseits des 6-h-Fensters nur die per „später“ geladenen (je 6)
+    if (horizonSec && !d.earlier && !d.planned && rel > horizonSec) {
+      if (rank >= w.fwd) continue;
+      rank++;
+    }
     const losMin = Math.round((rel - walkSec) / 60);
-    if (!depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 💨 sichtbar
+    if (!d.earlier && !depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 💨
     const plat = v.platforms && v.platforms[d.tripId];
-    const isPlan = d.planned || d.status === "PLANNED";
+    const isPlan = d.earlier ? d.status === "PLANNED" : (d.planned || d.status === "PLANNED");
     const cls = (losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed") + (isPlan ? " planned" : "");
     const ptag = isPlan ? '<span class="ptag">geplant</span>' : "";
     const now = new Date();
@@ -5041,9 +5175,9 @@ function busLinesHTML(v, horizonSec) {
     // spätere Fahrten derselben Linie und Richtung (noch nicht abgefahren, ohne
     // die oben angezeigte): "auch in vv, ww, … min" – nur Live-Fahrten, keine geplanten
     const nexts = [];
-    for (const x of v.deps) {
+    if (!d.earlier) for (const x of v.deps) {
       if (x === d || x.planned || x.line !== d.line || x.direction !== d.direction) continue;
-      const xrel = x.actualRelativeTime - ageSec;
+      const xrel = x.actualRelativeTime - w.ageSec;
       if (xrel <= rel) continue;   // nur spätere Fahrten
       const xl = Math.round((xrel - walkSec) / 60);
       if (xl < 0) continue;        // bereits abgefahren: nicht mehr nennen
@@ -5058,12 +5192,15 @@ function busLinesHTML(v, horizonSec) {
           '<span class="nxlink" data-buslink="' + escapeHtml(v.stop.shortName) + "~" + escapeHtml(n.id) +
           '" title="Fahrtverlauf dieser Verbindung öffnen">' + n.min + "</span>").join(", ") + " min</div>"
       : "";
+    const right = d.earlier
+      ? clock + " · vor " + Math.max(0, Math.round(-rel / 60)) + " min"
+      : clock + " · los in " + losMin + " min";
     out.push({
       html: '<div class="blwrap"><div class="' + cls + '"' + (clickable ? ' data-bus="' + bLink + '"' : "") + ">" +
         '<span class="dl blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(d.line) + '</span>' +
         (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
         '<span class="mqwrap"><span class="mqi blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(text) + "</span></span>" +
-        '<span class="btime">' + clock + " · los in " + losMin + " min" + ptag + "</span></div>" + nextTxt + "</div>",
+        '<span class="btime">' + right + ptag + "</span></div>" + nextTxt + "</div>",
       losMin
     });
   }
@@ -5089,8 +5226,8 @@ function renderView(sn, el) {
     } else if (!v.fetched) {
       info.className = "rowinfo dim";
       info.textContent = "Daten werden geladen …";
-    } else if (v.deps && v.deps.length) {
-      const lines = busLinesHTML(v, isDB(sn) ? (v.moreOpen ? 43200 : 21600) : null);
+    } else if ((v.deps && v.deps.length) || (v.earlier && v.earlier.length)) {
+      const lines = busLinesHTML(v, isDB(sn) ? 21600 : null);
       // alle Abfahrten länger als 2 Minuten weg: Station neu laden (max. alle 30 s)
       if (!lines.length) {
         info.className = "rowinfo dim";
@@ -5098,11 +5235,11 @@ function renderView(sn, el) {
           info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
           if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
         } else {
-          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle" + moreHTML(v);
+          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle" + earlierHTML(v) + laterHTML(v);
         }
         return;
       }
-      const newHTML = lines.map(l => l.html).join("") + moreHTML(v);
+      const newHTML = earlierHTML(v) + lines.map(l => l.html).join("") + laterHTML(v);
       // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
       if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
       if (info.dataset.last !== newHTML) {
