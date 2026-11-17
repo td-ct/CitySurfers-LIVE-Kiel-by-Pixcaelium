@@ -364,7 +364,7 @@
   .routecon .rchint { color: #7dd3fc; }
   .rtsec { cursor: pointer; }
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
-    border-radius: 6px; padding: 3px 6px; font-size: .85rem; }
+    border-radius: 6px; padding: 3px 6px; font-size: .85rem; color-scheme: dark; }
   .rtswap { text-align: center; margin: 6px 0; }
   .rtabg { margin: 2px 0 8px; border: 1px dashed #1e3a5f; border-radius: 8px; padding: 4px 8px 6px; }
   .rtabgh { font-size: .78rem; color: #94a3b8; margin-bottom: 2px; }
@@ -5906,13 +5906,43 @@ let routeActive = -1;      // aktiver Route-Unter-Reiter
 // KVG-Busse teilen sich die Bus-Klasse mit anderen Betreibern im NAH.SH.
 let routeProd = "all";
 try { const rp = localStorage.getItem("kvg-routeprod"); if (rp === "bus" || rp === "rail") routeProd = rp; } catch (e) {}
-function routeProdBtns() {
-  const b = (p, label, title) => '<button class="achip' + (routeProd === p ? " on" : "") +
-    '" data-rtprod="' + p + '" title="' + title + '">' + label + "</button>";
-  return ' <span class="rtsmall">Nur:</span>' +
-    b("all", "Alle", "Alle Verkehrsmittel: Busse und Züge") +
-    b("bus", "🚌 Bus", "Nur Busse (KVG und andere Busbetreiber)") +
-    b("rail", "🚆 Bahn", "Nur Schienenverkehr (DB und andere)");
+// Zeitsuche: false = Abfahrt (Verbindungen ab der Zeit), true = Ankunft
+// (letzte Verbindungen, die vor der gewählten Zeit ankommen; HAFAS: outFrwd:false).
+let routeArr = false;
+try { if (localStorage.getItem("kvg-routearr") === "1") routeArr = true; } catch (e) {}
+function routeProdBtns() {   // EIN Knopf, Klick wechselt den Modus: ÖPNV -> Bus -> Bahn
+  const sym = routeProd === "bus" ? "🚌" : routeProd === "rail" ? "🚆" : "🚌🚆";
+  const lbl = routeProd === "bus" ? "Bus" : routeProd === "rail" ? "Bahn" : "ÖPNV (Busse und Bahnen)";
+  return ' <button class="achip on" data-rtcycl="1" title="Routing-Modus: ' + lbl +
+    ' – Klick wechselt: ÖPNV, nur Busse, nur Schienenverkehr">' + sym + "</button>";
+}
+function routeArrSet(wantArr) {   // Abfahrt/Ankunft umschalten (Panel und Dialog gemeinsam)
+  if (routeArr === wantArr) return false;
+  routeArr = wantArr;
+  try { localStorage.setItem("kvg-routearr", routeArr ? "1" : "0"); } catch (e) {}
+  if (routeArr && routeCons.length) {
+    // Ankunft gewählt: Zeit auf die späteste angezeigte Ankunft setzen,
+    // aufgerundet auf die nächste volle halbe Stunde
+    let last = null;
+    for (const c of routeCons) {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(c.arr || ""));
+      if (m) { const v = Number(m[1]) * 60 + Number(m[2]); if (last == null || v > last) last = v; }
+    }
+    if (last != null) {
+      const up = last % 30 === 0 ? last : (Math.floor(last / 30) + 1) * 30;
+      const n = new Date(), p = x => String(x).padStart(2, "0");
+      const t = new Date(n.getFullYear(), n.getMonth(), n.getDate(), 0, up);   // >= 24 h: morgen 00:00
+      routeSel.time = t.getFullYear() + "-" + p(t.getMonth() + 1) + "-" + p(t.getDate()) +
+        "T" + p(t.getHours()) + ":" + p(t.getMinutes());
+    }
+  }
+  return true;
+}
+function routeWhenBtnsHTML() {   // Abfahrt/Ankunft-Wahlknöpfe (Panel und Dialog gemeinsam)
+  return '<button class="achip' + (routeArr ? "" : " on") +
+    '" data-rtwhen="dep" title="Nach Abfahrtszeit suchen: Verbindungen ab der gewählten Zeit">Abfahrt</button>' +
+    '<button class="achip' + (routeArr ? " on" : "") +
+    '" data-rtwhen="arr" title="Nach Ankunftszeit suchen: letzte Verbindungen, die vor der gewählten Zeit ankommen">Ankunft</button>';
 }
 function routeSig(c) {
   return c.dep + "|" + c.arr + "|" + c.secs.map(s => s.kind === "jny" ? s.line + "@" + s.dep : s.kind).join(">");
@@ -6015,9 +6045,10 @@ function routeSecStopsHTML(rc, si) {
   return html + "</div>";
 }
 
-function routeNowStr() {
+function routeNowStr() {   // datetime-local-Format (Datum + Uhrzeit)
   const n = new Date(), p = x => String(x).padStart(2, "0");
-  return p(n.getHours()) + ":" + p(n.getMinutes());
+  return n.getFullYear() + "-" + p(n.getMonth() + 1) + "-" + p(n.getDate()) +
+    "T" + p(n.getHours()) + ":" + p(n.getMinutes());
 }
 // Anwahl-Häufigkeit der Favoriten (kvg-routehist): Top 3 stehen in den Listen voran
 function routeHist() { try { return JSON.parse(localStorage.getItem("kvg-routehist") || "{}") || {}; } catch (e) { return {}; } }
@@ -6307,11 +6338,18 @@ function indSecHTML(sec) {   // innerer HTML-Text eines Zubringer-Abschnitts (oh
 }
 function routeWhen() {
   let d = new Date();
-  if (routeSel.time && /^\d\d:\d\d$/.test(routeSel.time)) {
-    const parts = routeSel.time.split(":");
-    const t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(parts[0]), Number(parts[1]));
-    if (t.getTime() < d.getTime() - 60000) t.setDate(t.getDate() + 1);   // Uhrzeit vorbei: morgen
-    d = t;
+  if (routeSel.time) {
+    const full = String(routeSel.time).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    if (full) {   // datetime-local: Datum wird wie gewählt respektiert
+      d = new Date(Number(full[1]), Number(full[2]) - 1, Number(full[3]), Number(full[4]), Number(full[5]));
+    } else {
+      const hm = String(routeSel.time).match(/^(\d{1,2}):(\d{2})$/);
+      if (hm) {
+        const t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(hm[1]), Number(hm[2]));
+        if (t.getTime() < d.getTime() - 60000) t.setDate(t.getDate() + 1);   // Uhrzeit vorbei: morgen
+        d = t;
+      }
+    }
   }
   const p = x => String(x).padStart(2, "0");
   return { date: d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
@@ -6325,6 +6363,7 @@ async function routeTripSearch() {
     arrLocL: [{ type: arr.locType, lid: arr.lid }],
     outDate: when.date, outTime: when.time,
     numF: 6, getPasslist: true, getPolyline: false };   // Passlist: Haltestellen je Abschnitt für den ausklappbaren Verlauf
+  if (routeArr) req.outFrwd = false;   // Ankunftssuche: rückwärts ab der Zeit (Feldname mit d! outFrw crasht den Server)
   if (routeProd === "bus") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "32" }];     // nur Busse
   if (routeProd === "rail") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "31" }];   // nur Schienenverkehr
   const res = await routeHafas("TripSearch", req);
@@ -6401,17 +6440,17 @@ function renderRoutePanel() {
   if (!show) { routePanel.innerHTML = ""; delete routePanel.dataset.last; return; }
   const a = routeSel.start, b = routeSel.dest;
   let h = '<div class="sechead"><span class="sarr">▾</span>🧭 Route: ' +
-    escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") + "</div>";
-  h += '<div class="dstage" style="margin:6px 0; flex-wrap:wrap">Abfahrt <input type="time" class="rttime" id="routeTime" value="' +
-    (routeSel.time || routeNowStr()) + '">' +
-    ' <button class="achip" data-rtnow2="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button>' +
-    ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶ Suchen</button>' +
-    routeProdBtns() +
-    ' <button class="achip" data-rtedit="1" title="Start und Ziel im Routen-Dialog neu wählen (derselbe Dialog wie beim Planen der Route)">✎ Start/Ziel</button>' +
+    escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") +
+    ' <button class="achip" data-rtedit="1" title="Start und Ziel im Routen-Dialog neu wählen (derselbe Dialog wie beim Planen der Route)">✎</button>' +
     ((a && b && a.lat != null && b.lat != null)
       ? ' <a class="achip" target="_blank" rel="noopener" href="' + routeExtUrl(a, b) +
-        '" title="Diese Route in einer externen Routing-App öffnen (z. B. Google Maps, ÖPNV-Modus)">🗺 Extern</a>'
+        '" title="Diese Route in einer externen Routing-App öffnen (z. B. Google Maps, ÖPNV-Modus)">🗺</a>'
       : "") + "</div>";
+  h += '<div class="dstage" style="margin:6px 0; flex-wrap:wrap">' + routeWhenBtnsHTML() +
+    '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
+    ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
+    ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
+    routeProdBtns() + "</div>";
   if (routeLoading) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
   } else if (routeSearchErr) {
@@ -6508,15 +6547,18 @@ routePanel.addEventListener("click", e => {
     if (ti) ti.value = routeNowStr();
     return;
   }
-  const rprod = e.target.closest("[data-rtprod]");
-  if (rprod) {
-    const p = rprod.dataset.rtprod;
-    if (routeProd !== p) {
-      routeProd = p;
-      try { localStorage.setItem("kvg-routeprod", p); } catch (e2) {}
-      renderRoutePanel();
-      if (routeCons.length || routeSearchErr) routeRunSearch();   // bisherige Suche mit neuem Filter wiederholen
-    }
+  const rwhen = e.target.closest("[data-rtwhen]");
+  if (rwhen) {
+    routeArrSet(rwhen.dataset.rtwhen === "arr");
+    renderRoutePanel();
+    return;
+  }
+  const rcycl = e.target.closest("[data-rtcycl]");
+  if (rcycl) {
+    routeProd = routeProd === "all" ? "bus" : routeProd === "bus" ? "rail" : "all";
+    try { localStorage.setItem("kvg-routeprod", routeProd === "all" ? "all" : routeProd); } catch (e2) {}
+    renderRoutePanel();
+    if (routeCons.length || routeSearchErr) routeRunSearch();   // bisherige Suche mit neuem Modus wiederholen
     return;
   }
   if (e.target.closest("[data-rtedit]")) {
@@ -6586,9 +6628,10 @@ function routeDlgHTML() {
     '<label class="dlabel">Start</label>' + routeFieldHTML("start") + routeAbgHTML("start") +
     '<div class="rtswap"><button class="achip" data-rtswap="1" title="Start und Ziel miteinander tauschen">⇅ Start und Ziel tauschen</button></div>' +
     '<label class="dlabel">Ziel</label>' + routeFieldHTML("dest") + routeAbgHTML("dest") +
-    '<label class="dlabel">Abfahrtszeit</label>' +
-    '<div class="dstage"><input type="time" class="rttime" value="' + (routeSel.time || routeNowStr()) + '">' +
-      ' <button class="achip" data-rtnow="1" title="Abfahrtszeit auf jetzt setzen">Jetzt</button></div>' +
+    '<label class="dlabel">Zeit (' + (routeArr ? "Ankunft" : "Abfahrt") + ")</label>" +
+    '<div class="dstage">' + routeWhenBtnsHTML() +
+      '<input type="datetime-local" class="rttime" value="' + (routeSel.time || routeNowStr()) + '">' +
+      ' <button class="achip" data-rtnow="1" title="Zeit auf jetzt setzen">Jetzt</button></div>' +
     '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
       '<button class="aok" data-rtgo="1">▶ Route suchen</button></div>' +
     '</div>';
@@ -6625,6 +6668,8 @@ function openRouteDlg() {
       return;
     }
     if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
+    const dwhen = e.target.closest("[data-rtwhen]");
+    if (dwhen) { routeArrSet(dwhen.dataset.rtwhen === "arr"); wrap.innerHTML = routeDlgHTML(); return; }
     if (e.target.closest(".acancel")) { wrap.remove(); return; }
     if (e.target.closest("[data-rtgo]")) {
       if (!routeSel.start || !routeSel.dest) { setLocNote("🧭 Bitte Start und Ziel wählen."); return; }
@@ -6887,7 +6932,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.4 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.5 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
