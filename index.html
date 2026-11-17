@@ -5228,6 +5228,12 @@ async function dbFetch(svcReqL) {
 // HAFAS-Zeitformat: "HHMMSS"; nach Mitternacht teils mit Tagesoffset-Prefix ("01HHMMSS")
 function dbHHMM(t) { if (!t) return ""; const h = t.length > 6 ? t.slice(-6) : t;
   return h.slice(0, 2) + ":" + h.slice(2, 4); }
+function hhmmShift(t, mins) {   // "HH:MM" um +/- Minuten verschieben (rechnerischer Mitternacht-Umbruch)
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || ""));
+  if (!m) return t;
+  const v = ((Number(m[1]) * 60 + Number(m[2]) + (mins || 0)) % 1440 + 1440) % 1440;
+  return String(Math.floor(v / 60)).padStart(2, "0") + ":" + String(v % 60).padStart(2, "0");
+}
 function rtDiffMin(a, b) {   // Soll-/Ist-HAFAS-Zeit -> +/- Minuten (auch negativ), null ohne Echtzeit
   const mv = t => { if (!t) return null; const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
     const x = t.slice(-6);
@@ -6248,11 +6254,18 @@ try { if (localStorage.getItem("kvg-routearr") === "1") routeArr = true; } catch
 // Verbindungen mit Fußwegen gezeigt (keine Fahrräder, keine Autos).
 let routeScoot = false;
 try { if (localStorage.getItem("kvg-routescoot") === "1") routeScoot = true; } catch (e) {}
+let routeScootMin = 5;   // Roller nur anzeigen, wenn er auf der Gesamtstrecke so viel spart
+try { const v = Number(localStorage.getItem("kvg-routescootmin"));
+  if (v === 0 || v === 5 || v === 10 || v === 15) routeScootMin = v; } catch (e) {}
 function routeScootBtn() {   // Roller-Knopf in der Routen-Suchzeile (an/aus, wie der Modus-Knopf)
-  return ' <button class="achip' + (routeScoot ? " on" : "") + '" data-rtscoot="1" title="Roller-Option ' +
-    (routeScoot ? "AN: Leihfahrrad-Abschnitte zählen als Roller, je 2 min Ausleihen und Abstellen dazu"
+  let h = ' <button class="achip' + (routeScoot ? " on" : "") + '" data-rtscoot="1" title="Roller-Option ' +
+    (routeScoot ? "AN: Leihfahrrad-Abschnitte zählen als Roller, je Strecke 2 min Holen und Abstellen (am Anfang/Ende landet das in Abfahrt/Ankunft)"
                 : "AUS: nur Verbindungen mit Fußwegen") +
     ' – Klick schaltet um und sucht erneut">🛴</button>';
+  if (routeScoot) h += '<select class="rtscootmin" data-rtscootmin="1" title="Roller-Verbindungen nur anzeigen, wenn sie auf der Gesamtstrecke mindestens so viele Minuten sparen (0 = alle anzeigen)">' +
+    [0, 5, 10, 15].map(v => '<option value="' + v + '"' + (v === routeScootMin ? " selected" : "") +
+      ">+" + v + "</option>").join("") + "</select>";
+  return h;
 }
 function routeProdBtns() {   // EIN Knopf, Klick wechselt den Modus: ÖPNV -> Bus -> Bahn
   const sym = routeProd === "bus" ? "🚌" : routeProd === "rail" ? "🚆" : "🚌🚆";
@@ -6736,7 +6749,7 @@ function indIcon(kind) {
 function indSuffix(kind) {   // Klartext zur Fortbewegungsart (nur bei Nicht-Fußweg)
   return kind === "kiss" ? "Kiss & Ride (Auto-Mitfahrt)" : kind === "car" ? "mit dem Auto" :
     kind === "taxi" ? "mit dem Taxi" : kind === "devi" ? "Rufbus/AST" :
-    kind === "scoot" ? "Roller (Leihfahrrad; inkl. je 2 min Ausleihen und Abstellen)" :
+    kind === "scoot" ? "Roller (Leihfahrrad; inkl. 2 min Holen und Abstellen)" :
     kind === "ind" ? "individuell" : "";
 }
 function indSecHTML(sec) {   // innerer HTML-Text eines Zubringer-Abschnitts (ohne div)
@@ -6834,7 +6847,7 @@ async function routeTripSearch() {
   const dep = await routeResolve(routeSel.start);
   const arr = await routeResolve(routeSel.dest);
   let when = routeWhen();
-  const out = [], seen = new Set();
+  let out = []; const seen = new Set();
   let prevMs = 0;
   // NAH.SH liefert max. 6 Verbindungen pro Anfrage, Zubringer-Varianten (KISS/BIKE)
   // belegen davon Plaetze. Solange weniger als 5 gueltige (gefilterte) Verbindungen
@@ -6867,17 +6880,46 @@ async function routeTripSearch() {
     when = { date: "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
       time: p(d.getHours()) + p(d.getMinutes()) + "00" };
   }
-  if (routeScoot) {   // Roller-Option: Leihfahrrad-Abschnitte als Roller, je 2 min Ausleihen
-    // und 2 min Zurueckstellen dazu (wirkt mitten in der Verbindung, auch zwischen zwei
-    // Stationen); die Wartezeit zaehlt zur Abschnitts- und Gesamtdauer.
+  if (routeScoot) {   // Roller-Option: Leihfahrrad-Abschnitte als Roller, je Strecke
+    // 2 min Aufwand (Holen und Abstellen). Der Aufwand landet in den Gesamt-Zeiten:
+    // Roller-Strecke am ANFANG -> 2 min frueher losgehen (Abfahrt rutscht vor),
+    // am ENDE -> 2 min spaeter angekommen (Ankunft rutscht nach), und nur dieser
+    // Aufwand zaehlt zur Gesamtdauer (dur = Ankunft minus Abfahrt bleibt stimmig).
+    // MITTEN in der Verbindung verschiebt der Aufwand keine Bus-Zeiten (die legt
+    // NAH.SH fest), er steht im Abschnitt mit drin und frisst Umstiegs-Puffer.
     for (const c of out) {
-      let extra = 0;
-      for (const s of c.secs) if (s.kind === "bike") {
-        s.kind = "scoot";
-        s.mins = (s.mins || 0) + 4;
-        extra += 4;
+      let first = -1, last = -1;
+      for (let i = 0; i < c.secs.length; i++) if (c.secs[i].kind === "bike") {
+        c.secs[i].kind = "scoot";
+        c.secs[i].mins = (c.secs[i].mins || 0) + 2;
+        if (first < 0) first = i;
+        last = i;
       }
-      if (extra) c.dur += extra;
+      if (first < 0) continue;
+      let extra = 0;
+      if (first === 0) {   // Roller gleich am Anfang: 2 min frueher los
+        c.dep = hhmmShift(c.dep, -2); c.depP = hhmmShift(c.depP, -2);
+        if (c.depAbsMs != null) c.depAbsMs -= 120000;
+        if (c.depAbsMsP != null) c.depAbsMsP -= 120000;
+        extra += 2;
+      }
+      if (last === c.secs.length - 1) {   // Roller ganz am Ende: 2 min laenger unterwegs
+        c.arr = hhmmShift(c.arr, 2); c.arrP = hhmmShift(c.arrP, 2);
+        extra += 2;
+      }
+      c.dur += extra;
+    }
+    // Roller nur, wenn es sich lohnt: Roller-Verbindungen faellen weg, die nicht
+    // mindestens routeScootMin Minuten schneller sind als die schnellste
+    // Verbindung ohne Roller (0 = alle Roller-Varianten zeigen). Gibt es gar
+    // keine Verbindung ohne Roller, bleibt alles stehen.
+    let baseDur = null;
+    for (const c of out)
+      if (!c.secs.some(s => s.kind === "scoot") && (baseDur == null || c.dur < baseDur)) baseDur = c.dur;
+    if (routeScootMin > 0 && baseDur != null) {
+      const keep = out.filter(c =>
+        !c.secs.some(s => s.kind === "scoot") || baseDur - c.dur >= routeScootMin);
+      if (keep.length) out = keep;
     }
   }
   // Die zwei schnellsten Verbindungen mit Buslinie zuerst, danach die uebrigen
@@ -7098,6 +7140,17 @@ routePanel.addEventListener("click", e => {
     const ti = document.getElementById("routeTime");
     if (ti) routeSel.time = ti.value || "";
     routeRunSearch();
+  }
+});
+routePanel.addEventListener("change", e => {
+  if (e.target.closest("[data-rtscootmin]")) {   // Roller-Mindestersparnis: Auswahl hinter dem 🛴
+    const v = Number(e.target.value);
+    if (v === 0 || v === 5 || v === 10 || v === 15) {
+      routeScootMin = v;
+      try { localStorage.setItem("kvg-routescootmin", String(v)); } catch (e2) {}
+      renderRoutePanel();
+      if (routeCons.length || routeSearchErr) routeRunSearch();   // Suche mit neuer Schwelle wiederholen
+    }
   }
 });
 // --- Routen-Dialog (Start, Ziel, Abfahrtszeit) ---
