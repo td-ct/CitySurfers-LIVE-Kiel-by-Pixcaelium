@@ -350,7 +350,10 @@
   .rtrow { display: flex; align-items: center; gap: 8px; padding: 8px 6px; cursor: pointer;
     border-bottom: 1px solid rgba(30,58,95,.5); }
   .rtrow:hover { background: rgba(56,189,248,.08); }
-  .rtrow .rtname { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rtrow .rtmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .rtrow .rtname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rtrow .rtname.bold { font-weight: 700; }
+  .rtrow .rtsub { font-size: .72rem; color: #64748b; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .rtrow .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
   .routecon { margin: 8px 0; padding: 8px 10px; background: #0f1a30;
     border: 1px solid #1e3a5f; border-radius: 10px; }
@@ -6437,6 +6440,19 @@ function routeBump(key) {
   const h = routeHist(); h[key] = (h[key] || 0) + 1;
   try { localStorage.setItem("kvg-routehist", JSON.stringify(h)); } catch (e) {}
 }
+function routePickRowsHTML(entries) {   // Trefferzeilen im Auswahl-Picker des
+  // Routen-Dialogs: Favoriten zweizeilig (Alias fett oben, Adresse bzw. NAH.SH-Name
+  // darunter, Distanz rechts), Suchtreffer ohne Favorit-Stern einzeilig mit Unterzeile
+  if (!entries.length)
+    return '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Keine Treffer.</span></div>';
+  return entries.map((en, i) =>
+    '<div class="rtrow" data-rt="' + i + '" title="Klick: übernehmen">' +
+    '<span class="rtmain">' +
+      '<span class="rtname' + (en.star ? " bold" : "") + '">' + (en.star || "") + escapeHtml(en.label) + "</span>" +
+      (en.sub ? '<span class="rtsub">' + escapeHtml(en.sub) + "</span>" : "") +
+    "</span>" +
+    (en.distTxt ? '<span class="rtsmall">' + en.distTxt + "</span>" : "") + "</div>").join("");
+}
 function routeFavList(kind) {   // kind "addr" | "stop"
   const pos = getPos();
   let items;
@@ -6449,7 +6465,9 @@ function routeFavList(kind) {   // kind "addr" | "stop"
   } else {
     items = favs.map(sn => {
       const st = stops.find(x => x.shortName === sn);
-      return { label: st ? st.name : sn, kind: "stop", key: "stop:" + sn, name: st ? st.name : sn,
+      const nn = nahshNameForStop(sn);   // NAH.SH-Name als Unterzeile wie im Favoriten-Panel
+      return { label: st ? st.name : sn, sub: nn ? "NAH.SH: " + nn : "",
+        kind: "stop", key: "stop:" + sn, name: st ? st.name : sn,
         sn: sn, lat: st ? st.lat : null, lon: st ? st.lon : null };
     });
   }
@@ -7283,15 +7301,7 @@ function openRoutePicker(kind, which) {
   let cur = [], timer = null;
   function rows(entries) {
     cur = entries;
-    if (!entries.length) {
-      listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Keine Treffer.</span></div>';
-      return;
-    }
-    listEl().innerHTML = entries.map((en, i) =>
-      '<div class="rtrow" data-rt="' + i + '" title="Klick: übernehmen">' +
-      '<span class="rtname">' + (en.star || "") + escapeHtml(en.label) + "</span>" +
-      (en.sub ? '<span class="rtsmall">' + escapeHtml(en.sub) + "</span>" : "") +
-      (en.distTxt ? '<span class="rtsmall">' + en.distTxt + "</span>" : "") + "</div>").join("");
+    listEl().innerHTML = routePickRowsHTML(entries);
   }
   function pickEntry(en) {
     const f = (en.key && String(en.key).indexOf("addr:") === 0) ? favByKey(en.key) : null;
@@ -7331,10 +7341,25 @@ function openRoutePicker(kind, which) {
   }
   const pos = getPos();
   if (kind === "addrfav" || kind === "stopfav") {
-    rows(routeFavList(kind === "addrfav" ? "addr" : "stop").map(it => ({
+    const renderFavs = () => rows(routeFavList(kind === "addrfav" ? "addr" : "stop").map(it => ({
       label: it.label, sub: it.sub || "", kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
       lat: it.lat, lon: it.lon, star: "⭐ ",
       distTxt: (pos && it.lat != null) ? formatDist(dist(pos, it)) : "" })));
+    renderFavs();
+    if (kind === "stopfav") {
+      // NAH.SH-Namen der Stationsfavoriten im Hintergrund nachziehen (LocMatch-Cache,
+      // 30-s-Guard wie beim Favoriten-Panel) – die Unterzeile erscheint dann sofort
+      const miss = favs.filter(sn => !isDB(sn) && !nahshLocCache[sn]);
+      if (miss.length && Date.now() - (openRoutePicker._nnTs || 0) > 30000) {
+        openRoutePicker._nnTs = Date.now();
+        miss.forEach(sn => {
+          const stop = stops.find(s => s.shortName === sn);
+          if (stop) nahshLocFor(stop).then(() => {
+            if (document.body.contains(wrap)) renderFavs();
+          }).catch(() => {});
+        });
+      }
+    }
   } else if (kind === "stop") {
     const input = wrap.querySelector("#routeQ");
     const upd = () => {
@@ -7520,7 +7545,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.11 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.12 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
