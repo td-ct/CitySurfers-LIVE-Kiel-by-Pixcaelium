@@ -357,11 +357,20 @@
   .routecon .rchead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
   .routecon .rcdur { color: #7dd3fc; font-weight: 600; }
   .routesec { font-size: .85rem; color: #cbd5e1; padding: 2px 0 2px 6px; }
-  .routesec .rcline { font-weight: 600; color: #7dd3fc; }
   .routecon[data-rcopen] { cursor: pointer; }
   .routecon.on { border-color: #38bdf8; }
   .routecon .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
   .routecon .rchint { color: #7dd3fc; }
+  .routesec.rtjny { margin: 6px 0 2px; padding: 2px 0 2px 6px; line-height: 1.5; }
+  .routesec.rtjny .rtstop { padding: 1px 0; }
+  .routesec.rtjny .rtbadge { background: #00519e; color: #fff; font-weight: 700;
+    border-radius: 6px; min-width: 46px; text-align: center; padding: 1px 6px;
+    display: inline-block; margin-right: 2px; }
+  .routesec .tdelay { font-size: 0.75rem; font-weight: 600; }
+  .routesec .tdelay.up { color: #f87171; }
+  .routesec .tdelay.down { color: #7dd3fc; }
+  .routesec .tdelay.ok { color: #4ade80; }
+  .routecon .routesec[data-rtsec] { cursor: pointer; }
   .rtsec { cursor: pointer; }
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
     border-radius: 6px; padding: 3px 6px; font-size: .85rem; color-scheme: dark; }
@@ -5213,6 +5222,14 @@ async function dbFetch(svcReqL) {
 // HAFAS-Zeitformat: "HHMMSS"; nach Mitternacht teils mit Tagesoffset-Prefix ("01HHMMSS")
 function dbHHMM(t) { if (!t) return ""; const h = t.length > 6 ? t.slice(-6) : t;
   return h.slice(0, 2) + ":" + h.slice(2, 4); }
+function rtDiffMin(a, b) {   // Soll-/Ist-HAFAS-Zeit -> +/- Minuten (auch negativ), null ohne Echtzeit
+  const mv = t => { if (!t) return null; const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
+    const x = t.slice(-6);
+    return day * 1440 + Number(x.slice(0, 2)) * 60 + Number(x.slice(2, 4)); };
+  const x = mv(a), y = mv(b);
+  if (x == null || y == null) return null;
+  return y - x;
+}
 function dbRelMin(t) {   // "HHMMSS" -> Minuten ab jetzt (negativ = bereits abgefahren)
   const s6 = t.length > 6 ? t.slice(-6) : t;
   const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
@@ -6284,6 +6301,23 @@ function routeStopMatch(nm) {
 // Ausklappbarer Haltestellen-Verlauf eines Routen-Abschnitts: gleiche Optik wie der
 // Fahrtverlauf der Stationsansicht (Gep./Aktuell, Verspätung, GPS-Fortschrittsbalken,
 // blinkende Uhrzeit an der eigenen Haltestelle, klickbare Stationsnamen)
+function rtDelaySpan(d) {   // Echtzeit-Versatz wie in den Stations-Listings/Verläufen (rot/blau/grün)
+  if (d == null) return "";
+  const cls = d > 0 ? "up" : d < 0 ? "down" : "ok";
+  const txt = d > 0 ? "+" + d + "m" : d < 0 ? d + "m" : "0m";
+  return ' <span class="tdelay ' + cls + '">' + txt + "</span>";
+}
+function rtJnyHTML(sec, tail, attrs) {   // Bus-/Bahn-Abschnitt: drei Zeilen im Look der
+  // Stations-Listings (blaues Linien-Schild, Richtung, +/- min) statt einem Einzeiler
+  return '<div class="routesec rtjny"' + (attrs || "") + ">" +
+    '<div class="rtstop">ab ' + escapeHtml(sec.from || "?") + " " + escapeHtml(sec.dep || "–") +
+    rtDelaySpan(sec.depDelay) + "</div>" +
+    '<div class="rtline"><span class="rtbadge">' + escapeHtml(sec.line || "?") + "</span> Richtung " +
+    escapeHtml(sec.dir || "?") + (tail || "") + "</div>" +
+    '<div class="rtstop">an ' + escapeHtml(sec.to || "?") + " " + escapeHtml(sec.arr || "–") +
+    rtDelaySpan(sec.arrDelay) + "</div>" +
+    "</div>";
+}
 function routeSecStopsHTML(rc, si) {
   const sec = rc.con.secs[si];
   const sts = sec.stops || [];
@@ -6745,6 +6779,8 @@ async function routeTripSearch() {
         secs.push({ kind: "jny", line: ln, dir: dir, from: from.name, to: to.name,
           dep: dbHHMM(sec.dep && (sec.dep.dTimeR || sec.dep.dTimeS)),
           arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)),
+          depDelay: rtDiffMin(sec.dep && sec.dep.dTimeS, sec.dep && sec.dep.dTimeR),
+          arrDelay: rtDiffMin(sec.arr && sec.arr.aTimeS, sec.arr && sec.arr.aTimeR),
           rail: (prod.cls || 32) < 32,   // Schiene: größerer GPS-Radius (250 m statt 75 m)
           stops: (sec.jny.stopL || []).map(p => {
             const lc = locL[p.locX] || {};
@@ -6827,9 +6863,7 @@ function renderRoutePanel() {
         (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
       for (const sec of c.secs) {
         if (sec.kind === "jny") {
-          x += '<div class="routesec"><span class="rcline">' + escapeHtml(sec.line) + "</span> Richtung " +
-            escapeHtml(sec.dir || "?") + " · ab " + escapeHtml(sec.from || "?") + " " + sec.dep +
-            " → an " + escapeHtml(sec.to || "?") + " " + sec.arr + "</div>";
+          x += rtJnyHTML(sec);
         } else {
           x += '<div class="routesec">' + indSecHTML(sec) + "</div>";
         }
@@ -6856,11 +6890,9 @@ function renderRoutePanel() {
       c.secs.forEach((sec, si) => {
         if (sec.kind === "jny") {
           const open = !!rc.secOpen[si];
-          h += '<div class="routesec rtsec" data-rtsec="' + si +
-            '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"><span class="rcline">' +
-            escapeHtml(sec.line) + "</span> Richtung " + escapeHtml(sec.dir || "?") + " · ab " +
-            escapeHtml(sec.from || "?") + " " + sec.dep + " → an " + escapeHtml(sec.to || "?") + " " + sec.arr +
-            ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span></div>";
+          h += rtJnyHTML(sec,
+            ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span>",
+            ' data-rtsec="' + si + '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"');
           if (open) h += routeSecStopsHTML(rc, si);
         } else {
           h += '<div class="routesec">' + indSecHTML(sec) + "</div>";
@@ -7298,7 +7330,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.8 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.9 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
