@@ -6276,6 +6276,35 @@ function hafasDiffMin(a, b) {   // zwei "HHMMSS"-Zeiten -> Minuten
   if (x == null || y == null) return 0;
   return Math.max(0, y - x);
 }
+// Individuelle Zubringer-Abschnitte: NAH.SH liefert neben WALK und BIKE auch
+// KISS (Kiss & Ride: Auto-Mitfahrt), seltener TAXI/CAR/DEVI. Die Dauer passt
+// jeweils zur Fortbewegungsart (2,5 km in 6 min sind Auto, NICHT zu Fuß!),
+// deshalb dürfen diese Abschnitte nie das Fußweg-Icon bekommen.
+function indKindOf(t) {
+  if (t === "WALK") return "walk";
+  if (t === "BIKE") return "bike";
+  if (t === "KISS") return "kiss";
+  if (t === "TAXI") return "taxi";
+  if (t === "CAR") return "car";
+  if (t === "DEVI") return "devi";
+  return "ind";
+}
+function indIcon(kind) {
+  return kind === "bike" ? "🚲" : (kind === "kiss" || kind === "car") ? "🚗" :
+    kind === "taxi" ? "🚕" : kind === "devi" ? "🚐" : "🚶";
+}
+function indSuffix(kind) {   // Klartext zur Fortbewegungsart (nur bei Nicht-Fußweg)
+  return kind === "kiss" ? "Kiss & Ride (Auto-Mitfahrt)" : kind === "car" ? "mit dem Auto" :
+    kind === "taxi" ? "mit dem Taxi" : kind === "devi" ? "Rufbus/AST" :
+    kind === "ind" ? "individuell" : "";
+}
+function indSecHTML(sec) {   // innerer HTML-Text eines Zubringer-Abschnitts (ohne div)
+  const sfx = indSuffix(sec.kind);
+  return indIcon(sec.kind) + " " + sec.mins + " min" +
+    (sec.distM != null ? " · " + escapeHtml(formatDist(sec.distM)) : "") +
+    (sfx ? " · " + sfx : "") + " · " +
+    escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?");
+}
 function routeWhen() {
   let d = new Date();
   if (routeSel.time && /^\d\d:\d\d$/.test(routeSel.time)) {
@@ -6328,8 +6357,12 @@ async function routeTripSearch() {
               aS: dbHHMM(p.aTimeS), aR: dbHHMM(p.aTimeR) };
           }) });
       } else {
-        secs.push({ kind: sec.type === "BIKE" ? "bike" : "walk", from: from.name, to: to.name,
-          mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) });
+        // WALK/BIKE/KISS/... : Art UND Strecke mitnehmen (Distanz aus gis.dist;
+        // Dauer notfalls aus gis.dur, falls Abschnittszeiten fehlen)
+        secs.push({ kind: indKindOf(sec.type), from: from.name, to: to.name,
+          distM: (sec.gis && sec.gis.dist != null) ? sec.gis.dist : null,
+          mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) ||
+            hafasDurMin(sec.gis && sec.gis.dur) });
       }
     }
     out.push({ dep: dbHHMM(c.dep && (c.dep.dTimeR || c.dep.dTimeS)),
@@ -6399,8 +6432,7 @@ function renderRoutePanel() {
             escapeHtml(sec.dir || "?") + " · ab " + escapeHtml(sec.from || "?") + " " + sec.dep +
             " → an " + escapeHtml(sec.to || "?") + " " + sec.arr + "</div>";
         } else {
-          x += '<div class="routesec">' + (sec.kind === "bike" ? "🚲" : "🚶") + " " + sec.mins + " min · " +
-            escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") + "</div>";
+          x += '<div class="routesec">' + indSecHTML(sec) + "</div>";
         }
       }
       return x + '<div class="routesec rchint">▸ Verbindung als Unter-Reiter öffnen' +
@@ -6432,8 +6464,7 @@ function renderRoutePanel() {
             ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span></div>";
           if (open) h += routeSecStopsHTML(rc, si);
         } else {
-          h += '<div class="routesec">' + (sec.kind === "bike" ? "🚲" : "🚶") + " " + sec.mins + " min · " +
-            escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") + "</div>";
+          h += '<div class="routesec">' + indSecHTML(sec) + "</div>";
         }
       });
       h += "</div>";
@@ -6856,7 +6887,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.3 · Build: 16.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.4 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
