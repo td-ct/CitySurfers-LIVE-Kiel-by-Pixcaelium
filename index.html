@@ -523,6 +523,7 @@
       <input type="text" id="favDlgName" autocomplete="off" placeholder="z. B. Zuhause, Arbeit, Oma" /></div>
     <div class="favfield"><label for="favDlgAddr">Adresse</label>
       <input type="text" id="favDlgAddr" autocomplete="off" placeholder="Straße Nr., PLZ Ort oder Koordinaten" /></div>
+    <div id="favDlgAres" class="dim"></div>
     <div id="favDlgNahsh"></div>
     <div id="favDlgMsg" class="dim"></div>
     <div class="acbtns">
@@ -1572,46 +1573,134 @@ function nomLabel(x) {
   const tail = [pc, city].filter(Boolean).join(" ");
   return tail ? core + ", " + tail : core;
 }
-let addrSeq = 0;   // Race-Guard: nur die zuletzt angefragte Eingabe darf rendern
-async function searchAddress(q) {
-  const seq = ++addrSeq;
-  addrResults = [];
-  // primär: Nominatim (Photon derzeit oft nicht erreichbar, nur Fallback)
-  try {
+// ---------- Einheitliche Adresssuche: Nominatim/OSM + NAH.SH parallel ----------
+// Beide Kataloge werden je Suchanfrage gleichzeitig befragt und die Treffer
+// zusammengeführt. Derselbe Ort in beiden Katalogen (gleiche Hausnummer und
+// ≤ 2 km Distanz, bzw. Straßenniveau ohne Hausnummer und ≤ 300 m) wird EIN
+// Treffer mit beiden Quellen (📍🚌); weichen die Koordinaten voneinander ab
+// (> 100 m), zeigt der Treffer den Abstand an, bleibt aber wählbar (Diskrepanz
+// akzeptieren). Adressen, die nur in EINEM der beiden Kataloge existieren, sind
+// eigene, ebenfalls wählbare Treffer (📍 nur OSM / 🚌 nur NAH.SH). Dieselbe
+// Suche läuft in der Adresssuche, im Routen-Dialog (Adress-Picker) und im
+// Favoriten-Bearbeiten.
+let unifSeq = 0;
+function addrStreetOf(s, last) {   // Straßennamen-Segment: OSM vorn, NAH.SH hinten
+  const parts = String(s || "").split(",").map(p => p.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  return parts[last ? parts.length - 1 : 0].toLowerCase().replace(/\s+/g, " ");
+}
+function addrPairTest(osm, nsh) {   // derselbe Ort in beiden Katalogen?
+  const d = dist(osm, nsh);
+  const hO = hnrOfName(osm.label), hN = hnrOfName(nsh.name);
+  if (hO && hN) return hO === hN && d <= 2000;   // gleiche Hausnummer, gleiche Stadt
+  if (!hO && !hN)   // Straßenniveau: gleicher Straßenname und nah beieinander
+    return d <= 300 && addrStreetOf(osm.label, false) === addrStreetOf(nsh.name, true);
+  return false;   // verschiedene Granularität (z. B. Straße vs. Hausnummer): getrennt führen
+}
+function addrSrcBadge(r) {   // Quellen-Kennzeichnung eines Suchtreffers
+  if (r.src === "both") return (r.dPair != null && r.dPair > 100)
+    ? "📍🚌 ⚠ " + formatDist(r.dPair) + " Abstand" : "📍🚌 beide Kataloge";
+  return r.src === "nahsh" ? "🚌 nur NAH.SH" : "📍 nur OSM";
+}
+async function unifiedAddrSearch(q) {
+  const seq = ++unifSeq;
+  let osmL = [];
+  try {   // Katalog 1: OSM/Nominatim (Normalform-Label), Photon als Not-Fallback
     const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
       "&format=jsonv2&addressdetails=1&limit=5&accept-language=de&countrycodes=de");
     if (res.ok) {
       const list = await res.json();
-      addrResults = (list || []).map(r => ({
-        lat: String(r.lat), lon: String(r.lon),
-        label: nomLabel(r),
-        type: r.type || r.category || ""
-      }));
+      osmL = (Array.isArray(list) ? list : []).map(r => ({
+        label: nomLabel(r), lat: Number(r.lat), lon: Number(r.lon),
+        type: r.type || r.category || "" }));
     }
   } catch (e) {}
-  if (!addrResults.length) {
+  if (seq !== unifSeq) return null;
+  if (!osmL.length) {
     try {
-      const url = PHOTON + "?q=" + encodeURIComponent(q) + "&limit=5&lang=de&lat=54.32&lon=10.13";
-      const res = await apiFetch("nom", url);
+      const res = await apiFetch("nom", PHOTON + "?q=" + encodeURIComponent(q) +
+        "&limit=5&lang=de&lat=54.32&lon=10.13");
       if (res.ok) {
         const data = await res.json();
         const seen = new Set();
-        addrResults = (data.features || []).map(f => {
+        osmL = (data.features || []).map(f => {
           const pr = f.properties || {};
           const label = [pr.street || pr.name, pr.housenumber].filter(Boolean).join(" ") +
             (pr.postcode ? ", " + pr.postcode : "") + (pr.city ? " " + pr.city : "");
-          return { lat: String(f.geometry.coordinates[1]), lon: String(f.geometry.coordinates[0]),
-                   label, type: pr.osm_value || "" };
+          return { label, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0],
+            type: pr.osm_value || "" };
         }).filter(r => {
-          const key = r.label + "|" + r.lat.slice(0, 5);
+          const key = r.label + "|" + String(r.lat).slice(0, 5);
           if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
+          seen.add(key); return true;
         }).slice(0, 5);
       }
     } catch (e) {}
   }
-  if (seq !== addrSeq) return;   // inzwischen wurde schon wieder gesucht
+  if (seq !== unifSeq) return null;
+  let nshL = [], nahshErr = false;
+  try {   // Katalog 2: NAH.SH-LocMatch, Adressen (A) und POIs (P)
+    const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: q, type: "ALL" } } });
+    const seen = new Set();
+    for (const x of ((res.match && res.match.locL) || [])) {
+      if (!x.lid || !x.name || (x.type !== "A" && x.type !== "P")) continue;
+      if (seen.has(x.lid)) continue;
+      seen.add(x.lid);
+      const crd = x.crd || {};
+      nshL.push({ name: x.name, lid: x.lid, type: x.type,
+        lat: crd.y != null ? crd.y / 1e6 : null, lon: crd.x != null ? crd.x / 1e6 : null });
+    }
+  } catch (e) { nahshErr = true; }
+  if (seq !== unifSeq) return null;
+  const out = [], used = new Set();
+  for (const o of osmL) {   // OSM-Treffer, mit passendem NAH.SH-Treffer gemergt
+    let bi = -1, bd = 1e12;
+    nshL.forEach((n, i) => {
+      if (used.has(i) || n.lat == null) return;
+      if (addrPairTest(o, n)) { const d = dist(o, n); if (d < bd) { bd = d; bi = i; } }
+    });
+    if (bi >= 0) {
+      used.add(bi);
+      const n = nshL[bi];
+      out.push({ label: o.label, lat: o.lat, lon: o.lon, osmLat: o.lat, osmLon: o.lon,
+        type: o.type, src: "both", dPair: bd,
+        nahsh: { name: n.name, lid: n.lid, type: n.type, lat: n.lat, lon: n.lon } });
+    } else {
+      out.push({ label: o.label, lat: o.lat, lon: o.lon, osmLat: o.lat, osmLon: o.lon,
+        type: o.type, src: "osm", dPair: null, nahsh: null });
+    }
+  }
+  let extra = 0;
+  const ref = osmL.length ? osmL[0] : null;   // Bezugs­punkt: erster OSM-Treffer
+  nshL.forEach((n, i) => {   // nur in NAH.SH vorhandene Adressen (max. 3 zusätzliche)
+    if (used.has(i) || n.lat == null || extra >= 3) return;
+    if (ref && dist(ref, n) > 50000) return;   // NAH.SH-Rauschen aus anderen Städten ausblenden
+    out.push({ label: n.name, lat: n.lat, lon: n.lon, osmLat: null, osmLon: null,
+      type: n.type === "P" ? "poi" : "", src: "nahsh", dPair: null,
+      nahsh: { name: n.name, lid: n.lid, type: n.type, lat: n.lat, lon: n.lon } });
+    extra++;
+  });
+  return { list: out, nahshErr: nahshErr };
+}
+// Ersten Treffer der einheitlichen Suche als Auflösung übernehmen (z. B. „Übernehmen“
+// im Favoriten-Dialog, ohne vorher einen Treffer angetippt zu haben)
+async function unifiedResolveOne(q) {
+  const u = await unifiedAddrSearch(q);
+  if (!u || !u.list.length) return null;
+  const e = u.list[0];
+  return { label: e.label, lat: Number(e.lat), lon: Number(e.lon),
+    osmLat: e.osmLat != null ? Number(e.osmLat) : null,
+    osmLon: e.osmLon != null ? Number(e.osmLon) : null,
+    nahsh: e.nahsh || null, src: e.src, dPair: e.dPair != null ? e.dPair : null };
+}
+let addrSeq = 0;   // Race-Guard: nur die zuletzt angefragte Eingabe darf rendern
+async function searchAddress(q) {
+  const seq = ++addrSeq;
+  addrResults = [];
+  // einheitliche Suche: Nominatim/OSM + NAH.SH parallel, gemergte Treffer
+  const u = await unifiedAddrSearch(q);
+  if (!u || seq !== addrSeq) return;   // inzwischen wurde schon wieder gesucht
+  addrResults = u.list.map(r => ({ ...r, lat: String(r.lat), lon: String(r.lon) }));
   // Favoriten (Alias und Adresse) mit durchsuchen: Treffer oben, vor den allgemeinen
   // Orten. Mehrwort-Suche: jedes Wort muss in Alias ODER Adresse vorkommen.
   const qls = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -1639,8 +1728,10 @@ async function searchAddress(q) {
       routeIconHTML({ lat: Number(r.lat), lon: Number(r.lon) }, "Diese Adresse an eine externe Karten-App übergeben (z. B. Google Maps)") +
       '<button class="star' + (isFav ? "" : " off") + '" data-afav="' + i +
       '" title="Adresse als Favorit speichern bzw. entfernen">★</button>' +
-      '<span class="atype">' + escapeHtml(r.type) + "</span></div>";
+      '<span class="atype">' + escapeHtml(addrSrcBadge(r)) +
+      (r.type ? " · " + escapeHtml(r.type) : "") + '</span></div>';
   }).join("");
+  if (u.nahshErr) html += '<div><span class="atype">NAH.SH-Abgleich gerade nicht erreichbar – nur OSM-Treffer.</span></div>';
   addrSug.innerHTML = html;
   addrSug.hidden = false;
 }
@@ -1652,7 +1743,10 @@ addrSug.addEventListener("click", e => {
     const r = addrResults[Number(st.dataset.afav)];
     if (!r) return;
     const fav = { name: r.label, lat: Number(r.lat), lon: Number(r.lon), label: r.label,
-      osmLat: Number(r.lat), osmLon: Number(r.lon) };
+      osmLat: r.osmLat != null ? r.osmLat : (r.src === "nahsh" ? null : Number(r.lat)),
+      osmLon: r.osmLon != null ? r.osmLon : (r.src === "nahsh" ? null : Number(r.lon)),
+      osmNone: r.src === "nahsh",
+      nahsh: r.nahsh || null };
     const idx = addrFavs.findIndex(f => f.label === fav.label && f.lat === fav.lat && f.lon === fav.lon);
     if (idx >= 0) addrFavs.splice(idx, 1);
     else addrFavs.push(fav);
@@ -1995,6 +2089,9 @@ function openFavDlg(i) {
   favDlgName.value = f.name || "";
   favDlgAddr.value = f.label || "";
   favNahshSt = null;
+  favAresSeq++;   // laufende Suche der vorherigen Sitzung entwerten
+  favAresList = [];
+  favDlgAres.innerHTML = "";
   favDlgNahshRender();
   favDlgMsg.textContent = "";
   favDlg.hidden = false;
@@ -2017,7 +2114,7 @@ function favDlgNahshRender() {
   const box = document.getElementById("favDlgNahsh");
   const f = addrFavs[favDlgIdx];
   if (!f) { box.innerHTML = ""; return; }
-  if (f.osmLat == null) { f.osmLat = f.lat; f.osmLon = f.lon; }   // ältere Einträge nachrüsten
+  if (f.osmLat == null && !f.osmNone) { f.osmLat = f.lat; f.osmLon = f.lon; }   // ältere Einträge nachrüsten (nicht bei NAH.SH-only-Favoriten)
   const coordFav = parseLocText(f.label || "");
   const d = favNahshDist(f);
   let html = '<div class="rtabg"><div class="rtabgh">NAH.SH-Abgleich' +
@@ -2049,15 +2146,16 @@ function favDlgNahshRender() {
       (f.nahsh ? "🔄 Abgleich erneut durchführen" : "🔄 Abgleich jetzt durchführen") + "</button></div>";
   }
   if (!coordFav && f.nahsh && f.nahsh.lat != null) {   // Koordinatenquelle wählen: OSM oder NAH.SH
-    const onOsm = Math.abs(f.lat - f.osmLat) < 1e-9 && Math.abs(f.lon - f.osmLon) < 1e-9;
+    const onOsm = f.osmLat != null && Math.abs(f.lat - f.osmLat) < 1e-9 && Math.abs(f.lon - f.osmLon) < 1e-9;
     const onNsh = Math.abs(f.lat - f.nahsh.lat) < 1e-9 && Math.abs(f.lon - f.nahsh.lon) < 1e-9;
-    html += '<div class="rtabgh">Koordinate des Favoriten</div>' +
-      '<div class="rtabgrow' + (onOsm ? " on" : "") + '" data-fvn="coord-osm"' +
-      ' title="Koordinaten der OSM/Nominatim-Adresse als Favoriten-Koordinate übernehmen">' +
-      (onOsm ? "✓ " : "") + "📍 OSM: " + escapeHtml(f.label || "?") +
-      ' <small class="dim">· ' + f.osmLat.toFixed(5) + ", " + f.osmLon.toFixed(5) +
-      (onOsm ? "" : " ⤴ übernehmen") + "</div>" +
-      '<div class="rtabgrow' + (onNsh ? " on" : "") + '" data-fvn="coord-nahsh"' +
+    html += '<div class="rtabgh">Koordinate des Favoriten</div>';
+    if (f.osmLat != null)
+      html += '<div class="rtabgrow' + (onOsm ? " on" : "") + '" data-fvn="coord-osm"' +
+        ' title="Koordinaten der OSM/Nominatim-Adresse als Favoriten-Koordinate übernehmen">' +
+        (onOsm ? "✓ " : "") + "📍 OSM: " + escapeHtml(f.label || "?") +
+        ' <small class="dim">· ' + f.osmLat.toFixed(5) + ", " + f.osmLon.toFixed(5) +
+        (onOsm ? "" : " ⤴ übernehmen") + "</div>";
+    html += '<div class="rtabgrow' + (onNsh ? " on" : "") + '" data-fvn="coord-nahsh"' +
       ' title="Koordinaten der NAH.SH-Adresse als Favoriten-Koordinate übernehmen">' +
       (onNsh ? "✓ " : "") + "🚌 NAH.SH: " + escapeHtml(f.nahsh.name) +
       ' <small class="dim">· ' + f.nahsh.lat.toFixed(5) + ", " + f.nahsh.lon.toFixed(5) +
@@ -2077,15 +2175,18 @@ async function favNahshRun() {
     favNahshSt = { loading: true, cands: null, err: "", note: "Prüfe Adresse …" };
     favDlgNahshRender();
     let resolved = parseLocText(addrText);
-    if (!resolved) resolved = await geocodeOne(addrText);
+    if (!resolved) resolved = await unifiedResolveOne(addrText);
     if (!resolved) {
       favNahshSt = { loading: false, cands: null, err: "Adresse nicht gefunden – bitte ändern oder „Übernehmen“.", note: "" };
       favDlgNahshRender();
       return;
     }
-    f.lat = f.osmLat = resolved.lat; f.lon = f.osmLon = resolved.lon;
+    f.lat = resolved.lat; f.lon = resolved.lon;
+    f.osmLat = resolved.osmLat != null ? resolved.osmLat : (resolved.src === "nahsh" ? null : resolved.lat);
+    f.osmLon = resolved.osmLon != null ? resolved.osmLon : (resolved.src === "nahsh" ? null : resolved.lon);
+    f.osmNone = resolved.src === "nahsh";
     f.label = resolved.label;
-    f.nahsh = null;   // alter Abgleich passt nicht zur neuen Adresse
+    f.nahsh = resolved.nahsh || null;   // Treffer aus der einheitlichen Suche direkt übernehmen
     saveAddrFavs(); renderAddrFavs();
     favDlgAddr.value = f.label;
   }
@@ -2133,20 +2234,62 @@ document.getElementById("favDlgNahsh").addEventListener("click", e => {
   else if (v === "coord-nahsh") favNahshCoord("nahsh");
   else favNahshPick(Number(v));
 });
-// Adresse freigeben (ohne die Trefferliste der Suchzeile anzufassen)
-async function geocodeOne(q) {
-  try {
-    const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
-      "&format=jsonv2&addressdetails=1&limit=1&accept-language=de&countrycodes=de");
-    if (res.ok) {
-      const list = await res.json();
-      if (list && list[0]) return {
-        lat: Number(list[0].lat), lon: Number(list[0].lon),
-        label: nomLabel(list[0])
-      };
-    }
-  } catch (e) {}
-  return null;
+// ---------- einheitliche Adresssuche im Favoriten-Bearbeiten ----------
+// Dieselbe Suche wie in der Adresszeile und im Routen-Dialog: OSM/Nominatim und
+// NAH.SH parallel, gemergte Treffer mit Quellen-Kennzeichnung. Antippen
+// übernimmt den Treffer samt NAH.SH-Eintrag und beiden Koordinatenpaaren.
+const favDlgAres = document.getElementById("favDlgAres");
+let favAresSeq = 0, favAresList = [], favAresTimer = null;
+function favAresRender() {
+  favDlgAres.innerHTML = favAresList.map((r, i) =>
+    '<div class="rtabgrow" data-far="' + i + '" title="Diesen Treffer übernehmen">' +
+    addrSrcBadge(r) + " " + escapeHtml(r.label) +
+    ' <small class="dim">⤴ übernehmen</small></div>').join("");
+}
+favDlgAddr.addEventListener("input", () => {
+  clearTimeout(favAresTimer);
+  favAresList = [];
+  favDlgAres.innerHTML = "";
+  const q = favDlgAddr.value.trim();
+  if (q.length < ADDR_MIN_CHARS || parseLocText(q)) return;   // Koordinateneingabe: keine Suche
+  favDlgAres.textContent = "Suche …";
+  favAresTimer = setTimeout(async () => {
+    const seq = ++favAresSeq;
+    const u = await unifiedAddrSearch(q);
+    if (seq !== favAresSeq) return;   // inzwischen wurde schon wieder getippt
+    favAresList = u && u.list ? u.list : [];
+    if (favAresList.length) { favAresRender(); }
+    else if (u && u.nahshErr)
+      favDlgAres.textContent = "Kein Treffer – NAH.SH-Mitsuche gerade nicht erreichbar.";
+    else if (u)
+      favDlgAres.textContent = "Kein Treffer.";
+    else
+      favDlgAres.textContent = "Suche fehlgeschlagen.";
+  }, ADDR_DEBOUNCE_MS + 200);
+});
+favDlgAres.addEventListener("click", e => {
+  const b = e.target.closest("[data-far]");
+  if (!b) return;
+  favAresPick(Number(b.dataset.far));
+});
+function favAresPick(i) {
+  const r = favAresList[i], f = addrFavs[favDlgIdx];
+  if (!r || !f) return;
+  f.lat = Number(r.lat); f.lon = Number(r.lon); f.label = r.label;
+  f.osmLat = r.osmLat != null ? Number(r.osmLat) : (r.src === "nahsh" ? null : Number(r.lat));
+  f.osmLon = r.osmLon != null ? Number(r.osmLon) : (r.src === "nahsh" ? null : Number(r.lon));
+  f.osmNone = r.src === "nahsh";   // NAH.SH-only-Treffer: keine OSM-Koordinate nachrüsten
+  f.nahsh = r.nahsh || null;   // gemergter NAH.SH-Eintrag direkt mit übernehmen
+  saveAddrFavs(); renderAddrFavs();
+  favDlgAddr.value = f.label;
+  favAresSeq++; favAresList = []; favDlgAres.innerHTML = "";
+  favNahshSt = null;
+  if (r.src === "both" && r.dPair != null && r.dPair > 100)
+    favDlgMsg.textContent = "⚠ Koordinatenabstand OSM ↔ NAH.SH: " + formatDist(r.dPair) +
+      " – übernommen, Quelle unten umschaltbar.";
+  else
+    favDlgMsg.textContent = "";
+  favDlgNahshRender();
 }
 document.getElementById("favDlgOk").addEventListener("click", async () => {
   const f = addrFavs[favDlgIdx];
@@ -2157,11 +2300,18 @@ document.getElementById("favDlgOk").addEventListener("click", async () => {
   if (addrText && addrText !== (f.label || "")) {   // neue Adresse: freigeben und übernehmen
     favDlgMsg.textContent = "Prüfe Adresse …";
     let resolved = parseLocText(addrText);
-    if (!resolved) resolved = await geocodeOne(addrText);
+    if (!resolved) resolved = await unifiedResolveOne(addrText);
     if (!resolved) { favDlgMsg.textContent = "Adresse nicht gefunden – bitte ändern."; return; }
     f.lat = resolved.lat; f.lon = resolved.lon; f.label = resolved.label;
-    f.osmLat = resolved.lat; f.osmLon = resolved.lon;   // OSM-Atlas-Koordinate separat führen
-    f.nahsh = null;   // alter NAH.SH-Abgleich passt nicht mehr: beim nächsten Routen neu machen
+    f.osmLat = resolved.osmLat != null ? resolved.osmLat : (resolved.src === "nahsh" ? null : resolved.lat);
+    f.osmLon = resolved.osmLon != null ? resolved.osmLon : (resolved.src === "nahsh" ? null : resolved.lon);
+    f.osmNone = resolved.src === "nahsh";   // NAH.SH-only-Favorit: keine OSM-Koordinate nachrüsten
+    f.nahsh = resolved.nahsh || null;   // Treffer aus der einheitlichen Suche direkt übernehmen
+    const d = favNahshDist(f);
+    if (d != null && d > 100)
+      favNahshSt = { loading: false, cands: null, err: "",
+        note: "⚠ Koordinatenabstand OSM ↔ NAH.SH: " + formatDist(d) + " – übernommen, Quelle umschaltbar." };
+    else favNahshSt = null;
   } else if (!f.label) {
     f.label = f.name;   // ältere Einträge ohne Adresse: Alias als Adresse führen
   }
@@ -6939,6 +7089,17 @@ function openRoutePicker(kind, which) {
       routeAbg[which] = { sel: sel, loading: false, cands: [{ name: "Koordinaten " +
         sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5), lid: sel.lid, type: "A", d: 0, kind: "coord" }],
         chosen: 0, err: "", note: "(Koordinaten, nah.sh-kompatibel)" };
+    } else if (en.nahsh && !en.key) {
+      // Treffer aus der einheitlichen Adresssuche: NAH.SH-Eintrag kommt gleich mit;
+      // bei größeren Koordinatenabständen steht der ⚠-Hinweis direkt am Treffer
+      sel.lid = en.nahsh.lid; sel.locType = en.nahsh.type || "A"; sel.nahshName = en.nahsh.name;
+      routeAbg[which] = { sel: sel, loading: false,
+        cands: [{ name: en.nahsh.name, lid: en.nahsh.lid, type: en.nahsh.type || "A", kind: "loc",
+          lat: en.nahsh.lat, lon: en.nahsh.lon, d: 0 }],
+        chosen: 0, err: "",
+        note: (en.dPair != null && en.dPair > 100)
+          ? "(aus Adresssuche · ⚠ " + formatDist(en.dPair) + " Koordinatenabstand OSM ↔ NAH.SH)"
+          : "(aus Adresssuche, beide Kataloge)" };
     }
     routeBump(en.key);
     wrap.remove();
@@ -6983,20 +7144,16 @@ function openRoutePicker(kind, which) {
           kkind: "addr", key: "addr:" + f.name,
           name: f.label || f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
       try {
-        const res = await apiFetch("nom",
-          NOMINATIM + "?q=" + encodeURIComponent(qv) + "&format=jsonv2&addressdetails=1&limit=5&accept-language=de&countrycodes=de");
-        if (res.ok) {
-          const r = await res.json();
-          found = found.concat((Array.isArray(r) ? r : []).map(x => {
-            const label = nomLabel(x);
-            return { label: label, kkind: "addr", key: null, name: label,
-              lat: Number(x.lat), lon: Number(x.lon) };
-          }));
-        }
+        const u = await unifiedAddrSearch(qv);   // OSM + NAH.SH, gemergte Treffer
+        if (!u || (input.value || "").trim() !== qv) return;   // Eingabe inzwischen geändert
+        found = found.concat(u.list.map(e => ({
+          label: e.label, kkind: "addr", key: null, name: e.label,
+          lat: e.lat, lon: e.lon, nahsh: e.nahsh || null, src: e.src, dPair: e.dPair,
+          sub: addrSrcBadge(e) })));
       } catch (e) {}
       if ((input.value || "").trim() === qv) rows(found);   // nur bei noch aktuellem Text
     };
-    input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(upd, 350); });
+    input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(upd, 700); });   // NAH.SH-Gate: Abstand zwischen Anfragen
     listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Adresse eingeben – gespeicherte Favoriten erscheinen zuerst.</span></div>';
   }
   wrap.addEventListener("click", e => {
@@ -7141,7 +7298,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.7 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.8 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
