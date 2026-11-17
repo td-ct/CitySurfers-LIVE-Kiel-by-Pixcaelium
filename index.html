@@ -1547,6 +1547,31 @@ function parseLocText(raw) {
   return parseCoordPair(t);
 }
 
+// OSM-Normalform für Adressen (der „Atlas" ist Nominatim/OSM): „Straße Hausnummer,
+// PLZ Ort" bzw. bei POIs „Name, Straße Hausnummer, PLZ Ort". Diese Normalform wird
+// als Label gespeichert, angezeigt, als Suchtext an NAH.SH-LocMatch übergeben und
+// als Name (O=) in die NAH.SH-Koordinaten-lid eingebettet. Ohne addressdetails
+// (leeres address-Objekt) greift der alte Fallback: erste 3 display_name-Teile.
+function nomLabel(x) {
+  const a = (x && x.address) || {};
+  const road = a.road || a.pedestrian || a.footway || a.residential || "";
+  const hnr = a.house_number || (x && x.housenumber) || "";
+  let nm = String((x && x.name) || "").trim();
+  if (/^\d+[a-zA-Z]?$/.test(nm)) nm = "";   // „name" ist nur die Hausnummer, kein POI-Name
+  const cityRaw = a.city || a.town || a.village || a.municipality || "";
+  const city = (nm && cityRaw.toLowerCase() === nm.toLowerCase()) ? "" : cityRaw;
+  const pc = a.postcode || "";
+  let core = "";
+  if (nm && road && hnr) core = nm + ", " + road + " " + hnr;
+  else if (road && hnr) core = road + " " + hnr;
+  else if (nm) core = nm;
+  else if (road) core = road;
+  if (!core)   // keine addressdetails: alter Fallback
+    return String((x && x.display_name) || "").split(",").map(t => t.trim())
+      .filter(Boolean).slice(0, 3).join(", ");
+  const tail = [pc, city].filter(Boolean).join(" ");
+  return tail ? core + ", " + tail : core;
+}
 let addrSeq = 0;   // Race-Guard: nur die zuletzt angefragte Eingabe darf rendern
 async function searchAddress(q) {
   const seq = ++addrSeq;
@@ -1554,12 +1579,12 @@ async function searchAddress(q) {
   // primär: Nominatim (Photon derzeit oft nicht erreichbar, nur Fallback)
   try {
     const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
-      "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+      "&format=jsonv2&addressdetails=1&limit=5&accept-language=de&countrycodes=de");
     if (res.ok) {
       const list = await res.json();
       addrResults = (list || []).map(r => ({
         lat: String(r.lat), lon: String(r.lon),
-        label: String(r.display_name || "").split(",").map(s => s.trim()).slice(0, 3).join(", "),
+        label: nomLabel(r),
         type: r.type || r.category || ""
       }));
     }
@@ -1721,13 +1746,12 @@ async function shareSearchAddr(q) {
   let hit = null;
   try {
     const res = await apiFetch("nom",
-      NOMINATIM + "?q=" + encodeURIComponent(q) + "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+      NOMINATIM + "?q=" + encodeURIComponent(q) + "&format=jsonv2&addressdetails=1&limit=5&accept-language=de&countrycodes=de");
     if (res.ok) {
       const r = await res.json();
       const x = (Array.isArray(r) ? r : [])[0];
       if (x && x.lat != null) {
-        const nm = String(x.display_name || "").split(",").map(t => t.trim()).filter(Boolean);
-        const label = nm.slice(0, 3).join(", ");
+        const label = nomLabel(x);
         hit = { label: label, name: label, lat: Number(x.lat), lon: Number(x.lon) };
       }
     }
@@ -1978,12 +2002,12 @@ function openFavDlg(i) {
 async function geocodeOne(q) {
   try {
     const res = await apiFetch("nom", NOMINATIM + "?q=" + encodeURIComponent(q) +
-      "&format=jsonv2&limit=1&accept-language=de&countrycodes=de");
+      "&format=jsonv2&addressdetails=1&limit=1&accept-language=de&countrycodes=de");
     if (res.ok) {
       const list = await res.json();
       if (list && list[0]) return {
         lat: Number(list[0].lat), lon: Number(list[0].lon),
-        label: String(list[0].display_name || "").split(",").map(s => s.trim()).slice(0, 3).join(", ")
+        label: nomLabel(list[0])
       };
     }
   } catch (e) {}
@@ -6101,13 +6125,14 @@ async function routeHafas(meth, req) {
   }
   return r.res;
 }
-// Name (Stations- oder Adresstext) -> HAFAS-lid, einmal auf sel gecacht
-// Name (Stations- oder Adressstext) -> HAFAS-lid, einmal auf sel gecacht.
+// Name (Stations- oder Adresstext) -> HAFAS-lid, einmal auf sel gecacht.
 // Achtung: NAH.SH-LocMatch sucht DEUTSCHLANDWEIT („Hauptbahnhof“ liefert zuerst
-// Hamburg Hbf!) – deshalb wird NIE der erste Treffer genommen, sondern:
-// Station: die eigene, koordinatenverifizierte lid (DB: aus der Stationsliste,
-// KVG: nahshLocFor mit ≤ 150-m-Abgleich); Adresse/POI: der Treffer NEAREST den
-// bekannten Koordinaten (Nominatim/Favorit), höchstens 1 km daneben.
+// Hamburg Hbf!). Station: die eigene, koordinatenverifizierte lid (DB: aus der
+// Stationsliste, KVG: nahshLocFor mit ≤ 150-m-Abgleich). Adresse/POI: KEIN
+// LocMatch-Raten mehr – der Abgleich im Dialog (routeAbgleich) liefert die
+// NAH.SH-lid, wenn der Treffer eindeutig ist (≤ 100 m UND passende Hausnummer)
+// oder der Nutzer ihn im Abgleich-Fenster gewählt hat; ohne Wahl übergibt die
+// Suche die exakten OSM-Koordinaten als Adress-lid (Normalform als O=-Name).
 async function routeResolve(sel) {
   if (sel.lid) return sel;
   if (sel.sn) {
@@ -6118,35 +6143,21 @@ async function routeResolve(sel) {
       if (lid) { sel.lid = lid; sel.locType = "S"; return sel; }
     }
   }
-  const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: sel.name, type: "ALL" } } });
-  const locL = (res.match && res.match.locL) || [];
-  let best = null, bestD = 1e9;
-  for (const x of locL) {
-    if (!x.lid) continue;
-    const crd = x.crd || {};
-    if (!crd.x || !crd.y) continue;
-    const d = sel.lat != null ? dist({ lat: crd.y / 1e6, lon: crd.x / 1e6 }, sel) : 1e9;
-    if (d < bestD) { bestD = d; best = x; }
-  }
-  if (best && sel.lat != null && bestD > 1000)
-    throw new Error("Ort im NAH.SH-Fahrplan nicht gefunden (nächster Treffer " +
-      (Math.round(bestD / 100) / 10) + " km entfernt): " + sel.name);
-  if (!best) {
-    const want = sel.kind === "stop" ? "S" : "A";
-    best = locL.find(x => x.type === want) || locL.find(x => x.type === "S" || x.type === "A" || x.type === "P");
-  }
-  if (!best) throw new Error("Ort nicht gefunden: " + sel.name);
-  sel.lid = best.lid; sel.locType = best.type;
+  if (sel.lat == null) throw new Error("Ort ohne Koordinaten: " + sel.name);
+  sel.lid = coordLid(sel.name, sel.lat, sel.lon);   // OSM-Koordinaten als NAH.SH-Adresse
+  sel.locType = "A";
   return sel;
 }
 
 // ---------- NAH.SH-Abgleich: Start/Ziel gegen den NAH.SH-Fahrplan ----------
 // Adressen und Stationen (aus Favoriten, Nominatim oder Teilen) werden beim
-// Routen gegen NAH.SH gegengecheckt: Unter dem Start-/Zielfeld des Route-Dialogs
-// erscheinen die NAH.SH-Treffer, der nächste wird automatisch übernommen, jeder
-// andere lässt sich antippen. Die gewählte NAH.SH-Adresse wird am Favorit
+// Routen gegen NAH.SH gegengecheckt. Eindeutig ist ein Treffer, wenn er ≤ 100 m
+// von den gespeicherten OSM-Koordinaten entfernt ist UND – bei Hausnummer in
+// der Normalform – dieselbe Hausnummer enthält: dann wird er automatisch
+// übernommen. Sonst zeigt das Abgleich-Fenster die 3 nächsten NAH.SH-Treffer
+// plus die OSM-Koordinaten (Standard, antippbar). Die Wahl wird am Favorit
 // gespeichert (Abgleich nur einmal). Koordinaten-Favoriten (GPS-Positionen,
-// Koordinatetexte) gehen als NAH.SH-kompatible Koordinaten-lid direkt in die
+// Koordinatetexte) gehen direkt als NAH.SH-kompatible Koordinaten-lid in die
 // Anfrage – kein LocMatch-Raten mehr.
 const routeAbg = { start: null, dest: null };
 function coordLid(label, lat, lon) {
@@ -6203,8 +6214,40 @@ function routeAbgHTML(which) {
     rows = '<div class="rtabgrow on">✓ NAH.SH: ' + escapeHtml(sel.nahshName || lidName(sel.lid) || "?") + "</div>";
   } else return "";
   return '<div class="rtabg"><div class="rtabgh">NAH.SH-Abgleich' + (note ? " " + escapeHtml(note) : "") +
-    (st && st.cands && st.cands.length > 1 ? ' <small class="dim">– falscher Treffer? anderen antippen</small>' : "") +
+    (st && st.cands && st.cands.length > 1 ?
+      (st.chosen < 0 ? ' <small class="dim">– bitte passenden Eintrag antippen</small>'
+                     : ' <small class="dim">– falscher Treffer? anderen antippen</small>') : "") +
     "</div>" + rows + "</div>";
+}
+// Hausnummer aus der OSM-Normalform: das letzte Zahlwort am Ende eines Komma-
+// Segments, PLZ-Segmente (reine 5-stellige Zahl) übersprungen. Aus „Holtenauer
+// Straße 123, 24118 Kiel" wird 123, aus „Blume 2000, Kieler Straße 49, 24340
+// Eckernförde" wird 49, aus „Wattenbek, 24582" wird "" (nur PLZ, keine Hausnummer).
+function hnrOfName(s) {
+  let hnr = "";
+  for (const part of String(s || "").split(",")) {
+    const m = part.match(/(\d+)\s*[a-zA-Z]?\s*$/);   // Zahlwort am Segment-Ende
+    if (!m) continue;
+    if (/^\d{5}$/.test(m[1])) continue;              // PLZ-Segment überspringen
+    hnr = m[1];
+  }
+  return hnr;
+}
+// Eindeutiger NAH.SH-Direkttreffer für eine Adresse/POI: erster LocMatch-Treffer
+// mit ≤ 100 m Abstand zu den OSM-Koordinaten, und – wenn die Normalform eine
+// Hausnummer hat – muss der Treffername dieselbe Hausnummer als Wort enthalten
+// (nexte Treffer wie „Hospitalstraße 12" statt gesuchter „… 30" zählen NICHT).
+function abgDirectIdx(sel, cands) {
+  if (sel.lat == null) return -1;
+  const hnr = hnrOfName(sel.name);
+  const re = hnr ? new RegExp("\\b" + hnr + "\\b") : null;
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (c.kind !== "loc" || c.d == null || c.d > 100) continue;
+    if (re && !re.test(c.name)) continue;
+    return i;
+  }
+  return -1;
 }
 async function abgCands(st, sel, typeHint) {
   const res = await routeHafas("LocMatch", { input: { field: "S",
@@ -6213,6 +6256,7 @@ async function abgCands(st, sel, typeHint) {
   st.cands = [];
   for (const x of locL) {
     if (!x.lid || !x.name) continue;
+    if (st.cands.some(c => c.lid === x.lid)) continue;   // LocMatch liefert oft Duplikate
     const crd = x.crd || {};
     const lat = crd.y != null ? crd.y / 1e6 : null, lon = crd.x != null ? crd.x / 1e6 : null;
     st.cands.push({ name: x.name, lid: x.lid, type: x.type || "A", kind: "loc",
@@ -6222,6 +6266,7 @@ async function abgCands(st, sel, typeHint) {
     st.cands.sort((a, b) => ((a.type === "S" ? 0 : 1) - (b.type === "S" ? 0 : 1)) || (a.d == null ? 1e12 : a.d) - (b.d == null ? 1e12 : b.d));
   else if (sel.lat != null)
     st.cands.sort((a, b) => (a.d == null ? 1e12 : a.d) - (b.d == null ? 1e12 : b.d));
+  if (!typeHint) st.cands = st.cands.slice(0, 3);   // Abgleich-Fenster: max. 3 Treffer
   if (sel.lat != null && sel.lon != null)   // zuverlässiger Fallback: Koordinaten-lid
     st.cands.push({ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
       lid: coordLid(sel.name, sel.lat, sel.lon), type: "A", d: 0, kind: "coord" });
@@ -6274,24 +6319,40 @@ async function routeAbgleich(which) {
   st.loading = false;
   if (routeSel[which] !== sel) return;   // Feld wurde inzwischen anders belegt
   if (!sel.lid && st.cands && st.cands.length) {
-    // Auto-Wahl: nächstgelegener Treffer ≤ 1 km (Stationen immer den Typ-S-Treffer),
-    // sonst die NAH.SH-Koordinaten (zuverlässig, kein Raten)
-    let bi = -1, bd = 1e9;
-    st.cands.forEach((c, i) => {
-      if (c.kind === "coord") return;
-      const lim = sel.sn ? 1e9 : 1000;
-      if (c.d != null && c.d < Math.min(bd, lim)) { bd = c.d; bi = i; }
-    });
-    if (bi < 0) bi = st.cands.findIndex(c => c.kind === "coord");
-    if (bi >= 0) routeAbgPick(which, bi, true);
+    if (sel.sn) {
+      // Station: nächstgelegener Treffer (Typ S bevorzugt) automatisch
+      let bi = -1, bd = 1e9;
+      st.cands.forEach((c, i) => {
+        if (c.kind === "coord") return;
+        if (c.d != null && c.d < bd) { bd = c.d; bi = i; }
+      });
+      if (bi < 0) bi = st.cands.findIndex(c => c.kind === "coord");
+      if (bi >= 0) routeAbgPick(which, bi, true);
+    } else {
+      // Adresse/POI: nur EINDEUTIGE Treffer automatisch (≤ 100 m und passende
+      // Hausnummer); sonst Abgleich-Fenster zeigen, Wahl bleibt dem Nutzer.
+      const bi = abgDirectIdx(sel, st.cands);
+      if (bi >= 0) {
+        routeAbgPick(which, bi, true);
+        st.note = "(NAH.SH-Treffer stimmt mit den OSM-Koordinaten überein)";
+      }
+    }
   }
-  if (!sel.lid && !st.err && sel.lat != null) {   // gar kein Treffer: Koordinaten-lid
+  if (!sel.lid && !st.err && sel.lat != null) {   // kein Direkttreffer: OSM-Koordinaten als Standard
     routeAbgApply(which, "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
       coordLid(sel.name, sel.lat, sel.lon), "A");
-    st.cands = (st.cands || []).concat([{ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
-      lid: sel.lid, type: "A", d: 0, kind: "coord" }]);
-    st.chosen = st.cands.length - 1;
-    st.note = "(Koordinaten, nah.sh-kompatibel)";
+    const ci = st.cands.findIndex(c => c.kind === "coord");
+    if (ci < 0) {
+      st.cands.push({ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
+        lid: sel.lid, type: "A", d: 0, kind: "coord" });
+      st.chosen = st.cands.length - 1;
+    } else {   // Zeile stammt schon aus abgCands: nur als gewählt markieren
+      st.cands[ci].lid = sel.lid;
+      st.chosen = ci;
+    }
+    st.note = st.cands.some(c => c.kind === "loc")
+      ? "(NAH.SH passt nicht genau – Standard sind die OSM-Koordinaten, anderen Eintrag antippen)"
+      : "(Koordinaten, nah.sh-kompatibel)";
   }
   rtdUpdate();
 }
@@ -6355,7 +6416,15 @@ function routeWhen() {
   return { date: d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
            time: p(d.getHours()) + p(d.getMinutes()) + "00" };
 }
+async function abgWait(which) {   // laufenden Abgleich kurz abwarten (max. 4 s), damit
+  for (let i = 0; i < 20; i++) {   // ein gefundener Direkttreffer nicht von der
+    const st = routeAbg[which];    // Koordinaten-lid unterlaufen wird
+    if (!st || !st.loading) return;
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
 async function routeTripSearch() {
+  await abgWait("start"); await abgWait("dest");
   const dep = await routeResolve(routeSel.start);
   const arr = await routeResolve(routeSel.dest);
   const when = routeWhen();
@@ -6774,12 +6843,11 @@ function openRoutePicker(kind, which) {
           name: f.label || f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
       try {
         const res = await apiFetch("nom",
-          NOMINATIM + "?q=" + encodeURIComponent(qv) + "&format=jsonv2&limit=5&accept-language=de&countrycodes=de");
+          NOMINATIM + "?q=" + encodeURIComponent(qv) + "&format=jsonv2&addressdetails=1&limit=5&accept-language=de&countrycodes=de");
         if (res.ok) {
           const r = await res.json();
           found = found.concat((Array.isArray(r) ? r : []).map(x => {
-            const nm = String(x.display_name || "").split(",").map(t2 => t2.trim()).filter(Boolean);
-            const label = nm.slice(0, 3).join(", ");
+            const label = nomLabel(x);
             return { label: label, kkind: "addr", key: null, name: label,
               lat: Number(x.lat), lon: Number(x.lon) };
           }));
@@ -6932,7 +7000,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.5 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.6 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
