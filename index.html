@@ -351,7 +351,7 @@
     border-bottom: 1px solid rgba(30,58,95,.5); }
   .rtrow:hover { background: rgba(56,189,248,.08); }
   .rtrow .rtmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-  .rtrow .rtname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rtrow .rtname { white-space: normal; overflow-wrap: anywhere; }   /* Alias/Name immer vollständig sichtbar, ggf. mehrzeilig */
   .rtrow .rtname.bold { font-weight: 700; }
   .rtrow .rtsub { font-size: .72rem; color: #64748b; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .rtrow .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
@@ -3157,6 +3157,8 @@ function renderStationPanel() {
   }
   let body = "";
   if (v && v.fetched) {
+    if (v.error)   // letzte Aktualisierung fehlgeschlagen: Altdaten + Hinweis statt Stillstand
+      body += '<small class="rowinfo dim">⚠️ Aktualisierung fehlgeschlagen – zeige den letzten Stand. ↻ oben versucht es erneut.</small>';
     const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
       // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen.
@@ -3179,8 +3181,15 @@ function renderStationPanel() {
       body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 💨-Knopf oben zeigt alle Abfahrten.</small>';
     }
     body += earlierHTML(v) + lines.map(l => l.html).join("") + laterHTML(v);
+  } else if (v && v.error) {
+    // Abfrage fehlgeschlagen: klarer Fehler-Hinweis statt ewigem „lädt …“
+    // (leerer Reiter). Automatische Neuversuche laufen über den Anzeige-Takt,
+    // der 40-s-Cooldown in refetchStop begrenzt die Abfragefrequenz.
+    body += '<small class="rowinfo">⚠️ Abfahrten konnten nicht geladen werden (Netzwerk?). ↻ oben versucht es sofort erneut – sonst wird automatisch neu versucht.</small>';
+    if (!v.reloading) refetchStop(currentStop.shortName, false);
   } else {
     body += '<small class="rowinfo dim">Daten werden geladen …</small>';
+    if (v && !v.reloading && !v.fetchTs) refetchStop(currentStop.shortName, true);   // Sicherheitsnetz: nie ohne laufende Abfrage hängen bleiben
   }
   stationPanelCache = body;   // Körper fürs Einfrieren (Abfahrtszeilen ohne Kopf)
   const inner = head + body;
@@ -5435,7 +5444,7 @@ function viewOf(sn) {
   if (!stopViews.has(sn)) {
     const stop = stops.find(s => s.shortName === sn);
     if (!stop) return null;
-    stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false });
+    stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false, error: false });
   }
   return stopViews.get(sn);
 }
@@ -5449,10 +5458,16 @@ async function enrichRow(stop, force) {
   }
   if (!v.fetched) {
     v.reloading = true;
-    const [deps, platforms] = await Promise.all([getDepartures(stop.shortName), loadPlatforms(stop.shortName)]);
-    v.deps = deps; v.platforms = platforms;
-    v.fetched = !!deps; v.fetchTs = Date.now();
-    v.reloading = false;
+    try {
+      const [deps, platforms] = await Promise.all([getDepartures(stop.shortName), loadPlatforms(stop.shortName)]);
+      v.deps = deps; v.platforms = platforms;
+      v.fetched = !!deps; v.fetchTs = Date.now();
+      v.error = !deps;   // fehlgeschlagene Erst-Abfrage: Fehlerzustand statt „lädt ewig“
+    } catch (e) {
+      v.error = true;   // nie mit hängendem reloading zurückbleiben
+    } finally {
+      v.reloading = false;
+    }
   }
 }
 
@@ -5466,16 +5481,31 @@ async function refetchStop(sn, manual) {
   const v = viewOf(sn);
   if (!v) return;
   const now = Date.now();
-  if (v.reloading) return;
   // Auto-Aktualisierung mit Cooldown, damit Soll/Ist laufend frisch bleiben
   if (!manual && now - (v.lastAuto || 0) < 40000) return;
+  if (v.reloading) return;
   v.lastAuto = now;
   v.reloading = true;
   renderViews();
   depCache.delete(sn);
-  const [deps, platforms] = await Promise.all([getDepartures(sn), loadPlatforms(sn)]);
-  v.deps = deps; v.platforms = platforms;
-  v.fetched = !!deps; v.fetchTs = Date.now();
+  let deps = null, platforms = null, err = false;
+  try {
+    [deps, platforms] = await Promise.all([getDepartures(sn), loadPlatforms(sn)]);
+  } catch (e) { err = true; }
+  if (deps) {
+    v.deps = deps; v.platforms = platforms;
+    v.fetched = true; v.fetchTs = Date.now(); v.error = false;
+  } else {
+    // Fehlgeschlagene Abfrage (Netzwerk/API-Fehler, null statt Abfahrten):
+    // Zustand sauber aufräumen und als Fehler markieren – NIE im „lädt …“-
+    // Zustand hängen bleiben. Sonst bliebe der Reiter für immer leer und
+    // selbst ↻ könnte ihn nicht mehr füllen (Bug „leerer Stationsreiter“).
+    err = true;
+    v.fetchTs = Date.now();
+    if (!v.deps || !v.deps.length) { v.fetched = false; v.deps = null; v.platforms = null; }
+    // mit Altdaten: letzte Abfahrten bleiben sichtbar, Hinweis im Panel
+  }
+  v.error = err;
   v.reloading = false;
   renderViews();
   renderPanels();
@@ -7334,6 +7364,15 @@ function openRoutePicker(kind, which) {
           : "(aus Adresssuche, beide Kataloge)" };
     }
     routeBump(en.key);
+    // Angekickte Haltestelle zusätzlich als Stationsreiter öffnen (im Hintergrund,
+    // dedupliziert): So lassen sich über den Routen-Dialog, auch mehrfach und über
+    // neue Dialog-Aufrufe hinweg, mehrere Stationsreiter parallel öffnen.
+    if (en.sn && stops.some(s => s.shortName === en.sn) && !tabs.some(t => t.sn === en.sn)) {
+      tabs.push({ sn: en.sn, trips: [], activeTrip: -1 });
+      renderTabs();
+      const opened = stops.find(s => s.shortName === en.sn);
+      setLocNote("🚏 „" + (opened && opened.name || en.sn) + "“ als eigenen Reiter geöffnet – Reiter oben antippen.");
+    }
     wrap.remove();
     const d = document.getElementById("routeDlg");
     if (d) d.innerHTML = routeDlgHTML();
@@ -7545,7 +7584,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.12 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.13 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
