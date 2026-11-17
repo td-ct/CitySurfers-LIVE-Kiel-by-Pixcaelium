@@ -523,7 +523,7 @@
       <input type="text" id="favDlgName" autocomplete="off" placeholder="z. B. Zuhause, Arbeit, Oma" /></div>
     <div class="favfield"><label for="favDlgAddr">Adresse</label>
       <input type="text" id="favDlgAddr" autocomplete="off" placeholder="Straße Nr., PLZ Ort oder Koordinaten" /></div>
-    <div id="favDlgNahsh" class="dim"></div>
+    <div id="favDlgNahsh"></div>
     <div id="favDlgMsg" class="dim"></div>
     <div class="acbtns">
       <button class="chip bad" id="favDlgCancel">Abbrechen</button>
@@ -1651,7 +1651,8 @@ addrSug.addEventListener("click", e => {
   if (st) {
     const r = addrResults[Number(st.dataset.afav)];
     if (!r) return;
-    const fav = { name: r.label, lat: Number(r.lat), lon: Number(r.lon), label: r.label };
+    const fav = { name: r.label, lat: Number(r.lat), lon: Number(r.lon), label: r.label,
+      osmLat: Number(r.lat), osmLon: Number(r.lon) };
     const idx = addrFavs.findIndex(f => f.label === fav.label && f.lat === fav.lat && f.lon === fav.lon);
     if (idx >= 0) addrFavs.splice(idx, 1);
     else addrFavs.push(fav);
@@ -1974,7 +1975,8 @@ function gpsAddrSaveFlow() {
 function saveGpsAddrFav(p) {
   if (!p) return;
   const coordLabel = p.lat.toFixed(6) + ", " + p.lon.toFixed(6);   // verständlich und per parseLocText wieder einlesbar
-  addrFavs.push({ name: "GPS-Position", lat: p.lat, lon: p.lon, label: coordLabel });
+  addrFavs.push({ name: "GPS-Position", lat: p.lat, lon: p.lon, label: coordLabel,
+    osmLat: p.lat, osmLon: p.lon });
   saveAddrFavs();
   renderAddrFavs();
   openFavDlg(addrFavs.length - 1);   // gewohnte Maske: Alias frei benennbar, Koordinaten genau hinterlegt
@@ -1992,12 +1994,145 @@ function openFavDlg(i) {
   favDlgIdx = i;
   favDlgName.value = f.name || "";
   favDlgAddr.value = f.label || "";
-  document.getElementById("favDlgNahsh").textContent = "NAH.SH: " + favNahshLine(f) +
-    (f.nahsh ? "" : " – wird beim nächsten Routen einmalig abgeglichen.");
+  favNahshSt = null;
+  favDlgNahshRender();
   favDlgMsg.textContent = "";
   favDlg.hidden = false;
   favDlgName.focus();
 }
+// ---------- NAH.SH-Abgleich im Favoriten-Bearbeiten-Fenster ----------
+// Hier lässt sich der Abgleich jederzeit starten oder ERNEUT durchführen,
+// auch wenn schon ein NAH.SH-Eintrag hinterlegt ist. Die gewählte NAH.SH-
+// Adresse speichert ihre eigenen Koordinaten mit; beide Adressen (OSM-
+// Normalform und NAH.SH) können als Koordinate des Favoriten gewählt
+// werden. Liegt der Koordinatenabstand der beiden Adressen über 100 m,
+// erscheint ein Hinweis mit der Distanz (nur in diesem Fenster).
+let favNahshSt = null;   // transient: {loading, cands, err, note} der letzten Abgleich-Anfrage
+function favNahshDist(f) {   // Abstand OSM-Adresse ↔ NAH.SH-Adresse in Metern (oder null)
+  if (!f.nahsh || f.nahsh.lat == null || f.nahsh.lon == null ||
+      f.osmLat == null || f.osmLon == null) return null;
+  return dist({ lat: f.nahsh.lat, lon: f.nahsh.lon }, { lat: f.osmLat, lon: f.osmLon });
+}
+function favDlgNahshRender() {
+  const box = document.getElementById("favDlgNahsh");
+  const f = addrFavs[favDlgIdx];
+  if (!f) { box.innerHTML = ""; return; }
+  if (f.osmLat == null) { f.osmLat = f.lat; f.osmLon = f.lon; }   // ältere Einträge nachrüsten
+  const coordFav = parseLocText(f.label || "");
+  const d = favNahshDist(f);
+  let html = '<div class="rtabg"><div class="rtabgh">NAH.SH-Abgleich' +
+    (d != null && d > 100
+      ? ' <small class="dim">– ⚠ Koordinatenabstand OSM ↔ NAH.SH: ' + formatDist(d) + "</small>"
+      : "") + "</div>";
+  if (coordFav) {   // Koordinaten-Favorit: lid wird direkt aus den Koordinaten gebaut
+    html += '<div class="rtabgrow dim">Koordinaten-Favorit – direkt nah.sh-kompatibel, kein Abgleich nötig.</div>';
+  } else {
+    if (f.nahsh && f.nahsh.name)
+      html += '<div class="rtabgrow on">✓ NAH.SH: ' + escapeHtml(f.nahsh.name) + "</div>";
+    else
+      html += '<div class="rtabgrow dim">Noch kein NAH.SH-Eintrag – wird sonst beim nächsten Routen abgeglichen.</div>';
+    if (favNahshSt && favNahshSt.err)
+      html += '<div class="rtabgrow dim">' + escapeHtml(favNahshSt.err) + "</div>";
+    else if (favNahshSt && favNahshSt.loading)
+      html += '<div class="rtabgrow dim">Abgleich läuft …</div>';
+    else if (favNahshSt && favNahshSt.cands && favNahshSt.cands.length)
+      favNahshSt.cands.forEach((c, i) => {
+        const on = f.nahsh && f.nahsh.lid === c.lid;
+        html += '<div class="rtabgrow' + (on ? " on" : "") + '" data-fvn="' + i +
+          '" title="Diesen NAH.SH-Eintrag übernehmen">' + (on ? "✓ " : "") + escapeHtml(c.name) +
+          (c.d != null ? ' <small class="dim">· ' + formatDist(c.d) + "</small>" : "") +
+          (on ? "" : ' <small class="dim">⤴ übernehmen</small>') + "</div>";
+      });
+    if (favNahshSt && favNahshSt.note)
+      html += '<div class="rtabgrow dim">' + escapeHtml(favNahshSt.note) + "</div>";
+    html += '<div><button class="achip" data-fvn="run">' +
+      (f.nahsh ? "🔄 Abgleich erneut durchführen" : "🔄 Abgleich jetzt durchführen") + "</button></div>";
+  }
+  if (!coordFav && f.nahsh && f.nahsh.lat != null) {   // Koordinatenquelle wählen: OSM oder NAH.SH
+    const onOsm = Math.abs(f.lat - f.osmLat) < 1e-9 && Math.abs(f.lon - f.osmLon) < 1e-9;
+    const onNsh = Math.abs(f.lat - f.nahsh.lat) < 1e-9 && Math.abs(f.lon - f.nahsh.lon) < 1e-9;
+    html += '<div class="rtabgh">Koordinate des Favoriten</div>' +
+      '<div class="rtabgrow' + (onOsm ? " on" : "") + '" data-fvn="coord-osm"' +
+      ' title="Koordinaten der OSM/Nominatim-Adresse als Favoriten-Koordinate übernehmen">' +
+      (onOsm ? "✓ " : "") + "📍 OSM: " + escapeHtml(f.label || "?") +
+      ' <small class="dim">· ' + f.osmLat.toFixed(5) + ", " + f.osmLon.toFixed(5) +
+      (onOsm ? "" : " ⤴ übernehmen") + "</div>" +
+      '<div class="rtabgrow' + (onNsh ? " on" : "") + '" data-fvn="coord-nahsh"' +
+      ' title="Koordinaten der NAH.SH-Adresse als Favoriten-Koordinate übernehmen">' +
+      (onNsh ? "✓ " : "") + "🚌 NAH.SH: " + escapeHtml(f.nahsh.name) +
+      ' <small class="dim">· ' + f.nahsh.lat.toFixed(5) + ", " + f.nahsh.lon.toFixed(5) +
+      (onNsh ? "" : " ⤴ übernehmen") + "</div>";
+  }
+  html += "</div>";
+  box.innerHTML = html;
+}
+async function favNahshRun() {
+  const f = addrFavs[favDlgIdx];
+  if (!f) return;
+  if (parseLocText(f.label || "") && favDlgAddr.value.trim() === (f.label || "")) return;   // Koordinaten-Favorit
+  const addrText = favDlgAddr.value.trim();
+  if (addrText && addrText !== (f.label || "")) {
+    // geänderte Adresse zuerst übernehmen (wie „Übernehmen“), damit der Abgleich
+    // die neue Normalform und die neuen OSM-Koordinaten verwendet
+    favNahshSt = { loading: true, cands: null, err: "", note: "Prüfe Adresse …" };
+    favDlgNahshRender();
+    let resolved = parseLocText(addrText);
+    if (!resolved) resolved = await geocodeOne(addrText);
+    if (!resolved) {
+      favNahshSt = { loading: false, cands: null, err: "Adresse nicht gefunden – bitte ändern oder „Übernehmen“.", note: "" };
+      favDlgNahshRender();
+      return;
+    }
+    f.lat = f.osmLat = resolved.lat; f.lon = f.osmLon = resolved.lon;
+    f.label = resolved.label;
+    f.nahsh = null;   // alter Abgleich passt nicht zur neuen Adresse
+    saveAddrFavs(); renderAddrFavs();
+    favDlgAddr.value = f.label;
+  }
+  if (parseLocText(f.label || "")) return;   // Koordinaten-Favorit: kein LocMatch
+  if (f.osmLat == null) { f.osmLat = f.lat; f.osmLon = f.lon; }
+  favNahshSt = { loading: true, cands: null, err: "", note: "" };
+  favDlgNahshRender();
+  try {
+    const st = { cands: null };
+    await abgCands(st, { name: f.label, lat: f.lat, lon: f.lon }, null);
+    favNahshSt = { loading: false, cands: (st.cands || []).filter(c => c.kind === "loc"), err: "", note: "" };
+  } catch (e) {
+    favNahshSt = { loading: false, cands: null,
+      err: "NAH.SH-Abgleich fehlgeschlagen: " + String((e && e.message) || e), note: "" };
+  }
+  favDlgNahshRender();
+}
+function favNahshPick(i) {
+  const f = addrFavs[favDlgIdx];
+  const c = favNahshSt && favNahshSt.cands && favNahshSt.cands[i];
+  if (!f || !c) return;
+  f.nahsh = { name: c.name, lid: c.lid, type: c.type || "A",
+    lat: c.lat != null ? c.lat : null, lon: c.lon != null ? c.lon : null };
+  saveAddrFavs(); renderAddrFavs();
+  const d = favNahshDist(f);
+  favNahshSt.note = "NAH.SH-Eintrag übernommen." +
+    (d != null && d > 100 ? " ⚠ Abstand zur OSM-Adresse: " + formatDist(d) + "." : "");
+  favDlgNahshRender();
+}
+function favNahshCoord(which) {   // Koordinatenquelle des Favoriten umschalten
+  const f = addrFavs[favDlgIdx];
+  if (!f) return;
+  if (which === "osm" && f.osmLat != null) { f.lat = f.osmLat; f.lon = f.osmLon; }
+  else if (which === "nahsh" && f.nahsh && f.nahsh.lat != null) { f.lat = f.nahsh.lat; f.lon = f.nahsh.lon; }
+  else return;
+  saveAddrFavs(); renderAddrFavs();
+  favDlgNahshRender();
+}
+document.getElementById("favDlgNahsh").addEventListener("click", e => {
+  const b = e.target.closest("[data-fvn]");
+  if (!b) return;
+  const v = b.dataset.fvn;
+  if (v === "run") favNahshRun();
+  else if (v === "coord-osm") favNahshCoord("osm");
+  else if (v === "coord-nahsh") favNahshCoord("nahsh");
+  else favNahshPick(Number(v));
+});
 // Adresse freigeben (ohne die Trefferliste der Suchzeile anzufassen)
 async function geocodeOne(q) {
   try {
@@ -2025,6 +2160,7 @@ document.getElementById("favDlgOk").addEventListener("click", async () => {
     if (!resolved) resolved = await geocodeOne(addrText);
     if (!resolved) { favDlgMsg.textContent = "Adresse nicht gefunden – bitte ändern."; return; }
     f.lat = resolved.lat; f.lon = resolved.lon; f.label = resolved.label;
+    f.osmLat = resolved.lat; f.osmLon = resolved.lon;   // OSM-Atlas-Koordinate separat führen
     f.nahsh = null;   // alter NAH.SH-Abgleich passt nicht mehr: beim nächsten Routen neu machen
   } else if (!f.label) {
     f.label = f.name;   // ältere Einträge ohne Adresse: Alias als Adresse führen
@@ -6260,6 +6396,7 @@ async function abgCands(st, sel, typeHint) {
     const crd = x.crd || {};
     const lat = crd.y != null ? crd.y / 1e6 : null, lon = crd.x != null ? crd.x / 1e6 : null;
     st.cands.push({ name: x.name, lid: x.lid, type: x.type || "A", kind: "loc",
+      lat: lat, lon: lon,
       d: (lat != null && sel.lat != null) ? dist({ lat: lat, lon: lon }, sel) : null });
   }
   if (typeHint)   // Station: Typ S zuerst, dann nach Entfernung
@@ -6271,18 +6408,22 @@ async function abgCands(st, sel, typeHint) {
     st.cands.push({ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
       lid: coordLid(sel.name, sel.lat, sel.lon), type: "A", d: 0, kind: "coord" });
 }
-function routeAbgApply(which, name, lid, type) {
+function routeAbgApply(which, name, lid, type, lat, lon) {
   const sel = routeSel[which];
   if (!sel) return;
   sel.lid = lid; sel.locType = type || "A"; sel.nahshName = name;
-  if (sel.key) persistFavNahsh(sel.key, { name: name, lid: lid, type: type || "A" });   // Abgleich nur einmal
+  // NAH.SH-Eintrag inklusive seiner Koordinaten am Favorit speichern (die
+  // braucht das Favoriten-Bearbeiten für die Koordinatenwahl und den Abstands-
+  // Hinweis); Stationen (Typ S) haben hier keine eigenen Koordinaten.
+  if (sel.key) persistFavNahsh(sel.key, { name: name, lid: lid, type: type || "A",
+    lat: lat != null ? lat : null, lon: lon != null ? lon : null });
 }
 function routeAbgPick(which, i, auto) {
   const sel = routeSel[which];
   const st = routeAbg[which];
   if (!sel || !st || st.sel !== sel || !st.cands || !st.cands[i]) return;
   const c = st.cands[i];
-  routeAbgApply(which, c.name, c.lid, c.type || "A");
+  routeAbgApply(which, c.name, c.lid, c.type || "A", c.lat, c.lon);
   st.chosen = i;
   if (!auto) {
     setLocNote("🧭 NAH.SH-Eintrag übernommen: " + c.name + (sel.key ? " – im Favorit gespeichert." : "."));
@@ -6340,7 +6481,7 @@ async function routeAbgleich(which) {
   }
   if (!sel.lid && !st.err && sel.lat != null) {   // kein Direkttreffer: OSM-Koordinaten als Standard
     routeAbgApply(which, "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
-      coordLid(sel.name, sel.lat, sel.lon), "A");
+      coordLid(sel.name, sel.lat, sel.lon), "A", sel.lat, sel.lon);
     const ci = st.cands.findIndex(c => c.kind === "coord");
     if (ci < 0) {
       st.cands.push({ name: "Koordinaten " + sel.lat.toFixed(5) + ", " + sel.lon.toFixed(5),
@@ -7000,7 +7141,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.6 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.7 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
