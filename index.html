@@ -360,7 +360,6 @@
   .routecon[data-rcopen] { cursor: pointer; }
   .routecon.on { border-color: #38bdf8; }
   .routecon .rtsmall { font-size: .72rem; color: #64748b; white-space: nowrap; }
-  .routecon .rchint { color: #7dd3fc; }
   .routesec.rtjny { margin: 6px 0 2px; padding: 2px 0 2px 6px; line-height: 1.5; }
   .routesec.rtjny .rtstop { padding: 1px 0; }
   .routesec.rtjny .rtbadge { background: #00519e; color: #fff; font-weight: 700;
@@ -371,6 +370,13 @@
   .routesec .tdelay.down { color: #7dd3fc; }
   .routesec .tdelay.ok { color: #4ade80; }
   .routecon .routesec[data-rtsec] { cursor: pointer; }
+  .subtab .rtbadge { background: #00519e; color: #fff; font-weight: 700; border-radius: 4px;
+    padding: 0 4px; font-size: 0.72rem; display: inline-block; }
+  .rtxm { font-weight: 700; }
+  .rtxm.ok { color: #4ade80; }
+  .rtxm.soon { color: #fbbf24; }
+  .rtxm.missed { color: #f87171; }
+  .routesec.rtstale { color: #f87171; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rtsec { cursor: pointer; }
   .rttime { background: #0f172a; color: #e2e8f0; border: 1px solid #1e3a5f;
     border-radius: 6px; padding: 3px 6px; font-size: .85rem; color-scheme: dark; }
@@ -6237,6 +6243,17 @@ try { const rp = localStorage.getItem("kvg-routeprod"); if (rp === "bus" || rp =
 // (letzte Verbindungen, die vor der gewählten Zeit ankommen; HAFAS: outFrwd:false).
 let routeArr = false;
 try { if (localStorage.getItem("kvg-routearr") === "1") routeArr = true; } catch (e) {}
+// Roller-Option: Leihfahrrad-Abschnitte (NAH.SH BIKE) als Roller einbeziehen,
+// je 2 min Ausleihen und 2 min Zurückstellen dazu. Ohne die Option werden nur
+// Verbindungen mit Fußwegen gezeigt (keine Fahrräder, keine Autos).
+let routeScoot = false;
+try { if (localStorage.getItem("kvg-routescoot") === "1") routeScoot = true; } catch (e) {}
+function routeScootBtn() {   // Roller-Knopf in der Routen-Suchzeile (an/aus, wie der Modus-Knopf)
+  return ' <button class="achip' + (routeScoot ? " on" : "") + '" data-rtscoot="1" title="Roller-Option ' +
+    (routeScoot ? "AN: Leihfahrrad-Abschnitte zählen als Roller, je 2 min Ausleihen und Abstellen dazu"
+                : "AUS: nur Verbindungen mit Fußwegen") +
+    ' – Klick schaltet um und sucht erneut">🛴</button>';
+}
 function routeProdBtns() {   // EIN Knopf, Klick wechselt den Modus: ÖPNV -> Bus -> Bahn
   const sym = routeProd === "bus" ? "🚌" : routeProd === "rail" ? "🚆" : "🚌🚆";
   const lbl = routeProd === "bus" ? "Bus" : routeProd === "rail" ? "Bahn" : "ÖPNV (Busse und Bahnen)";
@@ -6271,8 +6288,9 @@ function routeWhenBtnsHTML() {   // Abfahrt/Ankunft-Wahlknöpfe (Panel und Dialo
     '<button class="achip' + (routeArr ? " on" : "") +
     '" data-rtwhen="arr" title="Nach Ankunftszeit suchen: letzte Verbindungen, die vor der gewählten Zeit ankommen">Ankunft</button>';
 }
-function routeSig(c) {
-  return c.dep + "|" + c.arr + "|" + c.secs.map(s => s.kind === "jny" ? s.line + "@" + s.dep : s.kind).join(">");
+function routeSig(c) {   // Identität über PLANzeiten + Linien: bleibt bei Echtzeit-Aktualisierung gleich
+  return (c.depP || c.dep) + "|" + (c.arrP || c.arr) + "|" +
+    c.secs.map(s => s.kind === "jny" ? s.line : s.kind).join(">");
 }
 function openRouteCon(idx) {
   const c = routeCons[idx];
@@ -6285,6 +6303,11 @@ function openRouteCon(idx) {
   }
   routeActive = ri;
   renderRoutePanel();
+  routeScrollToSubtabs();   // Klick in die Karte: direkt zum neuen Unter-Reiter springen
+}
+function routeScrollToSubtabs() {   // sanft zu den geöffneten Route-Unter-Reitern scrollen
+  const el = routePanel.querySelector(".subtabbar") || routePanel;
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 // HAFAS-Haltestellenname -> KVG-Stationskürzel (antippbar im ausklappbaren Verlauf)
 function routeStopMatch(nm) {
@@ -6707,12 +6730,13 @@ function indKindOf(t) {
   return "ind";
 }
 function indIcon(kind) {
-  return kind === "bike" ? "🚲" : (kind === "kiss" || kind === "car") ? "🚗" :
+  return kind === "scoot" ? "🛴" : kind === "bike" ? "🚲" : (kind === "kiss" || kind === "car") ? "🚗" :
     kind === "taxi" ? "🚕" : kind === "devi" ? "🚐" : "🚶";
 }
 function indSuffix(kind) {   // Klartext zur Fortbewegungsart (nur bei Nicht-Fußweg)
   return kind === "kiss" ? "Kiss & Ride (Auto-Mitfahrt)" : kind === "car" ? "mit dem Auto" :
     kind === "taxi" ? "mit dem Taxi" : kind === "devi" ? "Rufbus/AST" :
+    kind === "scoot" ? "Roller (Leihfahrrad; inkl. je 2 min Ausleihen und Abstellen)" :
     kind === "ind" ? "individuell" : "";
 }
 function indSecHTML(sec) {   // innerer HTML-Text eines Zubringer-Abschnitts (ohne div)
@@ -6748,26 +6772,15 @@ async function abgWait(which) {   // laufenden Abgleich kurz abwarten (max. 4 s)
     await new Promise(r => setTimeout(r, 200));
   }
 }
-async function routeTripSearch() {
-  await abgWait("start"); await abgWait("dest");
-  const dep = await routeResolve(routeSel.start);
-  const arr = await routeResolve(routeSel.dest);
-  const when = routeWhen();
-  const req = { depLocL: [{ type: dep.locType, lid: dep.lid }],
-    arrLocL: [{ type: arr.locType, lid: arr.lid }],
-    outDate: when.date, outTime: when.time,
-    numF: 6, getPasslist: true, getPolyline: false };   // Passlist: Haltestellen je Abschnitt für den ausklappbaren Verlauf
-  if (routeArr) req.outFrwd = false;   // Ankunftssuche: rückwärts ab der Zeit (Feldname mit d! outFrw crasht den Server)
-  if (routeProd === "bus") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "32" }];     // nur Busse
-  if (routeProd === "rail") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "31" }];   // nur Schienenverkehr
-  const res = await routeHafas("TripSearch", req);
+function parseRoutePage(res, date) {   // eine NAH.SH-TripSearch-Antwort in Verbindungskarten übersetzen
   const locL = (res.common && res.common.locL) || [];
   const prodL = (res.common && res.common.prodL) || [];
   const out = [];
   for (const c of (res.outConL || [])) {
     if (!c.secL || !c.secL.length) continue;
     const secs = [];
-    let line = null, dir = null;
+    let line = null, dir = null, hasBus = false;
+    let vWalk = true, vScoot = true;   // Zubringer-Filter: nur Fußwege (bzw. + Roller=Leihfahrrad)
     for (const sec of c.secL) {
       const from = locL[sec.dep && sec.dep.locX] || {};
       const to = locL[sec.arr && sec.arr.locX] || {};
@@ -6776,9 +6789,11 @@ async function routeTripSearch() {
         let ln = String(prod.name || "").trim();
         if (/^Bus\s+/i.test(ln)) ln = ln.replace(/^Bus\s+/i, "");
         line = ln; dir = sec.jny.dirTxt || "";
+        if ((prod.cls || 32) >= 32) hasBus = true;   // Bus-Klasse (32) gefahren
         secs.push({ kind: "jny", line: ln, dir: dir, from: from.name, to: to.name,
           dep: dbHHMM(sec.dep && (sec.dep.dTimeR || sec.dep.dTimeS)),
           arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)),
+          depP: dbHHMM(sec.dep && sec.dep.dTimeS), arrP: dbHHMM(sec.arr && sec.arr.aTimeS),
           depDelay: rtDiffMin(sec.dep && sec.dep.dTimeS, sec.dep && sec.dep.dTimeR),
           arrDelay: rtDiffMin(sec.arr && sec.arr.aTimeS, sec.arr && sec.arr.aTimeR),
           rail: (prod.cls || 32) < 32,   // Schiene: größerer GPS-Radius (250 m statt 75 m)
@@ -6794,29 +6809,110 @@ async function routeTripSearch() {
       } else {
         // WALK/BIKE/KISS/... : Art UND Strecke mitnehmen (Distanz aus gis.dist;
         // Dauer notfalls aus gis.dur, falls Abschnittszeiten fehlen)
-        secs.push({ kind: indKindOf(sec.type), from: from.name, to: to.name,
+        const k = indKindOf(sec.type);
+        if (k !== "walk") vWalk = false;   // Auto/Taxi/Rufbus/Fahrrad: default ungueltig
+        if (k !== "walk" && k !== "bike") vScoot = false;   // mit Roller-Option zaehlt Leihfahrrad mit
+        secs.push({ kind: k, from: from.name, to: to.name,
           distM: (sec.gis && sec.gis.dist != null) ? sec.gis.dist : null,
           mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) ||
             hafasDurMin(sec.gis && sec.gis.dur) });
       }
     }
-    out.push({ dep: dbHHMM(c.dep && (c.dep.dTimeR || c.dep.dTimeS)),
+    const depEff = c.dep && (c.dep.dTimeR || c.dep.dTimeS);
+    out.push({ dep: dbHHMM(depEff),
       arr: dbHHMM(c.arr && (c.arr.aTimeR || c.arr.aTimeS)),
-      dur: hafasDurMin(c.dur), chg: c.chg || 0, line: line, dir: dir, secs: secs });
+      depP: dbHHMM(c.dep && c.dep.dTimeS), arrP: dbHHMM(c.arr && c.arr.aTimeS),
+      depAbsMs: hafasAbsMs(date, depEff),   // Abfahrt absolut (Echtzeit vor Plan): zaehlt xm / abgefahren
+      depAbsMsP: hafasAbsMs(date, c.dep && c.dep.dTimeS),   // Planzeit: Blaetter-/Identitaets-Marke
+      dur: hafasDurMin(c.dur), chg: c.chg || 0, line: line, dir: dir,
+      hasBus: hasBus, vWalk: vWalk, vScoot: vScoot, secs: secs });
   }
   return out;
+}
+async function routeTripSearch() {
+  await abgWait("start"); await abgWait("dest");
+  const dep = await routeResolve(routeSel.start);
+  const arr = await routeResolve(routeSel.dest);
+  let when = routeWhen();
+  const out = [], seen = new Set();
+  let prevMs = 0;
+  // NAH.SH liefert max. 6 Verbindungen pro Anfrage, Zubringer-Varianten (KISS/BIKE)
+  // belegen davon Plaetze. Solange weniger als 5 gueltige (gefilterte) Verbindungen
+  // gefunden sind, wird ab der letzten Abfahrt weitergeblaettert (max. 3 Seiten,
+  // nur bei Abfahrtssuche; Ankunftssuche wuerde rueckwaerts muessen).
+  for (let page = 0; page < 3; page++) {
+    const req = { depLocL: [{ type: dep.locType, lid: dep.lid }],
+      arrLocL: [{ type: arr.locType, lid: arr.lid }],
+      outDate: when.date, outTime: when.time,
+      numF: 6, getPasslist: true, getPolyline: false };   // Passlist: Haltestellen je Abschnitt fuer den ausklappbaren Verlauf
+    if (routeArr) req.outFrwd = false;   // Ankunftssuche: rueckwaerts ab der Zeit (Feldname mit d! outFrw crasht den Server)
+    if (routeProd === "bus") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "32" }];     // nur Busse
+    if (routeProd === "rail") req.jnyFltrL = [{ type: "PROD", mode: "INC", value: "31" }];    // nur Schienenverkehr
+    const res = await routeHafas("TripSearch", req);
+    const pageCons = parseRoutePage(res, when.date);
+    if (!pageCons.length) break;
+    for (const c of pageCons) {
+      const sig = routeSig(c);
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      if (routeScoot ? c.vScoot : c.vWalk) out.push(c);   // Zubringer-Filter
+    }
+    if (routeArr) break;   // Ankunftssuche: nicht blaettern
+    let maxMs = 0;
+    for (const c of pageCons) if (c.depAbsMsP != null && c.depAbsMsP > maxMs) maxMs = c.depAbsMsP;
+    if (out.length >= 5 || maxMs <= prevMs) break;   // genug gefunden oder kein Fortschritt
+    prevMs = maxMs;
+    await new Promise(r => setTimeout(r, 400));   // kurzer Abstand zum Gate (Drosselung)
+    const d = new Date(maxMs + 60000), p = n => String(n).padStart(2, "0");
+    when = { date: "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
+      time: p(d.getHours()) + p(d.getMinutes()) + "00" };
+  }
+  if (routeScoot) {   // Roller-Option: Leihfahrrad-Abschnitte als Roller, je 2 min Ausleihen
+    // und 2 min Zurueckstellen dazu (wirkt mitten in der Verbindung, auch zwischen zwei
+    // Stationen); die Wartezeit zaehlt zur Abschnitts- und Gesamtdauer.
+    for (const c of out) {
+      let extra = 0;
+      for (const s of c.secs) if (s.kind === "bike") {
+        s.kind = "scoot";
+        s.mins = (s.mins || 0) + 4;
+        extra += 4;
+      }
+      if (extra) c.dur += extra;
+    }
+  }
+  // Die zwei schnellsten Verbindungen mit Buslinie zuerst, danach die uebrigen
+  // (nach Abfahrtszeit) – so gibt es immer die besten Busverbindungen, plus Varianten.
+  const busCons = out.filter(c => c.hasBus).sort((a, b) => a.dur - b.dur);
+  const top = busCons.slice(0, 2);
+  const rest = out.filter(c => !top.includes(c)).sort((a, b) => (a.depAbsMsP || 0) - (b.depAbsMsP || 0));
+  return top.concat(rest);
 }
 async function routeRunSearch() {
   routeLoading = true; routeSearchErr = null; routeCons = [];
   renderRoutePanel();
   try {
     routeCons = await routeTripSearch();
+    routeUpdateChosen();   // geöffnete Unter-Reiter auf frische Echtzeit-Daten heben
     if (!routeCons.length) routeSearchErr = "Keine Verbindung gefunden.";
   } catch (e) {
     routeSearchErr = String(e && e.message || e);
   }
   routeLoading = false;
   renderRoutePanel();
+}
+function routeUpdateChosen() {   // gewählte Verbindungen nach einer (erneuten) Suche
+  // zuordnen: Identität = Planzeiten + Linien. Gefundene bekommen die frischen
+  // Echtzeit-Daten; nicht mehr angebotene werden als „stale“ markiert (Hinweis).
+  if (!routeChosen.length) return;
+  const bySig = new Map(routeCons.map(c => [routeSig(c), c]));
+  for (const r of routeChosen) {
+    const nc = bySig.get(r.sig);
+    if (nc) {
+      r.con = nc;
+      if (r.secOpen.length !== nc.secs.length) r.secOpen = nc.secs.map(() => false);
+      r.stale = false;
+    } else r.stale = true;
+  }
 }
 function activateRouteTab() {
   saveActiveTab();
@@ -6846,7 +6942,7 @@ function renderRoutePanel() {
     '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
     ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
     ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
-    routeProdBtns() + "</div>";
+    routeProdBtns() + routeScootBtn() + "</div>";
   if (routeLoading) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
   } else if (routeSearchErr) {
@@ -6854,10 +6950,10 @@ function renderRoutePanel() {
   } else if (!routeCons.length) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Noch keine Suche – „▶ Suchen“ ruft die nächsten Verbindungen ab.</div>';
   } else {
-    h += routeCons.slice(0, 3).map((c, ci) => {
+    h += routeCons.map((c, ci) => {
       const chosen = routeChosen.some(r => r.sig === routeSig(c));
       let x = '<div class="routecon' + (chosen ? " on" : "") + '" data-rcopen="' + ci +
-        '" title="Antippen: Verbindung als Unter-Reiter mit genauerem Verlauf öffnen">' +
+        '" title="Antippen: Verbindung als Unter-Reiter öffnen und dorthin springen">' +
         '<div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
         "<span>" + c.dur + " min</span>" +
         (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
@@ -6868,25 +6964,49 @@ function renderRoutePanel() {
           x += '<div class="routesec">' + indSecHTML(sec) + "</div>";
         }
       }
-      return x + '<div class="routesec rchint">▸ Verbindung als Unter-Reiter öffnen' +
-        (chosen ? " (geöffnet)" : "") + "</div></div>";
+      return x + "</div>";
     }).join("");
   }
   // Gewählte Routen als parallele Unter-Reiter, Titel = Abfahrtszeit an der ersten
-  // Station (Soll, mit Echtzeit aktualisiert); darunter der genaue Verlauf mit
-  // ausklappbaren Abschnitten (Haltestellen wie in der Stationsansicht)
+  // Station (Soll, mit Echtzeit aktualisiert) plus Buslinien-Schilder und Minuten
+  // bis zur Abfahrt („xm“: grün / gelb ≤ 3 min / rot abgefahren, läuft über den
+  // 15-Sekunden-Ticker mit). Darunter der genaue Verlauf mit ausklappbaren
+  // Abschnitten (Haltestellen wie in der Stationsansicht).
   if (routeChosen.length) {
-    h += '<div class="subtabbar">' + routeChosen.map((r, ri) =>
-      '<div class="subtab' + (ri === routeActive ? " on" : "") + '" data-rtb="' + ri +
-      '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
-      escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '"><span class="stt">' + escapeHtml(r.con.dep) + "</span>" +
-      ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>').join("") + "</div>";
+    h += '<div class="subtabbar">' + routeChosen.map((r, ri) => {
+      let st = '<span class="stt">' + escapeHtml(r.con.dep);
+      const seenLn = new Set();
+      for (const s of r.con.secs) if (s.kind === "jny" && !seenLn.has(s.line)) {
+        seenLn.add(s.line);
+        st += ' <span class="rtbadge rmini">' + escapeHtml(s.line || "?") + "</span>";
+      }
+      if (r.con.depAbsMs != null) {
+        const xm = Math.round((r.con.depAbsMs - Date.now()) / 60000);
+        st += ' <span class="rtxm ' + (xm < 0 ? "missed" : xm <= 3 ? "soon" : "ok") + '">' + xm + "m</span>";
+      }
+      st += "</span>";
+      return '<div class="subtab' + (ri === routeActive ? " on" : "") + '" data-rtb="' + ri +
+        '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
+        escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '">' + st +
+        ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>';
+    }).join("") + "</div>";
     const rc = routeChosen[routeActive] || routeChosen[0];
     if (rc) {
       const c = rc.con;
       h += '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
         "<span>" + c.dur + " min</span>" +
-        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
+        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") +
+        ' <button class="achip" data-rtrefresh="1" title="Echtzeitdaten neu abrufen und diese Ansicht aktualisieren"' +
+        (routeLoading ? " disabled" : "") + ">↻</button></div>";
+      // Verbindung nicht mehr fahrbar? (abgefahren per Uhr, oder nach Aktualisierung
+      // nicht mehr von NAH.SH angeboten) – dann mit einem Tipp zurück zur Auswahl.
+      const rcXm = c.depAbsMs != null ? Math.round((c.depAbsMs - Date.now()) / 60000) : null;
+      if (rc.stale || (rcXm != null && rcXm < 0)) {
+        h += '<div class="routesec rtstale">⚠ ' +
+          (rc.stale ? "Diese Verbindung wird von NAH.SH nicht mehr angeboten – bitte neu wählen."
+                    : "Diese Verbindung ist abgefahren.") +
+          ' <button class="achip" data-rttotop="1" title="Zurück zur Verbindungsauswahl">▲ Verbindungsauswahl</button></div>';
+      }
       c.secs.forEach((sec, si) => {
         if (sec.kind === "jny") {
           const open = !!rc.secOpen[si];
@@ -6931,6 +7051,16 @@ routePanel.addEventListener("click", e => {
   }
   const rcop = e.target.closest("[data-rcopen]");
   if (rcop) { openRouteCon(Number(rcop.dataset.rcopen)); return; }
+  if (e.target.closest("[data-rtrefresh]")) {
+    routeRunSearch();   // Echtzeitdaten nachladen; gewählte Unter-Reiter werden mit angehoben
+    return;
+  }
+  if (e.target.closest("[data-rttotop]")) {   // zurück zur Verbindungsauswahl (Karten oben)
+    const el = routePanel.querySelector(".routecon") ||
+      routePanel.querySelector(".dstage") || routePanel;
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   const so = e.target.closest("[data-stopopen]");
   if (so) { openTab(so.dataset.stopopen); return; }   // Haltestelle im Abschnitts-Verlauf: eigener Reiter
   if (e.target.closest("[data-rtnow2]")) {
@@ -6951,6 +7081,13 @@ routePanel.addEventListener("click", e => {
     try { localStorage.setItem("kvg-routeprod", routeProd === "all" ? "all" : routeProd); } catch (e2) {}
     renderRoutePanel();
     if (routeCons.length || routeSearchErr) routeRunSearch();   // bisherige Suche mit neuem Modus wiederholen
+    return;
+  }
+  if (e.target.closest("[data-rtscoot]")) {   // Roller-Option umschalten und erneut suchen
+    routeScoot = !routeScoot;
+    try { localStorage.setItem("kvg-routescoot", routeScoot ? "1" : "0"); } catch (e2) {}
+    renderRoutePanel();
+    if (routeCons.length || routeSearchErr) routeRunSearch();
     return;
   }
   if (e.target.closest("[data-rtedit]")) {
@@ -7330,7 +7467,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.9 · Build: 17.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.10 · Build: 17.11.2026</div>
 </div>
 </body>
 </html>
