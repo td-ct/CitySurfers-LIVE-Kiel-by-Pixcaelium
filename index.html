@@ -85,6 +85,7 @@
   .bigbtn.violet { background: linear-gradient(160deg, #9a6fd0, #7048a8); }
   .bigbtn.teal { background: linear-gradient(160deg, #3aa9a0, #1f837c); }
   .bigbtn.pink { background: linear-gradient(160deg, #d76fa5, #b34d7f); }
+  .bigbtn.slate { background: linear-gradient(160deg, #64748b, #475569); }
   .addrclr { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
     border: none; background: rgba(0,81,158,0.15); color: #cbd5e1; border-radius: 50%;
     width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
@@ -254,6 +255,9 @@
   /* Panels (Station / einzelne Abfahrt) unter der Suche */
   .panel { background: #1e293b; border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
   .panel .phead { margin-bottom: 4px; }
+  .helpsec { text-align: left; margin: 4px 2px 10px; line-height: 1.55; font-size: 0.93rem; color: #cbd5e1; }
+  .helpsec b { color: #e2e8f0; }
+  .hh { font-weight: 700; color: #e2e8f0; margin: 14px 0 4px; }
   .busdetail { font-size: 1rem; line-height: 1.7; }
   .busdetail .dl { background: #00519e; color: #fff; font-weight: 700; border-radius: 8px;
     min-width: 56px; text-align: center; padding: 6px 8px; display: inline-block; }
@@ -566,6 +570,7 @@
     <button class="bigbtn orange" id="bbAlarm" title="Alle Wecker ein/aus (global)"><span class="bbsym">⏰</span><small>Wecker</small></button>
     <button class="bigbtn blue" id="bbFh" title="Alle „Finde nach Hause“-Hinweise ein/aus (global)"><span class="bbsym">🏠</span><small>nach Hause</small></button>
     <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
+    <button class="bigbtn slate" id="bbHelp" title="Anleitung: die beiden Nutzungszweige (Stationen und Routing) samt Schwellen und Hintergründen"><span class="bbsym">❓</span><small>Anleitung</small></button>
     <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
   </div>
@@ -606,6 +611,7 @@
   <div id="tabsbar" hidden></div>
   <div class="panel" id="stationPanel" hidden></div>
   <div class="panel" id="routePanel" hidden></div>
+  <div class="panel" id="helpPanel" hidden></div>
   <div class="panel" id="busPanel" hidden></div>
 
   <div class="alerts" id="alerts"></div>
@@ -817,7 +823,7 @@ const FOOT_TABLE = "https://routing.openstreetmap.de/routed-foot/table/v1/foot/"
 const PHOTON      = "https://photon.komoot.io/api/";
 const NOMINATIM   = "https://nominatim.openstreetmap.org/search";
 const DB_GATE     = "https://nahsh.hafas.cloud/gate"; // NAH.SH-HAFAS (DB Regio Nord, Schleswig-Holstein)
-const WALK_SPEED_KMH = 6;
+const WALK_SPEED_KMH = 5;   // Normschritt 5 km/h: Fußweg bewusst leicht konservativ ("lieber eine Minute früher los")
 const TICK_MS = 15000;      // Anzeige-Takt (nur Rechnen, keine Abrufe)
 
 const EMBEDDED_STOPS = [["2157","Malmöweg",54.322056,10.061218],["2808","Kurt-Schumacher-Platz",54.321993,10.051893],["9019","Thor-Heyerdahl-Gymnasium",54.325354,10.048942],["9131","Leif-Eriksson-Gemeinschaftsschule",54.325354,10.048942],["2904","Melsdorf, Dorfplatz",54.31554,10.030145],["2771","Bahnhof Melsdorf",54.312793,10.031058],["2153","Roskilder Weg",54.312405,10.047303],["1356","Melsdorf, Schmiedekoppel",54.316093,10.035058],["1862","Melsdorf, Schneiderkoppel",54.317773,10.033232],["9163","Schule am Heidenberger Teich",54.319652,10.048547],["1758","Seelandweg",54.314942,10.045118],["1962","Aalborgring",54.316302,10.04811],["2687","Jütlandring",54.315917,10.048137],["2132","Harmsstraße",54.316544,10.121683],["1393","Am Reben",54.275429,10.100713],["2940","Meimersdorfer Weg",54.27984,10.097239],["1245","Kleinflintbeker Weg",54.274281,10.105126],["2067","Am Dorfplatz",54.274758,10.109141],["1413","Goldregenholz",54.278982,10.113774],["2883","Am Biberbach",54.281281,10.116897],["1792","Meimersdorf, Schule",54.282791,10.120526],["9228","Johanna-Mestorf-Schule",54.2828,10.120441],["1148","Russee, Kirche",54.301938,10.06711],["1505","Russeer Weg",54.316689,10.06701],["1966","Am Voßberg",54.290053,10.063192],["1972","Ihlseeweg",54.293943,10.062508],["2512","Tannenholz",54.291678,10.059901],["2623","Schiefe Horn",54.302628,10.052334],["2272","Ihlkatenweg",54.301338,10.059049],["1210","Eiderbad",54.287973,10.072842],["1776","Pudelhütte",54.294493,10.070208],["2886","Wiepenkrog",54.29075,10.080373],["2346","Speckenbeker Weg",54.293228,10.08408],["9238","Uwe-Jens-Lornsen-Schule",54.292651,10.085009],["1477","Am Hain",54.294878,10.075356],["1149","Rendsburger Hof",54.300605,10.07167],["2457","Rutkamp",54.300357,10.077431],["2448","Redderkamp",54.302953,10.077631],["1770","Gedenkort am Russee",54.299813,10.085061],["2074","Odensestraße",54.315328,10.049993],["2713","Max-Tau-Schule",54.317229,10.051386],["9125","Max-Tau-Schule",54.317163,10.051613],["2519","Königsförder Weg",54.317146,10.056498],["1326","Stavangerstraße",54.319501,10.050282],["2034","Alt-Mettenhof",54.317067,10.061842],["1538","Am Wohld",54.319503,10.065184],["9116","Grundschule Russee",54.303917,10.067709],["2045","Hofkoppel",54.30636,10.06894],["2946","Bahnhof Russee",54.309493,10.071359],["1971","Melsdorfer Feldweg",54.311146,10.068406],["1517","Dahmeweg",54.30858,10.075401],["2491","Gatowweg",54.305678,10.077586],["1923","Waldesruh",54.317676,10.071253],["9014","Gorch-Fock-Schule",54.314901,10.073532],["2130","Melsdorfer Straße",54.319573,10.07682],["2812","Stadtrade",54.309003,10.103256],["2406","PREY",54.300788,10.094268],["1147","Eiderbrücke",54.289939,10.090402],["1255","Eiderbrücke",54.289725,10.090447],["2668","Hamburger Baum",54.292941,10.09968],["1930","Marienlust",54.299666,10.089666],["1469","Seekoppelweg",54.296078,10.088333],["2545","Streitkamp",54.303683,10.102293],["9087","Theodor-Heuss-Schule",54.303653,10.102261],["9273","Gemeinschaftsschule Hassee",54.303653,10.102261],["2199","Diesterwegstraße",54.303628,10.112658],["1444","Krummbogen",54.293547,10.113702],["5371","WaD Haus Schönow",54.295205,10.103719],["2287","Petersburger Weg",54.297413,10.105022],["1073","Wulfsbrook",54.30171,10.109113],["1832","Schleswiger Straße",54.30346,10.109167],["2254","Holunderbusch",54.295707,10.116502],["2461","Hasenholz",54.296792,10.118569],["2852","Pappelweg",54.299404,10.116922],["2046","Fröbelstraße",54.302352,10.113008],["2561","Kolonnenweg",54.312094,10.090684],["1705","Uhlenkrog",54.306368,10.096743],["2022","Bärenkrog",54.308807,10.096205],["2612","CITTI-PARK",54.312711,10.101645],["1341","Waldeck",54.319646,10.086293],["1400","Hasselrade",54.31979,10.092868],["9211","Freie Waldorfschule",54.319815,10.092514],["1070","Mühlenweg",54.319308,10.099399],["1434","REWE CENTER",54.309349,10.108353],["1286","Gärtnerstraße",54.30516,10.106888],["1668","Christianistraße",54.306505,10.108853],["2011","Saarbrückenstraße",54.311955,10.109182],["2833","Lantziusstraße",54.312375,10.111474],["1075","Krusenrotter Weg",54.306113,10.121173],["1975","Waldwiese",54.305096,10.117183],["2005","Winterbeker Weg",54.310992,10.116628],["9072","Klaus-Groth-Schule",54.31118,10.116968],["2256","IKEA",54.31358,10.109409],["2619","Virchowstraße",54.320683,10.109897],["9189","Fr.-Junge-Grundschule (Virchowstr.)",54.321401,10.1112],["1087","RBZ am Schützenpark",54.317299,10.110951],["9266","RBZ am Schützenpark",54.318882,10.110961],["1844","Käthe-Kollwitz-Schule",54.318118,10.118888],["9219","Käthe-Kollwitz-Schule",54.319311,10.11762],["1451","Schützenwall/Boiestraße",54.317182,10.115099],["9271","Fr.-Junge-Gem. (Boiestr.)",54.317385,10.115425],["2239","Südfriedhof",54.31493,10.118105],["1540","Metzstraße",54.321624,10.114642],["1801","Kreisauer Straße",54.284264,10.161139],["2856","Moorsee, Dorfplatz",54.264663,10.145792],["2857","Moorsee/B404",54.265136,10.150038],["2900","Schlüsbek",54.261825,10.151638],["1466","Bustorfer Weg",54.282358,10.126308],["2377","Odbarsweg",54.280252,10.133655],["2252","Solldiekswall",54.277326,10.1356],["2024","Im Saal",54.279527,10.138705],["1335","Grot Steenbusch",54.283335,10.131456],["2380","Fettberg",54.285592,10.139158],["1928","Barkauer Straße",54.283888,10.135679],["2134","Edisonstraße/B404",54.273528,10.144843],["1791","Schlachthof",54.274286,10.149828],["2160","IG Wellsee",54.275663,10.151411],["1787","Braunstraße",54.278273,10.141871],["1964","Liebigstraße",54.280282,10.14578],["2508","Borsigstraße",54.277879,10.149499],["2133","Edisonstraße",54.278425,10.157054],["5372","WaD Wellsee",54.28275,10.153996],["1716","Bunsenstraße",54.284584,10.154659],["2396","Götenhof",54.269722,10.176396],["1675","Am Teich",54.267098,10.177108],["1677","Rönne, Dorf",54.267137,10.177984],["2956","Beekkate",54.273336,10.170528],["2758","Marconistraße",54.278089,10.165158],["1798","Pottberg",54.285284,10.183921],["2581","Pottbergkrug",54.283094,10.187915],["1961","Berchtesgadener Straße",54.283163,10.193713],["4086","Betriebshof Postareal",54.312384,10.140117],["2203","Karlsburg",54.291436,10.129171],["1746","Lindenhain",54.288018,10.134519],["2082","Kieler Weg",54.286618,10.131354],["1290","Reesenberg",54.287996,10.139448],["2538","Spolertstraße",54.300279,10.125916],["2655","Barkauer Kreuz",54.303153,10.129166],["9005","BFDS / Sonderfahrt",54.30213,10.136146],["1224","Diedrichstraße",54.30286,10.13638],["4065","Betriebshof Diedrichstraße",54.300768,10.136655],["1748","Kronsburg",54.285848,10.14341],["9147","Grundschule Kronsburg",54.285693,10.142422],["1205","Tresckowweg",54.286056,10.154748],["2425","Julius-Leber-Straße",54.288637,10.155159],["1240","Hubertus",54.292318,10.157098],["1679","Alte Siedlung",54.294139,10.153733],["1997","Ostring/B76",54.301483,10.144302],["1545","TÜV",54.297812,10.150727],["2257","Gaardener Ring",54.312993,10.138281],["2387","Hauptbahnhof",54.315563,10.131113],["1323","Stormarnstraße",54.304663,10.125244],["2535","Rondeel",54.308117,10.124842],["2855","Hummelwiese",54.311159,10.128024],["1680","Schwedendamm",54.306307,10.134792],["1307","Adolf-Westphal-Straße",54.309755,10.13114],["1462","Gablenzstraße/Hörnbad",54.309771,10.134771],["2258","KVG-Betriebshof Werftstraße",54.310158,10.138988],["5219","Hörnbad",54.309454,10.135671],["4085","Betriebshof Werftstraße",54.309608,10.139057],["1755","KVG-Verwaltung",54.308841,10.138521],["1692","Kirchhofallee",54.316928,10.124827],["2779","Adelheidstraße",54.319557,10.122543],["2840","Exerzierplatz",54.320899,10.127138],["2722","Dammstraße",54.32183,10.128103],["3001","Hbf/Kaistraße",54.314956,10.133141],["3002","Norwegenkai Terminal",54.315991,10.139254],["2488","Ziegelteich",54.318833,10.131833],["1256","Andreas-Gayk-Straße",54.319067,10.13398],["2392","Bootshafen",54.321643,10.138868],["1918","Augustenstraße",54.314713,10.148839],["2246","Preetzer Straße/Ostring",54.30692,10.149013],["9299","Fröbelschule",54.306161,10.145997],["1701","Karlstal",54.310805,10.14452],["2930","Räucherei",54.307138,10.143524],["1357","Stoschstraße",54.310363,10.152827],["9291","Hans-Christian-Andersen-Schule",54.310045,10.152386],["2858","Norwegenkai",54.316196,10.143551],["1235","Kieler Straße",54.314299,10.145771],["1133","HDW",54.316263,10.150961],["1390","Gerstenkamp",54.303988,10.176852],["1884","Dornbusch",54.296435,10.176475],["1412","Buschkoppel",54.291734,10.162428],["1422","Sportplatz Wellsee",54.290094,10.158773],["1991","Theodor-Steltzer-Weg",54.288643,10.160992],["1815","Kölenberg",54.290222,10.166804],["2859","Schoolkamp",54.287604,10.169238],["9286","Grundschule Wellsee",54.287489,10.169292],["1691","Dorfstraße",54.294456,10.174332],["1860","Sophienhöhe",54.301178,10.164808],["2753","Villacher Straße",54.297618,10.170588],["9130","Matthias-Claudius-Schule",54.295558,10.174149],["1287","Nelkenweg",54.298532,10.175457],["1890","Bahnhof Elmschenhagen",54.287313,10.181899],["1246","Reichenberger Allee",54.289628,10.182738],["2878","Friedhof Elmschenhagen",54.29193,10.178993],["2364","Bebelplatz",54.294652,10.183571],["2305","Illerweg",54.288491,10.187467],["2931","Isarweg",54.289077,10.193478],["2997","Troppauer Straße",54.29446,10.18948],["2050","Teplitzer Allee",54.292849,10.18565],["1638","Schulzentrum Elmschenhagen",54.291626,10.192133],["9085","Lilli-Martius-Schule",54.291728,10.191448],["9289","Gymnasium Elmschenhagen",54.291728,10.191448],["2086","Wiener Allee",54.296023,10.182889],["2788","Andreas-Hofer-Platz",54.297847,10.183665],["9140","Hermann-Löns-Schule",54.301304,10.181727],["1167","Weinberg",54.301252,10.180853],["2600","Toweddern",54.295978,10.18814],["2355","Hollmannstraße",54.314895,10.166615],["1312","Bf. Schulen am Langsee",54.306604,10.15851],["9298","Gemeinschaftsschule Gaarden",54.306161,10.145997],["2989","Geschwister-Scholl-Straße",54.306666,10.163358],["1111","Hans-Geiger-Gymnasium",54.309088,10.162568],["9091","Hans-Geiger-Gymnasium",54.309055,10.162614],["9052","Gerhart-Hauptmann-Schule",54.312843,10.163679],["2706","Poppenrade",54.309221,10.163368],["1368","Tröndelweg",54.306328,10.176523],["1802","Wohldkoppel",54.308374,10.174153],["1851","Grabastraße",54.309659,10.168698],["2992","Federmannstraße",54.310351,10.170728],["2648","Ernestinenstraße",54.31307,10.159058],["1909","Große Ziegelstraße",54.317188,10.161615],["1069","Franziusallee",54.319196,10.165988],["2266","Bahnhof Ellerbek",54.313659,10.170229],["1919","Schwanenseeplatz",54.314302,10.173764],["1371","Ellerbeker Schule",54.320143,10.170178],["9166","Ellerbeker Schule",54.320084,10.170725],["1369","Ellerbeker Weg",54.306888,10.177802],["2700","Selenter Straße",54.312553,10.177907],["1359","August-Sievers-Ring",54.315388,10.17841],["1959","Nissenstraße",54.317558,10.179707],["1550","Klausdorfer Weg/Ostring",54.319285,10.177628],["1541","Ostfriedhof",54.31465,10.190081],["1635","Dreikronen",54.394916,10.145396],["2541","Hauptfeuerwache",54.331108,10.121607],["2582","Brauner Berg",54.394663,10.174522],["2645","Bachweg",54.395004,10.157352],["9172","Claus-Rixen-Schule Klausdorf",54.400054,10.117916],["1624","Rathaus Kronshagen",54.331576,10.085367],["1886","Ernst-Barlach-Gymnasium",54.358425,10.106539],["1893","Stockholmstraße",54.326165,10.057877],["2592","Bergenring",54.324747,10.053971],["2583","Narvikstraße",54.329866,10.054504],["1146","Göteborgring",54.325298,10.06305],["9296","Grundschule am Göteborgring",54.323055,10.061704],["2187","Am Forsthaus",54.324602,10.070295],["1318","Hofbrook",54.327729,10.072069],["1904","Daimlerstraße",54.323791,10.079586],["1676","Wittland",54.324394,10.084431],["1317","Heischberg",54.332213,10.075491],["1724","Steindamm",54.335861,10.074823],["2238","Suchsdorfer Weg",54.338248,10.079709],["1942","Kronshagen, Schulzentrum",54.340153,10.081187],["2679","Eichkoppelweg",54.338384,10.084584],["1564","An der Au",54.355213,10.071551],["1637","Lehmkoppel",54.351378,10.071521],["2428","Holmredder",54.349774,10.080992],["2819","Möllenholt",54.353976,10.079017],["1372","Nienbrügger Weg",54.356518,10.084904],["9086","Grundschule Suchsdorf",54.356119,10.085208],["2146","Eichhof",54.333833,10.104471],["2839","Villenweg",54.330304,10.088888],["2091","Königstein",54.328523,10.095394],["2477","Friedenskamp",54.332604,10.093077],["1849","Bürgerhaus Kronshagen",54.337249,10.087401],["1957","Eichhofstraße",54.333262,10.112254],["1875","Dehnckestraße",54.327635,10.104862],["2932","Gravelottestraße",54.325176,10.112933],["2608","Wilhelmplatz",54.322633,10.120308],["2869","Arndtplatz",54.325483,10.121073],["2937","Professor-Peters-Platz",54.328053,10.118286],["1987","Nordmarksportfeld/Mare-Klinikum",54.339201,10.104527],["2544","Christian-Kruse-Straße",54.332502,10.117383],["9180","Gutenbergschule",54.332482,10.117504],["2652","IPN",54.339988,10.118008],["1989","Albert-Schweitzer-Straße",54.34283,10.093194],["2548","Dr.-Eißing-Kaserne",54.341153,10.091618],["2811","Johann-Fleck-Straße",54.344182,10.098325],["2728","Kopperpahler Teich",54.341445,10.101661],["2327","Vulkanweg",54.347533,10.094644],["2757","Schneiderkamp",54.353118,10.088998],["1478","Bahnhof Suchsdorf",54.350015,10.09215],["2471","Mangoldtstraße",54.350085,10.102543],["2060","Leibnizstraße",54.344945,10.108955],["2805","Uni-Sportstätten",54.34325,10.111098],["5075","Uni-Schwimmhalle",54.343351,10.110877],["1502","Bremerskamp",54.346553,10.10574],["2952","Uni-Bibliothek",54.34624,10.111587],["2337","Botanischer Garten",54.347284,10.113217],["1379","Torfende",54.355423,10.106423],["9270","Ernst-Barlach-Gymnasium",54.335348,10.136323],["2738","Rehbenitzwinkel",54.356173,10.104099],["2078","Woltersweg",54.356917,10.112374],["1456","Steenbeker Weg",54.353985,10.120646],["1184","Lubinus Clinicum",54.354288,10.116229],["1643","Gurlittstraße",54.356511,10.117585],["1050","Rungholtplatz",54.361686,10.075511],["2015","Sylter Bogen",54.359204,10.080985],["1095","Tannenberg",54.367952,10.104243],["1169","Frerich-Frerichs-Allee",54.360142,10.112405],["1853","Wiesenweg",54.362411,10.109037],["2916","Projensdorfer Gehölz",54.36447,10.106615],["1432","Erlenkampsee",54.366547,10.104624],["2169","Wenrade",54.358991,10.113604],["2363","Knorrstraße",54.358085,10.130425],["2731","Petruskirche",54.358629,10.134854],["1071","Carl-Loewe-Weg",54.340604,10.156593],["1116","Feldstraße/Waitzstraße",54.335361,10.140059],["1599","Unikliniken",54.330988,10.139896],["1003","Lehmberg",54.331035,10.128038],["1584","Kunsthochschule",54.327595,10.128148],["9132","Humboldtschule",54.327736,10.128213],["9179","Muhliusschule",54.327469,10.128116],["1271","Rathaus/Opernhaus",54.323107,10.134419],["1395","Martensdamm",54.323525,10.135721],["2818","Lorentzendamm",54.325668,10.135515],["2151","Dreiecksplatz",54.330086,10.131741],["2375","Hansastraße",54.331898,10.123198],["1102","Goetheschule",54.334498,10.123283],["9074","Goethe-Gemeinschaftsschule",54.334357,10.123311],["9223","Goethe-Grundschule",54.334357,10.123311],["2465","Alsenstraße",54.334718,10.129718],["1079","Uni-Hochhaus",54.339118,10.123236],["1491","Uni-Westring",54.338719,10.125264],["9137","Ricarda-Huch-Schule",54.338262,10.124891],["2035","Samwerstraße",54.337616,10.129676],["1823","Ansgarkirche",54.335338,10.133406],["9267","Reventlouschule",54.335348,10.136323],["1895","Schauenburgerstraße",54.332773,10.132521],["2293","Schauspielhaus",54.338998,10.133741],["2304","Schwanenweg",54.33112,10.14858],["1843","Schloßgarten",54.326478,10.143599],["2697","Seegarten/Ostseekai",54.323479,10.143608],["1796","Jensendamm",54.325068,10.141848],["1810","Hospitalstraße",54.328231,10.140131],["1745","Kunsthalle",54.326973,10.145504],["1115","Niemannsweg",54.335424,10.145769],["1629","Wrangelstraße",54.339426,10.14],["2939","Landtag",54.334743,10.151119],["1237","Reventloubrücke",54.333892,10.151524],["2593","Institut für Weltwirtschaft/ZBW",54.337541,10.154865],["2058","Elendsredder",54.355014,10.13026],["1744","Nordfriedhof",54.344508,10.128246],["1990","Holstein-Stadion (Shuttle)",54.347621,10.126212],["2887","Rankestraße",54.341104,10.126494],["2628","Yorckstraße",54.343983,10.139715],["1985","Hardenbergstraße",54.341819,10.133455],["9188","Hardenbergschule",54.341989,10.133458],["1005","Belvedere",54.345694,10.132641],["1473","Düvelsbeker Weg",54.348299,10.139011],["9204","Hebbelschule",54.348647,10.138959],["1988","Am Stadion",54.350458,10.125391],["1708","Husumer Weg",54.354605,10.124123],["9207","Gemeinschaftsschule Wik",54.354496,10.125318],["2854","Mercatorstraße",54.354914,10.135058],["2191","Hanssenstraße",54.349605,10.132254],["2125","Schulredder",54.352893,10.131934],["1130","Homannstraße",54.352053,10.136961],["2767","Flandernbunker",54.354639,10.13879],["2571","Diederichsenpark",54.349467,10.143239],["2141","Roonstraße",54.345198,10.147817],["2633","Bellevue",54.343409,10.155103],["9118","Privatschule Düsternbrook",54.343331,10.155128],["1375","Ellerbeker Markt",54.323445,10.169691],["9196","Theodor-Storm-Schule",54.322998,10.174853],["1370","Kieler Kuhle",54.324854,10.173089],["1281","Anleger Dietrichsdorf",54.330004,10.178386],["1254","Seefischmarkt",54.325304,10.178816],["9290","Gymnasium Wellingdorf",54.325246,10.178951],["2066","Wischhofstraße",54.325178,10.181532],["2113","Grenzstraße",54.329777,10.18247],["1162","Wellingdorf",54.326118,10.186351],["2693","Tiefe Allee",54.329182,10.190546],["1927","HAW-Sokratesplatz",54.332604,10.182675],["2882","Salzredder",54.337222,10.184218],["1573","Hermannstraße",54.339299,10.189813],["1630","Lüderitzstraße",54.335327,10.190759],["1835","Johannisburger Straße",54.336764,10.191713],["9225","Adolf-Reichwein-Schule",54.332303,10.186987],["2765","Boksberg",54.331682,10.186161],["1774","Ivensring",54.33256,10.189207],["2899","Poggendörper Weg",54.331836,10.192506],["9227","Grundschule an der Bake",54.348763,10.19242],["1608","Hasselfelde",54.343237,10.186663],["2268","Mönkeberg, Gänsekrug",54.348298,10.187409],["2760","Mönkeberg, Am Eksol",54.350229,10.192266],["1153","Grimmstraße",54.370827,10.146092],["1526","Holtenau, Schule",54.372538,10.142552],["1626","Schleuse",54.3699,10.14219],["1977","Kastanienallee",54.369073,10.147483],["9055","Grundschule Holtenau",54.37254,10.142545],["2874","Schleusenstraße",54.360746,10.129711],["9084","Schule am Sonderburger Platz",54.358529,10.130577],["2766","Maschinenmuseum",54.364485,10.136723],["2739","Herthastraße",54.36022,10.138093],["2809","Adalbertstraße",54.358807,10.133319],["2207","Auberg",54.361751,10.131035],["1062","Wik, Kanal",54.3654,10.131496],["2672","Gravensteiner Straße",54.369037,10.130373],["2196","Immelmannstraße",54.374051,10.130003],["1134","Jaegerallee/Kanalfähre",54.369425,10.134965],["1627","Nixenweg",54.371717,10.130957],["2881","Apenrader Straße",54.371985,10.138297],["1915","Richthofenstraße",54.373744,10.131943],["9171","Claus-Rixen-Schule Stift",54.383614,10.131273],["9203","Gemeinschaftsschule Altenholz",54.383614,10.131273],["9257","Gymnasium Altenholz",54.383614,10.131273],["1769","Altenholz-Stift, Stettiner Weg",54.383226,10.137504],["1963","Altenholz-Stift, Ostpreußenplatz",54.385632,10.137029],["2322","Flughafen Kiel",54.384506,10.143981],["2658","Schusterkrug",54.384727,10.157212],["1576","Prieser Strand",54.38732,10.164498],["1736","Fehrsstraße",54.390952,10.161539],["1944","Eiche",54.394287,10.164684],["1945","Ottomar-Enking-Straße",54.39423,10.165552],["9297","Gemeinschaftsschule Friedrichsort",54.39438,10.163692],["2650","Lindenauwerft",54.389606,10.17086],["9083","Lernwerft",54.391891,10.17639],["1127","An der Schanze",54.391681,10.176148],["1891","Falckensteiner Straße",54.391679,10.179709],["1213","Hohenleuchte",54.398531,10.157572],["2982","Schilksee Süd",54.413281,10.168622],["2901","Brahmsweg",54.395855,10.161474],["2143","Kreuzung Pries",54.403187,10.164697],["1472","Redinskamp",54.396085,10.169945],["9158","Fritz-Reuter-Schule",54.395116,10.167656],["1581","Claudiusstraße",54.397942,10.170282],["1931","Grüffkamp",54.40043,10.168035],["1306","Seekamp",54.409746,10.165705],["2998","Falckenstein (Fähre)",54.399447,10.186065],["1657","Falckensteiner Strand",54.404016,10.186138],["5812","Schwimmhalle Schilksee",54.429247,10.167179],["9246","Grundschule Schilksee",54.414122,10.167165],["2615","Funkstellenweg",54.417558,10.170927],["1064","Schilksee, Kirche",54.421015,10.173028],["1658","Seestraße",54.422778,10.171987],["2609","Olympiazentrum",54.425648,10.16833],["2120","Drachenbahn",54.42897,10.167404],["2318","Strande",54.437263,10.172039],["2319","Strande, Bernstorffweg",54.440456,10.169343],["9293","Grundschule am Schwentinepark",54.284326,10.240743],["1242","Rarsrott",54.277592,10.205545],["1879","Partenkirchener Straße",54.279898,10.207738],["2171","Plötzen",54.282613,10.20395],["1921","Waldhof",54.278802,10.200817],["2450","Am Wellsee",54.277711,10.196523],["1508","Zeppelinring",54.281774,10.196272],["1348","Sonthofener Straße",54.284025,10.197348],["2183","Franzensbader Straße",54.28802,10.197683],["2870","Krooger Kamp",54.287684,10.196102],["2891","Klosterweg",54.296515,10.195533],["2977","Klausdorf, Liesenhörnweg",54.295441,10.202458],["2177","Abzweig Klausdorf",54.295452,10.209067],["1109","Klausdorf, Nadelberg",54.301507,10.212863],["2497","Klausdorf, Ritzebeker Weg",54.302435,10.216033],["5230","Schwimmhalle Klausdorf",54.302855,10.215997],["2496","Klausdorf, Schule",54.30296,10.215908],["1819","Klausdorf, Südring",54.309045,10.204408],["2550","Klausdorf, Rosenweg",54.311597,10.200794],["2453","Rundweg",54.320838,10.201391],["2698","Klausdorf, Schulstraße",54.307283,10.214802],["2323","Klausdorf, Klausdorfer Hof",54.309378,10.213],["1998","Heikendorf, Haffkamper Weg",54.380733,10.230541],["2898","Rosenfelder Straße",54.323375,10.198141],["1621","Flüggendorfer Straße",54.325463,10.194833],["2921","Schönkirchener Straße",54.329699,10.197],["1867","Ulmenweg",54.322193,10.212626],["1055","Bahnhof Oppendorf",54.326342,10.208744],["2750","Trenntrader Weg",54.325096,10.210274],["1979","Kätnersredder",54.328048,10.204441],["1487","Toni-Jensen-Schule",54.335975,10.195162],["9017","Toni-Jensen-Grundschule",54.335975,10.195162],["9256","Toni-Jensen-Gemeinschaftsschule",54.335975,10.195162],["1866","Pillauer Straße",54.337413,10.196563],["2351","Mönkeberg, Hirschtal",54.353465,10.198513],["2505","Heikendorf, Grasweg",54.372167,10.212816],["1594","Heikendorf, Künstlermuseum",54.367369,10.203328],["1752","Heikendorf, Kitzeberg",54.362603,10.201588],["9101","Grund- und Gemeinschaftsschule Heikendor",54.368875,10.211527],["1783","Heikendorf, Gymnasium",54.368875,10.211527],["1829","Heikendorf, Rathaus",54.370576,10.205616],["1822","Heikendorf, Laboer Weg",54.374378,10.206698],["2836","Heikendorf, Stückenberg",54.374383,10.225893],["1020","Heikendorf, Am Heidberg",54.379982,10.204243],["2599","Heikendorf, Korügen",54.378885,10.210783],["1383","Heikendorf, Rührsbrook",54.377024,10.21982],["2176","Heikendorf, Silberturmer Weg",54.377478,10.230183],["1821","Brodersdorf",54.3866,10.248513],["2189","Neu Brodersdorf",54.391193,10.243099],["1722","Laboe, Hafen",54.403574,10.220139],["1986","Laboe, Steinkampberg",54.401708,10.224122],["2876","Laboe, Kirche",54.40288,10.22516],["1181","Laboe, Ostlandstraße",54.40067,10.22915],["2216","Laboe, Brodersdorfer Weg",54.398821,10.232748]];
@@ -2787,14 +2793,16 @@ async function buildFlatList() {
     sugBox.innerHTML = html || '<div class="srow"><span class="sname dim">Gerade keine Abfahrten in den nächsten ' + FLAT_DEP_MAX_MIN + ' Minuten.</span></div>';
     sugBox.hidden = false;
     marqueeify(sugBox);   // Lauftext: Fahrtrichtung + Abfahrtsstation gemeinsam lesbar
+    flatHasCd = html.indexOf("data-cd") >= 0;   // OKW: mit Countdown dichter nachladen
   } finally {
     flatBusy = false;
   }
 }
 // Flachmodus: Abfahrten laufend frisch halten (nur solange die Liste offen ist)
+let flatHasCd = false;  // sichtbarer Sekunden-Countdown → verkürztes Intervall
 setInterval(() => {
   if (listMode === "flat" && !sugBox.hidden && !flatBusy &&
-      Date.now() - flatTs >= FLAT_REFRESH_MS && listPos()) buildFlatList();
+      Date.now() - flatTs >= (flatHasCd ? CD_REFRESH_MS : FLAT_REFRESH_MS) && listPos()) buildFlatList();
 }, 5000);
 search.addEventListener("keydown", handleSugNav);
 sugBox.addEventListener("keydown", handleSugNav);
@@ -2885,6 +2893,8 @@ function renderTabs() {
   if (routeTabOpen) h += '<div class="tab' + (routeTabActive ? " on" : "") + '" data-ti="route" title="🧭 Route: ' +
     escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " + escapeHtml(routeSel.dest ? routeSel.dest.label : "?") +
     '">🧭 Route <button class="tabx" data-tx="route" title="Route-Reiter schließen">✕</button></div>';
+  if (helpTabOpen) h += '<div class="tab' + (helpTabActive ? " on" : "") +
+    '" data-ti="help" title="Anleitung: Nutzung, Schwellen und Hintergründe">❓ Anleitung <button class="tabx" data-tx="help" title="Anleitung-Reiter schließen">✕</button></div>';
   h += tabs.map((t, i) => {
     const s = stops.find(x => x.shortName === t.sn);
     const nAl = tabAlarmCount(t.sn);
@@ -2910,6 +2920,7 @@ function activateTab(i, refetch) {
   saveActiveTab();
   activeTab = i;
   routeTabActive = false;
+  helpTabActive = false;
   const t = tabs[i];
   const stop = t ? stops.find(s => s.shortName === t.sn) : null;
   currentStop = stop || null;
@@ -2960,11 +2971,13 @@ tabsbar.addEventListener("click", e => {
   const x = e.target.closest(".tabx");
   if (x) {
     if (x.dataset.tx === "route") closeRouteTab();
+    else if (x.dataset.tx === "help") closeHelpTab();
     else closeTab(Number(x.dataset.tx));
     return;
   }
   const tb = e.target.closest(".tab");
   if (!tb) return;
+  if (tb.dataset.ti === "help") { if (!helpTabActive) activateHelpTab(); return; }
   if (tb.dataset.ti === "route") { if (!routeTabActive) activateRouteTab(); return; }
   if (Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
 });
@@ -3088,7 +3101,7 @@ function renderPanels() {
   // Sicherheitsnetz: Wirft ein Panel beim Rendern (z. B. überraschende Daten),
   // dürfen die anderen Panels nicht mit leer bleiben – der Fehler wird sichtbar
   // statt als schwarzes Loch („nur der Reiter oben, kein Inhalt“).
-  for (const fn of [renderStationPanel, renderBusPanel, renderRoutePanel]) {
+  for (const fn of [renderStationPanel, renderBusPanel, renderRoutePanel, renderHelpPanel]) {
     try { fn(); } catch (e) {
       try { setLocNote("⚠️ Anzeige-Fehler (" + (fn.name || "Panel") + "): " +
         String(e && e.message || e) + " – ↻/neu laden hilft meist."); } catch (e2) {}
@@ -6071,6 +6084,7 @@ function laterHTML(v) {
 // geplanten oder HAFAS-Zeiten (NAH.SH/DB) sind die Sekunden immer :00, ein
 // Countdown wäre dort Fake-Präzision.
 const CD_MAX_S = 180;    // Countdown maximal 3 Minuten vor der Abfahrt zeigen
+const CD_REFRESH_MS = 20000;   // läuft ein Countdown: Daten alle 20 s nachziehen statt alle 45 s
 function cdFmt(ms) {
   if (!isFinite(ms) || ms <= 0) return "jetzt";
   return Math.floor(ms / 60000) + ":" + String(Math.floor(ms % 60000 / 1000)).padStart(2, "0");
@@ -6189,8 +6203,10 @@ function renderView(sn, el) {
       // „früher“/„später“ gibt es nur im Stationsreiter (nach Wahl einer Station),
       // nicht in dieser Stationsübersicht.
       const newHTML = lines.map(l => l.html).join("");
-      // Daten altern: spätestens alle 45 s neu abfragen, damit Soll/Ist aktuell bleiben
-      if (Date.now() - v.fetchTs > 45000) refetchStop(sn, false);
+      // Daten altern: neu abfragen, damit Soll/Ist aktuell bleiben; läuft ein
+      // Sekunden-Countdown (Zeile „fährt in M:SS“), verkürzt auf 20 s
+      const cdLive = lines.some(l => (l.html || "").indexOf("data-cd") >= 0);
+      if (Date.now() - v.fetchTs > (cdLive ? CD_REFRESH_MS : 45000)) refetchStop(sn, false);
       if (info.dataset.last !== newHTML) {
         info.dataset.last = newHTML;
         info.className = "rowinfo";
@@ -6251,6 +6267,7 @@ setInterval(() => {
   if (stationPanel && !stationPanel.hidden) renderStationPanel();
   if (busPanel && !busPanel.hidden) renderBusPanel();
   if (routePanel && !routePanel.hidden) renderRoutePanel();   // Route-Verlauf: GPS-Balken/Uhrzeit live
+  if (helpPanel && !helpPanel.hidden) renderHelpPanel();
   alarmTick();
   if (window.KvgNative) {
     // Sammel-Benachrichtigungen regelmäßig frisch halten: geschlossene
@@ -6528,6 +6545,8 @@ bbBtns.forEach((b, i) => {
 // Route-Knopf (ehemaliger frei belegbarer Knopf 0) öffnet die Routenplanung
 const bbRoute = document.getElementById("bbRoute");
 bbRoute.addEventListener("click", () => openRouteDlg());
+const bbHelp = document.getElementById("bbHelp");
+bbHelp.addEventListener("click", () => { helpTabOpen = true; activateHelpTab(); });
 
 // Belegungs-Dialog: Einträge aus beiden Favoritenlisten (+ Löschen der Belegung)
 function openBigAssignDlg(i) {
@@ -6586,6 +6605,9 @@ document.addEventListener("keydown", e => {
 // HAFAS-TripSearch (ver MUSS hier 1.94 sein, numF statt numTrips, kein gisFltrL!).
 // Dialog öffnet über den violetten Route-Knopf; Ergebnisse erscheinen im Route-Reiter.
 let routeTabOpen = false, routeTabActive = false;
+// ❓ Anleitung-Reiter: statische in-app-Dokumentation (Nutzungszweige + Schwellen)
+let helpTabOpen = false, helpTabActive = false;
+const helpPanel = document.getElementById("helpPanel");
 const routePanel = document.getElementById("routePanel");
 const routeSel = { start: null, dest: null, time: "" };   // je: {label, kind, key, name, sn, lat, lon, lid, locType}
 let routeCons = [], routeLoading = false, routeSearchErr = null;
@@ -7392,12 +7414,55 @@ function activateRouteTab() {
   activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
   stationPanelOpen = true; stationPanelCache = "";
   routeTabActive = true;
+  helpTabActive = false;
   renderTabs(); renderPanels();
 }
 function closeRouteTab() {
   routeTabOpen = false; routeTabActive = false;
   if (tabs.length && activeTab < 0) activateTab(0, false);
   renderTabs(); renderPanels(); renderAlarmInd();
+}
+// ---------- ❓ Anleitung-Reiter ----------
+function activateHelpTab() {
+  saveActiveTab();
+  activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
+  stationPanelOpen = true; stationPanelCache = "";
+  routeTabActive = false; helpTabActive = true;
+  renderTabs(); renderPanels();
+}
+function closeHelpTab() {
+  helpTabOpen = false; helpTabActive = false;
+  if (tabs.length && activeTab < 0) activateTab(0, false);
+  renderTabs(); renderPanels(); renderAlarmInd();
+}
+function renderHelpPanel() {
+  const show = helpTabOpen && helpTabActive;
+  helpPanel.hidden = !show;
+  if (!show) { helpPanel.innerHTML = ""; delete helpPanel.dataset.last; return; }
+  const h = helpHTML();
+  if (helpPanel.dataset.last !== h) { helpPanel.dataset.last = h; helpPanel.innerHTML = h; }
+}
+function helpHTML() {
+  const sec = t => '<div class="hh">' + t + "</div>";
+  const P = t => '<div class="helpsec">' + t + "</div>";
+  let h = '<div class="sechead"><span class="sarr">▾</span>❓ Anleitung</div>';
+  h += P("CitySurfers zeigt <b>Live-Abfahrten der Kieler Stadtbusse (KVG) und DB-Züge</b> und plant Verbindungen in ganz Schleswig-Holstein (NAH.SH). Es gibt zwei Nutzungszweige, die sich im Kopf gut getrennt halten lassen: <b>Stationen</b> („Was fährt bei mir?“) und <b>Routing</b> („Wie komme ich dahin?“).");
+  h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
+  h += P("<b>Haltestellensuche:</b> Name ab 1 Buchstabe (Tippfehler werden verziehen). Mit GPS laufen die Treffer nach <b>Fußweg</b>, gerechnet mit 5 km/h (zügiger Normschritt; die Schätzung soll eher eine Minute zu früh als zu spät raten). Bahnhof-Züge kommen mit 6-Stunden-Horizont, „später“ blättert je 6.");
+  h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste – der 💨-Schalter zeigt auch diese.");
+  h += P("<b>Sekunden-Countdown:</b> Steht eine KVG-<b>Echtzeit</b>-Fahrt unmittelbar bevor (bis 3 Minuten), tickt „fährt in 2:54 min“ im Sekundentakt. Bewusst nur bei Echtzeit: Fahrplandaten haben keine Sekunden, ein Countdown daraus wäre getürkt. Während ein Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
+  h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. Durchgestrichene = abgefahren. Die Zusatz-Zeile „auch in … min“ nennt Folgfahrten derselben Linie.");
+  h += sec("👁 Fahrtverlauf");
+  h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. „⤢ ganzer Verlauf“ zeigt den kompletten Lauf, „ab Einstieg“ nur ab deiner Haltestelle. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
+  h += sec("⏰ Wecker");
+  h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
+  h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas; Zubringer sind Fußwege, mit der <b>Roller-Option</b> auch Leihfahrräder als Scooter (nur wenn sie mindestens 5 Minuten sparen).");
+  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). „⤢ ganzer Verlauf“ lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste.");
+  h += sec("🔧 Die Schwellen und warum");
+  h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
+  h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
+  return h;
 }
 function renderRoutePanel() {
   const show = routeTabOpen && routeTabActive;
@@ -7986,7 +8051,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.19 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.20 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
