@@ -6671,38 +6671,87 @@ function rtJnyHTML(sec, tail, attrs) {   // Bus-/Bahn-Abschnitt: drei Zeilen im 
     rtDelaySpan(sec.arrDelay) + "</div>" +
     "</div>";
 }
+// Expand je Abschnitt: GANZER Lauf der Linie (Start- bis Endhaltestelle) ueber
+// JourneyDetails nachladen. Mappt auf dieselbe Stop-Form wie sec.stops, damit
+// routeSecStopsHTML beide Listen identisch rendert (Soll/Ist, GPS-Fortschritt).
+let routeLegFullCache = new Map();   // jid -> { ts, stops }
+async function routeLegFull(sec) {
+  if (!sec.jid) return null;
+  const hit = routeLegFullCache.get(sec.jid);
+  if (hit && Date.now() - hit.ts < 5 * 60 * 1000) return hit.stops;
+  try {
+    const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: sec.jid } }]);
+    const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+    const j = out && out.journey;
+    if (!j || !j.stopL) return null;
+    const locL = (out.common && out.common.locL) || [];
+    const stops = (j.stopL || []).map(p => {
+      const lc = locL[p.locX] || {};
+      const crd = lc.crd || {};
+      return { name: lc.name || "?",
+        lat: crd.y != null ? crd.y / 1e6 : null,
+        lon: crd.x != null ? crd.x / 1e6 : null,
+        dS: dbHHMM(p.dTimeS), dR: dbHHMM(p.dTimeR),
+        aS: dbHHMM(p.aTimeS), aR: dbHHMM(p.aTimeR) };
+    });
+    routeLegFullCache.set(sec.jid, { ts: Date.now(), stops });
+    return stops;
+  } catch (e) { return null; }
+}
+
 function routeSecStopsHTML(rc, si) {
   const sec = rc.con.secs[si];
-  const sts = sec.stops || [];
+  // Expand angefordert, ganzer Lauf aber noch nicht da -> Ladehinweis (der Rest
+  // der Ansicht bleibt beim alten Stand, bis die JourneyDetails durch sind)
+  if (sec.expand && sec.fullLoading && !(sec.fullStops && sec.fullStops.length)) {
+    return '<div class="trip"><small class="rowinfo dim">Ganzer Verlauf wird geladen …</small></div>';
+  }
+  const full = !!(sec.expand && sec.fullStops && sec.fullStops.length);
+  const sts = full ? sec.fullStops : (sec.stops || []);
   if (!sts.length) return "";
   const pos = getPos();
-  const gpsR = sec.rail ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
+  // GPS-Fortschritt: jetzt identisch zum Haupt-Fahrtverlauf (tripProgressUpdate):
+  // 50-m-Markierung, Richtung (vorherige/nächste Station), Geschwindigkeits-
+  // Projektion (ETA), temporäre Rücknahme statt pauschalem Committen.
   let atIdx = null;
+  let mark = null;
   if (pos) {
-    for (let i = 0; i < sts.length; i++) {
-      const st = sts[i];
-      if (st.lat == null) continue;
-      if (dist(pos, { lat: st.lat, lon: st.lon }) >= gpsR) continue;
-      // Plausibilität: Systemzeit muss zur (gegebenenfalls aktualisierten) Abfahrtszeit passen
-      const eff = st.dR || st.dS || st.aR || st.aS || "";
-      const [h0, m0] = eff.split(":").map(Number);
-      if (isFinite(h0) && isFinite(m0)) {
-        const n0 = new Date();
-        const nowMin0 = n0.getHours() * 60 + n0.getMinutes();
-        if (nowMin0 < h0 * 60 + m0 - 3 || nowMin0 > h0 * 60 + m0 + 5) continue;
+    if (!rc.trail) rc.trail = [];
+    if (!rc.trail[si]) rc.trail[si] = [];
+    if (rc.mark == null) rc.mark = {};
+    const shim = {
+      tripId: "rt|" + (sec.jid || si),
+      stops: sts.map((st, i) => ({ key: "rt#" + i,
+        plannedTime: st.dS || st.aS || "", time: st.dR || st.aR || "", name: st.name })),
+      delay: {}, gpsTrail: rc.trail[si], atIdx: rc.at[si] == null ? null : rc.at[si]
+    };
+    const pr = tripProgressUpdate(shim, pos, Date.now(), {
+      coordsOf: i => (sts[i] && sts[i].lat != null) ? { lat: sts[i].lat, lon: sts[i].lon } : null
+    });
+    if (pr.atIdx != null) {
+      atIdx = pr.atIdx;
+      rc.at[si] = pr.atIdx;
+      rc.mark[si] = pr.etaTs != null ? { idx: pr.atIdx, etaTs: pr.etaTs } : null;
+    } else if (rc.at[si] != null) {
+      if (pr.commitIdx != null) {
+        rc.prog[si] = Math.max(rc.prog[si] == null ? -1 : rc.prog[si], pr.commitIdx);
       }
-      atIdx = i;
-      break;
+      rc.at[si] = null;   // revoke (Richtung vorherige Station) committet bewusst NICHT
+      rc.mark[si] = null;
     }
   }
-  // Fortschritt (Balken) persistieren: Radius verlassen -> bis dahin alles „done“
-  if (atIdx == null && rc.at[si] != null) {
-    rc.prog[si] = Math.max(rc.prog[si] == null ? -1 : rc.prog[si], rc.at[si]);
-    rc.at[si] = null;
-  }
-  if (atIdx != null) rc.at[si] = atIdx;
   const done = rc.prog[si] == null ? -1 : rc.prog[si];
-  let html = '<div class="trip"><div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  let html = '<div class="trip">';
+  // Expand-Knopf (wie im Haupt-Fahrtverlauf): ganzer Lauf <-> nur dieser Abschnitt
+  if (sec.jid) {
+    html += '<div class="thead"><span class="rtsmall">' +
+      (full ? "ganzer Lauf dieser Fahrt" : "Abschnitt " + escapeHtml(sec.from) + " → " + escapeHtml(sec.to)) +
+      '</span><button class="rowref" data-rtexp="' + si + '" title="' +
+      (full ? "Nur die Stationen dieses Abschnitts anzeigen" :
+        "Ganzer Verlauf von der Start- bis zur Endhaltestelle anzeigen") +
+      '">' + (full ? "⤡ nur Abschnitt" : "⤢ ganzer Verlauf") + "</button></div>";
+  }
+  html += '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   const last = sts.length - 1;
   for (let i = 0; i < sts.length; i++) {
     const st = sts[i];
@@ -6716,8 +6765,23 @@ function routeSecStopsHTML(rc, si) {
       delayHtml = '<span class="tdelay ' + (dMin > 0 ? "up" : dMin < 0 ? "down" : "ok") + '">' +
         (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
     }
-    // GPS-Live an der eigenen Haltestelle: laufende Uhrzeit als Ist-Abfahrt, blinkend
-    if (atIdx != null && i === atIdx && isFinite(ph) && isFinite(pm)) {
+    // GPS-Live an der eigenen Haltestelle: projizierte Passierzeit (ETA aus dem
+    // Positionsverlauf) anzeigen, bis sie erreicht ist, danach laufende Uhr
+    const mk = rc.mark && rc.mark[si];
+    const etaActive = !!(mk && mk.idx === i && mk.etaTs && mk.etaTs > Date.now() + 1500);
+    if (atIdx != null && i === atIdx && etaActive) {
+      const eD = new Date(mk.etaTs);
+      if (isFinite(ph) && isFinite(pm)) {
+        const etaClock = String(eD.getHours()).padStart(2, "0") + ":" +
+          String(eD.getMinutes()).padStart(2, "0");
+        const eMin = (eD.getHours() * 60 + eD.getMinutes()) - (ph * 60 + pm);
+        if (Math.abs(eMin) < 720) {
+          actual = "≈" + etaClock;
+          delayHtml = '<span class="tdelay ' + (eMin > 0 ? "up" : eMin < 0 ? "down" : "ok") + '">' +
+            (eMin > 0 ? "+" + eMin + "m" : eMin < 0 ? eMin + "m" : "0m") + "</span>";
+        }
+      }
+    } else if (atIdx != null && i === atIdx && isFinite(ph) && isFinite(pm)) {
       const nowD = new Date();
       const clock = String(nowD.getHours()).padStart(2, "0") + ":" + String(nowD.getMinutes()).padStart(2, "0");
       const dMin = (nowD.getHours() * 60 + nowD.getMinutes()) - (ph * 60 + pm);
@@ -6733,7 +6797,7 @@ function routeSecStopsHTML(rc, si) {
     const kvg = routeStopMatch(st.name);
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
-      '<span class="takt' + (i === atIdx ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
+      '<span class="takt' + (i === atIdx && !etaActive ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
       delayHtml +
       '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
         (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
@@ -7136,6 +7200,7 @@ function parseRoutePage(res, date) {   // eine NAH.SH-TripSearch-Antwort in Verb
         line = ln; dir = sec.jny.dirTxt || "";
         if ((prod.cls || 32) >= 32) hasBus = true;   // Bus-Klasse (32) gefahren
         secs.push({ kind: "jny", line: ln, dir: dir, from: from.name, to: to.name,
+          jid: sec.jny.jid || "",   // fuer Expand: ganzer Lauf ueber JourneyDetails ladbar
           dep: dbHHMM(sec.dep && (sec.dep.dTimeR || sec.dep.dTimeS)),
           arr: dbHHMM(sec.arr && (sec.arr.aTimeR || sec.arr.aTimeS)),
           depP: dbHHMM(sec.dep && sec.dep.dTimeS), arrP: dbHHMM(sec.arr && sec.arr.aTimeS),
@@ -7421,6 +7486,25 @@ routePanel.addEventListener("click", e => {
   if (rsec) {
     const rc = routeChosen[routeActive];
     if (rc) { const si = Number(rsec.dataset.rtsec); rc.secOpen[si] = !rc.secOpen[si]; renderRoutePanel(); }
+    return;
+  }
+  const rtexp = e.target.closest("[data-rtexp]");
+  if (rtexp) {
+    // Expand je Abschnitt: ganzer Lauf der Fahrt (via JourneyDetails) <-> nur Segment
+    const rc = routeChosen[routeActive];
+    const sec = rc && rc.con && rc.con.secs && rc.con.secs[Number(rtexp.dataset.rtexp)];
+    if (sec && sec.jid) {
+      sec.expand = !sec.expand;
+      // Indizes des GPS-Fortschritts beziehen sich auf die je Ansicht andere Liste
+      if (rc.at) { const si2 = Number(rtexp.dataset.rtexp); rc.at[si2] = null;
+        if (rc.prog) rc.prog[si2] = -1; if (rc.mark) rc.mark[si2] = null; }
+      if (sec.expand && !sec.fullStops && !sec.fullLoading) {
+        sec.fullLoading = true;
+        renderRoutePanel();
+        routeLegFull(sec).then(stops => { if (stops && stops.length) sec.fullStops = stops; })
+          .catch(() => {}).finally(() => { sec.fullLoading = false; renderRoutePanel(); });
+      } else renderRoutePanel();
+    }
     return;
   }
   const rcop = e.target.closest("[data-rcopen]");
@@ -7868,7 +7952,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.17 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.18 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
