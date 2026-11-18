@@ -85,7 +85,6 @@
   .bigbtn.violet { background: linear-gradient(160deg, #9a6fd0, #7048a8); }
   .bigbtn.teal { background: linear-gradient(160deg, #3aa9a0, #1f837c); }
   .bigbtn.pink { background: linear-gradient(160deg, #d76fa5, #b34d7f); }
-  .bigbtn.slate { background: linear-gradient(160deg, #64748b, #475569); }
   .addrclr { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
     border: none; background: rgba(0,81,158,0.15); color: #cbd5e1; border-radius: 50%;
     width: 25px; height: 25px; font-size: 0.85rem; cursor: pointer; padding: 0; line-height: 1; }
@@ -570,7 +569,6 @@
     <button class="bigbtn orange" id="bbAlarm" title="Alle Wecker ein/aus (global)"><span class="bbsym">⏰</span><small>Wecker</small></button>
     <button class="bigbtn blue" id="bbFh" title="Alle „Finde nach Hause“-Hinweise ein/aus (global)"><span class="bbsym">🏠</span><small>nach Hause</small></button>
     <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
-    <button class="bigbtn slate" id="bbHelp" title="Anleitung: die beiden Nutzungszweige (Stationen und Routing) samt Schwellen und Hintergründen"><span class="bbsym">❓</span><small>Anleitung</small></button>
     <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
   </div>
@@ -632,7 +630,7 @@
       <p><b>Datenquellen im Detail:</b> Live-Abfahrten aus der inoffiziellen JSON-Schnittstelle der
       Kieler Verkehrsgesellschaft (INIT InternetService) – dieselbe Quelle, die auch kvg-kiel.de für
       seine Echtzeitabfahrten nutzt, CORS freigegeben, kein Scraping, aber ohne Garantien. Fußwege über
-      das OSRM-Fußprofil auf dem OpenStreetMap-Wegenetz (6 km/h). Adressen über Photon auf
+      das OSRM-Fußprofil auf dem OpenStreetMap-Wegenetz (5 km/h). Adressen über Photon auf
       OpenStreetMap-Basis, Fallback: Nominatim. Koordinaten, Locator und Karten-Links werden lokal
       erkannt. Offizielle Alternative: <a href="https://www.nah.sh" rel="noopener">NAH.SH</a>.</p>
       <div class="dim" id="aboutApp"></div>
@@ -640,6 +638,16 @@
         <button class="chip ok" id="aboutUpdate" hidden>🔃 Nach neuer Version suchen</button>
         <button class="chip" id="aboutMenu" hidden>⋮ App-Menü</button>
       </div>
+    </details>
+
+    <details class="legal" id="helpSec">
+      <summary>❓ Anleitung</summary>
+      <p>CitySurfers hat zwei Nutzungszweige: <b>Stationen</b> („Was fährt bei mir?“ –
+        Abfahrten, Farben, Sekunden-Countdown, Fahrtverlauf, Wecker) und <b>Routing</b>
+        („Wie komme ich dahin?“ – Verbindungssuche mit Fahrabschnitten). Die Anleitung
+        erklärt beide Zweige Schritt für Schritt und anschließend alle Schwellen der App
+        (Abstände, Farbgrenzen, Zeitfenster) mit ihrer jeweiligen Begründung.</p>
+      <p><button class="chip ok" id="bbHelp" title="Anleitung-Reiter öffnen (erscheint oben in der Reiterleiste)">❓ Anleitung öffnen</button></p>
     </details>
 
     <details class="legal" id="stateSec">
@@ -775,6 +783,7 @@
 </div>
 
 <script>
+
 "use strict";
 
 // =====================================================================
@@ -6546,7 +6555,10 @@ bbBtns.forEach((b, i) => {
 const bbRoute = document.getElementById("bbRoute");
 bbRoute.addEventListener("click", () => openRouteDlg());
 const bbHelp = document.getElementById("bbHelp");
-bbHelp.addEventListener("click", () => { helpTabOpen = true; activateHelpTab(); });
+bbHelp.addEventListener("click", () => {
+  helpTabOpen = true; activateHelpTab();
+  try { helpPanel.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
+});
 
 // Belegungs-Dialog: Einträge aus beiden Favoritenlisten (+ Löschen der Belegung)
 function openBigAssignDlg(i) {
@@ -8043,6 +8055,7 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
 updateGpsBtns(true);
 
+
 </script>
 
 <div class="apkdl pagefoot">
@@ -8051,7 +8064,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.20 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.21 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>

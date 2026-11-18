@@ -2,9 +2,11 @@
 
 Live-Abfahrtszeiten der Kieler Verkehrsgesellschaft im Browser: Haltestellensuche
 (ab 1 Buchstabe, mit Tippfehler-Toleranz), GPS/Adress-Standort, Fußweg-Routing
-(OSRM, 6 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
+(OSRM, 5 km/h) und Favoriten für Stationen und Adressen, alles lokal im Browser.
 
 ## Version
+
+**v1.2.21** – Anleitung-Einstieg in den Fußbereich verlegt: Der mit v1.2.20 eingeführte „❓ Anleitung“-Knopf stand als weiterer Knopf in der Haupt-Knopfleiste und brachte deren Gleichgewicht aus Aktiv- und Werkzeug-Knöpfen durcheinander. Der Einstieg liegt jetzt unten im Fußbereich der Seite als eigenes Aufklapp-Feld direkt unter „Über diese App“ (collapse/expand wie die übrigen Fuß-Felder), per Tipp öffnet sich der Anleitung-Reiter und die Seite scrollt sanft zur Anleitung. Der Anleitung-Reiter selbst ist unverändert: beide Nutzungszweige (Stationen und Routing) mit allen Schwellen und ihrer Begründung. versionCode 67.
 
 **v1.2.20** – Schwellen nachjustiert und neue in-app-Anleitung: (1) Fußgeschwindigkeit von 6 auf 5 km/h gesenkt (Normschritt): Alle Fußweg- und „los in“-Angaben sind damit leicht konservativ, die App rät eher eine Minute zu früh als zu spät; die Farb- und Countdown-Schwellen (3 Minuten gelb) bleiben unverändert. (2) Adaptiver Datenrefetch: Während ein Sekunden-Countdown sichtbar ist („fährt in M:SS“), ziehen Abfahrtsliste (SugBox) und Flat-Liste ihre Daten alle 20 s statt aller 45 s nach, damit Verspätungsänderungen in der kritischen Phase schnell durchschlagen. (3) Neuer Reiter „❓ Anleitung“ (Knopf neben „Route“): erklärt zuerst die beiden Nutzungszweige (Stationen: Suche, Farben grün/gelb/rot, Countdown, Live vs. geplant, Fahrtverlauf, Wecker; Routing: Route-Planer, Fahrabschnitte, Expand, Verspätungen) und danach alle Schwellen mit ihrer Begründung (50 m/75 m/250 m, 3-Minuten-Kante, −2/−3/+5-Minuten-Fenster, 5 km/h, 45/20 s Refetch, 25 Minuten Fallback-Toleranz, 6-Stunden-Zug-Horizont). versionCode 66.
 
@@ -230,7 +232,7 @@ damit GPS und die Live-Dienste im Browser funktionieren).
 ## Datenquellen & Credits
 - Abfahrten und Fahrtverläufe: inoffizielle JSON-Schnittstelle der Kieler
   Verkehrsgesellschaft (INIT InternetService), keine Garantie
-- Fußwege: OSRM (OpenStreetMap-Wegenetz, 6 km/h) via routing.openstreetmap.de
+- Fußwege: OSRM (OpenStreetMap-Wegenetz, 5 km/h) via routing.openstreetmap.de
 - Adressen: Nominatim (Fallback: Photon/komoot)
 - Geodaten: © OpenStreetMap-Mitwirkende, ODbL 1.0
 - Offizielle Alternative: https://www.nah.sh
