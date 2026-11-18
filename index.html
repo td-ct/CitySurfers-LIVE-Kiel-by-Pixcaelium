@@ -240,6 +240,7 @@
   .bl .plat { color: #94a3b8; flex-shrink: 0; font-size: 0.9rem; }
   .bl .mqwrap { flex: 1 1 auto; overflow: hidden; white-space: nowrap; min-width: 30px; }
   .bl .btime { flex-shrink: 0; font-size: 0.95rem; }
+  .cd { font-weight: 700; font-variant-numeric: tabular-nums; }
   .bl .lupe { background: none; border: none; cursor: pointer; flex-shrink: 0;
     color: #4d8fd6; font-size: 0.95rem; padding: 0 2px; }
   .bl .lupe:hover { transform: scale(1.2); }
@@ -2748,7 +2749,8 @@ async function buildFlatList() {
         rows.push({
           sn: c.s.shortName, name: c.s.name, footM: c.footM,
           tripId: d.tripId, line: d.line, direction: d.direction,
-          rel: d.actualRelativeTime, plat: platforms && platforms[d.tripId]
+          rel: d.actualRelativeTime, plat: platforms && platforms[d.tripId],
+          status: d.status
         });
       }
     }));
@@ -2776,7 +2778,11 @@ async function buildFlatList() {
         '<span class="mqwrap"><span class="mqi">' + escapeHtml(r.direction) +
           " (ab " + escapeHtml(r.name) + ")</span></span>" +
         '<span class="fdst">' + escapeHtml(formatDist(r.footM)) + " · " + walkMin + " min</span>" +
-        '<span class="btime">' + clock + " · los in " + losMin + " min</span></div>";
+        '<span class="btime">' + clock + " · " +
+        ((r.status === "PREDICTED" || r.status === "STOPPING") && !isDB(r.sn) &&
+          (r.rel - (now0 - flatTs) / 1000) > 0 && (r.rel - (now0 - flatTs) / 1000) <= CD_MAX_S
+          ? "fährt in " + cdSpan(flatTs + r.rel * 1000) + " min"
+          : "los in " + losMin + " min") + "</span></div>";
     }
     sugBox.innerHTML = html || '<div class="srow"><span class="sname dim">Gerade keine Abfahrten in den nächsten ' + FLAT_DEP_MAX_MIN + ' Minuten.</span></div>';
     sugBox.hidden = false;
@@ -3344,7 +3350,10 @@ function stationSectionHTML() {
         '</span> <span class="big">→ ' + escapeHtml(dep.direction) + "</span><br>" +
         (plat ? "Bussteig <b>[" + escapeHtml(plat) + "]</b> · " : "") +
         "Abfahrt <b>" + depClock + " Uhr</b> (" + (live ? "Echtzeit" : "Fahrplan") +
-        (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")<br>" +
+        (delayMin > 0 ? ", +" + delayMin + " min" : delayMin < 0 ? ", " + delayMin + " min" : ", pünktlich") + ")" +
+        (live && !dep.planned && !isDB(currentBus.sn) && rel > 0 && rel <= CD_MAX_S
+          ? ' · fährt in ' + cdSpan(v.fetchTs + dep.actualRelativeTime * 1000) + " min"
+          : "") + "<br>" +
         (metersNow
           ? "Fußweg <b>" + (estAir ? "~" : "") +
             Math.ceil(metersNow / (WALK_SPEED_KMH * 1000 / 60)) + " min</b>" +
@@ -6055,6 +6064,28 @@ function laterHTML(v) {
     (v.plannedLidOk ? "Keine geplanten Abfahrten in den nächsten Stunden."
       : "Keine geplanten Abfahrten gefunden (Haltestelle im NAH.SH-Fahrplan unbekannt).") + "</small></div>";
 }
+// Sekunden-Countdown für unmittelbar bevorstehende KVG-Echtzeit-Abfahrten.
+// KVG-Live liefert actualRelativeTime als echten Sekunden-Countdown (live
+// getestet: zählt synchron zur Uhr, nach Abfahrt negativ weiter). Anzeige als
+// M:SS – NUR für Echtzeit-Einträge (PREDICTED/STOPPING) der KVG-API: Bei
+// geplanten oder HAFAS-Zeiten (NAH.SH/DB) sind die Sekunden immer :00, ein
+// Countdown wäre dort Fake-Präzision.
+const CD_MAX_S = 180;    // Countdown maximal 3 Minuten vor der Abfahrt zeigen
+function cdFmt(ms) {
+  if (!isFinite(ms) || ms <= 0) return "jetzt";
+  return Math.floor(ms / 60000) + ":" + String(Math.floor(ms % 60000 / 1000)).padStart(2, "0");
+}
+function cdSpan(absMs) {   // tickender Countdown-Span (Ziel_ms absolut), 1-s-Ticker pflegt den Text
+  return '<span class="cd" data-cd="' + Math.round(absMs) + '">' + cdFmt(absMs - Date.now()) + "</span>";
+}
+// 1-Sekunden-Ticker: nur die Countdown-Spans aktualisieren, kein Neurendern
+setInterval(() => {
+  if (document.hidden) return;
+  const now = Date.now();
+  for (const el of document.querySelectorAll("[data-cd]"))
+    el.textContent = cdFmt(Number(el.dataset.cd) - now);
+}, 1000);
+
 function busLinesHTML(v, horizonSec) {
   if (!v || !v.deps) return [];
   const w = depWindow(v, horizonSec);
@@ -6107,7 +6138,10 @@ function busLinesHTML(v, horizonSec) {
       : "";
     const right = d.earlier
       ? clock + " · vor " + Math.max(0, Math.round(-rel / 60)) + " min"
-      : clock + " · los in " + losMin + " min";
+      : (!d.planned && (d.status === "PREDICTED" || d.status === "STOPPING") &&
+         !isDB(v.stop.shortName) && rel > 0 && rel <= CD_MAX_S)
+        ? clock + " · fährt in " + cdSpan(v.fetchTs + d.actualRelativeTime * 1000) + " min"
+        : clock + " · los in " + losMin + " min";
     out.push({
       html: '<div class="blwrap"><div class="' + cls + '"' + (clickable ? ' data-bus="' + bLink + '"' : "") + ">" +
         '<span class="dl blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(d.line) + '</span>' +
@@ -7952,7 +7986,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.18 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.19 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
