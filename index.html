@@ -3011,7 +3011,7 @@ function selectBus(sn, tripId) {
   if (bi < 0) {
     // Unter-Reiter-Titel vorab: Abfahrtszeit an der geklickten Station; sobald der
     // Fahrtverlauf geladen ist, steht dort die Abfahrtszeit an der ersten Station
-    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
+    const dep = findDepOf(sn, tripId);   // auch geplante/„früher“-Einträge: deren Zeit als Unter-Reiter-Titel
     t.trips.push({ sn: sn, tripId: tripId, stationOpen: true, tripOpen: false,
       time: (dep && (dep.actualTime || dep.plannedTime)) || "", trip: null });
     bi = t.trips.length - 1;
@@ -3418,6 +3418,21 @@ function mergeTripStops(t, newStops) {
   }
   t.stops.sort((a, b) => (a.seq || 0) - (b.seq || 0));
 }
+// Abfahrts-Eintrag einer Station suchen: in den Live-Abfahrten (v.deps), den
+// geplanten Fahrplan-Einträgen (v.planned, z. B. nachts nachgeladen) und den
+// per „früher“ geladenen abgefahrenen Verbindungen (v.earlier). Geplante und
+// frühere KVG-Einträge stammen aus dem NAH.SH-Fahrplan (HAFAS-jid), ihre
+// Fahrtenverläufe laufen deshalb über NAH.SH-JourneyDetails (dbTrip), nicht
+// über die KVG-Live-Schnittstelle.
+function findDepOf(sn, tripId) {
+  const v = viewOf(sn);
+  if (!v) return null;
+  for (const d of (v.deps || [])) if (d.tripId === tripId) return d;
+  for (const d of (v.planned || [])) if (d.tripId === tripId) return d;
+  for (const d of (v.earlier || [])) if (d.tripId === tripId) return d;
+  return null;
+}
+
 async function selectTrip(sn, tripId, force) {
   if (currentTrip && currentTrip.tripId === tripId && !force) {
     // erneut angeklickt: nur Ansicht öffnen
@@ -3437,12 +3452,14 @@ async function selectTrip(sn, tripId, force) {
     }
   }
   renderBusPanel();
-  if (isDB(sn)) {
-    // geplante Abfahrtszeit der angeklickten Fahrt mitgeben: bei Zügen kann dieselbe
-    // Fahrt-ID (jid) mehrfach an einer Haltestelle verkehren (SEV-Schleifen) —
-    // nur mit der Zeit ist der Fahrtverlauf eindeutig der richtigen Abfahrt zugeordnet.
-    const dep = ((viewOf(sn) && viewOf(sn).deps) || []).find(d => d.tripId === tripId);
-    await dbTrip(tripId, dep ? dep.plannedTime : null);
+  const dep = findDepOf(sn, tripId);
+  if (isDB(sn) || (dep && dep.planned)) {
+    // Züge UND geplante KVG-Fahrten (Nachtfahrplan, „früher“): Der Fahrtverlauf
+    // kommt über NAH.SH-JourneyDetails – die KVG-Live-Schnittstelle kennt diese
+    // Fahrten (noch) nicht, ihre Trip-IDs sind HAFAS-jids. Bei geplanten KVG-
+    // Fahrten werden die NAH.SH-Stationen auf bekannte KVG-Haltestellen
+    // abgebildet (klickbar, GPS-Fortschritt, Wecker).
+    await dbTrip(tripId, dep ? dep.plannedTime : null, !!dep && !!dep.planned);
     if (currentBus && currentBus.tripId === tripId) { tripTitleSync(); renderBusPanel(); }
     return;
   }
@@ -5360,7 +5377,7 @@ async function dbDepartures(sn) {
   return { deps, platforms };
 }
 // Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
-async function dbTrip(tripId, depTime) {
+async function dbTrip(tripId, depTime, kvgPlanned) {
   try {
     const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: tripId } }]);
     const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
@@ -5369,15 +5386,28 @@ async function dbTrip(tripId, depTime) {
     const locL = (out.common && out.common.locL) || [];
     const prodL = (out.common && out.common.prodL) || [];
     const prod = prodL[j.prodX] || {};
-    currentTrip.route = (prod.name || "DB").trim();
+    currentTrip.route = (prod.name || (kvgPlanned ? "Bus" : "DB")).trim();
     currentTrip.direction = j.dirTxt || "";
+    // Geplante KVG-Fahrt: NAH.SH-Stationen (extId) auf bekannte KVG-Haltestellen
+    // abbilden – bekannte Stationen werden klickbar (neuer Reiter), GPS-Fortschritt
+    // und Wecker funktionieren. Die Zuordnung stammt aus dem NAH.SH-LID-Cache
+    // (nahshLocFor speichert je KVG-Station den LID inklusive extId „@L=…“).
+    let kvgExt = null;
+    if (kvgPlanned) {
+      kvgExt = {};
+      for (const ksn in nahshLocCache) {
+        const m = nahshLocCache[ksn] && nahshLocCache[ksn].lid
+          ? String(nahshLocCache[ksn].lid).match(/@L=(\d+)/) : null;
+        if (m && !kvgExt[m[1]]) kvgExt[m[1]] = ksn;
+      }
+    }
     // Startindex bestimmen: die zur angeklickten Abfahrt passende Station+durchgang.
     // JourneyDetails liefert den GANZEN Tageslauf der Fahrt; bei SEV-Schleifen
     // steht dieselbe Haltestelle mehrfach darin. Gesucht ist der Durchgang, dessen
     // geplante Zeit der Abfahrtszeit aus der Liste entspricht.
     // Achtung: die extId in JourneyDetails (z.B. 4940199) weicht von unserer
     // Stations-ID (z.B. DB:9049079) ab -> zusätzlich per Name vergleichen.
-    const stExt = String(currentTrip.sn || "").slice(3); // "DB:<extId>" -> extId
+    const stExt = String(currentTrip.sn || "").indexOf("DB:") === 0 ? String(currentTrip.sn).slice(3) : ""; // "DB:<extId>" -> extId (geplante KVG-Fahrten: nur Namensvergleich)
     const stStop = stops.find(s => s.shortName === currentTrip.sn);
     const stName = stStop ? String(stStop.name || "").replace(/\s*\(DB\)\s*$/, "").trim() : "";
     const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
@@ -5417,9 +5447,18 @@ async function dbTrip(tripId, depTime) {
           ? (ah * 60 + am) - (ph * 60 + pm) : null,
         ts: Date.now()
       };
+      // geplante KVG-Fahrt: extId auf KVG-Station abbilden (klickbar, GPS, Wecker),
+      // unbekannte Stationen (außerhalb des KVG-Bereichs / LID nicht im Cache)
+      // bekommen die NAH.SH-Kennung – reine Anzeige, kein Klick.
+      let snOut;
+      if (kvgExt && kvgExt[String(loc.extId || "")]) snOut = kvgExt[String(loc.extId || "")];
+      else snOut = loc.extId ? (kvgPlanned ? "NAH:" + loc.extId : "DB:" + loc.extId)
+                             : (kvgPlanned ? "NAH:x" + idx : "DB:x" + idx);
+      const kvgStop = kvgExt && kvgExt[String(loc.extId || "")]
+        ? stops.find(x => x.shortName === kvgExt[String(loc.extId || "")]) : null;
       return {
-        shortName: loc.extId ? "DB:" + loc.extId : "DB:x" + idx,
-        name: loc.name || "?", time: actual, isArr,
+        shortName: snOut,
+        name: (kvgStop && kvgStop.name) || loc.name || "?", time: actual, isArr,
         status: (p.dTimeR || p.aTimeR) ? "PREDICTED" : "PLANNED",
         seq: idx, key
       };
@@ -5831,7 +5870,7 @@ function busLinesHTML(v, horizonSec) {
     const t = new Date(now.getTime() + rel * 1000);
     const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
     const text = d.direction;
-    const clickable = !d.planned;   // geplante KVG-Zeilen: kein KVG-Trip, kein Fahrtenverlauf
+    const clickable = true;   // geplante KVG-Zeilen sind jetzt ebenfalls klickbar: Fahrtverlauf über NAH.SH-JourneyDetails (selectTrip-Planned-Zweig)
     const bLink = escapeHtml(v.stop.shortName) + "~" + escapeHtml(d.tripId);
     // spätere Fahrten derselben Linie und Richtung (noch nicht abgefahren, ohne
     // die oben angezeigte): "auch in vv, ww, … min" – nur Live-Fahrten, keine geplanten
@@ -7616,7 +7655,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.15 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.16 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
