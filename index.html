@@ -458,7 +458,8 @@
   .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
     border-radius: 6px; padding: 2px 7px; font-size: 0.75rem; }
   .afbtn:hover { background: #334155; }
-  #tabsbar { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; margin-top: 6px; }
+  #tabsbar { display: flex; flex-wrap: wrap; gap: 6px; overflow-x: hidden;
+    overflow-y: auto; max-height: 6.6rem; padding: 8px 0 2px; margin-top: 6px; }
   #tabsbar .tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #1e3a5f;
     border-radius: 10px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
     color: #cbd5e1; background: #0f172a; font-size: 0.85rem; user-select: none; }
@@ -467,6 +468,8 @@
   #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
   #tabsbar .tabx:hover { color: #f87171; }
   #tabsbar .tabal { color: #f59e0b; font-size: 0.95em; }
+  #tabsbar .tab .tico { font-size: 0.95em; }
+  #tabsbar .tab .tabname { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
   .subtabbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
   .subtab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #1e3a5f;
     border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap;
@@ -1903,6 +1906,9 @@ async function shareSearchAddr(q) {
 // Aufgelösten Ort als ZIEL in den Routen-Dialog eintragen (derselbe Dialog wie
 // beim Planen; ist er offen, wird nur das Zielfeld neu gerendert).
 function shareRouteDest(en) {
+  // Erst den Dialog öffnen (er bindet an eine frische Kopie, nicht an einen
+  // offenen parallelen Route-Reiter), DANN das Ziel eintragen.
+  if (!document.getElementById("routeDlg")) openRouteDlg();
   routeSel.dest = { label: en.label, kind: "addr", key: null, name: en.name || en.label,
     sn: null, lat: en.lat != null ? en.lat : null, lon: en.lon != null ? en.lon : null,
     lid: en.lid || null, locType: en.locType || null };
@@ -1910,7 +1916,6 @@ function shareRouteDest(en) {
   else { routeAbg.dest = null; rtdUpdate(); }
   const d = document.getElementById("routeDlg");
   if (d) d.innerHTML = routeDlgHTML();
-  else openRouteDlg();
   setLocNote("📍 Geteilte Adresse als Ziel übernommen – Start wählen und Route suchen.");
 }
 
@@ -2896,29 +2901,73 @@ function tabAlarmCount(sn) {
   for (const [, a] of alarms) if (a.tabSn === sn) n++;
   return n;
 }
+// Reiterleiste: Stations-Reiter (🚏) und beliebig viele parallele Route-Reiter
+// (🧭) in einer gemeinsamen Leiste; Reihenfolge frei (Drag & Drop bzw. ◀/▶ im
+// Umbenennen-Dialog), langes Drücken (oder Rechtsklick) benennt um. Lange
+// Namen kürzt die Ellipse, die Leiste bricht auf schmalen Ansichten auf
+// mehrere Zeilen um.
+function syncBarOrd() {   // Reihenfolge gegen die Livemengen syncen (ohne/plus Tokens)
+  const alive = u => {
+    if (u === "help") return helpTabOpen;
+    if (!u) return false;
+    if (u[0] === "u") for (const x of tabs) if (x.uid === u) return true;
+    for (const rt of routeTabs) if (rt.uid === u) return true;
+    return false;
+  };
+  const keep = barOrd.filter(alive);
+  for (const x of tabs) if (!keep.includes(x.uid)) keep.push(x.uid);
+  for (const rt of routeTabs) if (!keep.includes(rt.uid)) keep.push(rt.uid);
+  if (helpTabOpen && !keep.includes("help")) keep.push("help");
+  barOrd = keep;
+}
+function defTabName(kind, obj) {   // Standardname: Station bzw. "Start → Ziel"
+  if (kind === "s") {
+    const s = stops.find(x => x.shortName === obj.sn);
+    return obj.name || (s ? s.name : obj.sn);
+  }
+  const a = obj.sel || {};
+  return obj.name || ((a.start ? a.start.label : "?") + " → " + (a.dest ? a.dest.label : "?"));
+}
 function renderTabs() {
   renderStopChip();
+  syncBarOrd();
   let h = "";
-  if (routeTabOpen) h += '<div class="tab' + (routeTabActive ? " on" : "") + '" data-ti="route" title="🧭 Route: ' +
-    escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " + escapeHtml(routeSel.dest ? routeSel.dest.label : "?") +
-    '">🧭 Route <button class="tabx" data-tx="route" title="Route-Reiter schließen">✕</button></div>';
-  if (helpTabOpen) h += '<div class="tab' + (helpTabActive ? " on" : "") +
-    '" data-ti="help" title="Anleitung: Nutzung, Schwellen und Hintergründe">❓ Anleitung <button class="tabx" data-tx="help" title="Anleitung-Reiter schließen">✕</button></div>';
-  h += tabs.map((t, i) => {
-    const s = stops.find(x => x.shortName === t.sn);
-    const nAl = tabAlarmCount(t.sn);
-    return '<div class="tab' + (i === activeTab ? " on" : "") + '" draggable="true" data-ti="' + i +
-      '" title="' + escapeHtml(s ? s.name : t.sn) + '">' +
-      escapeHtml(s ? s.name : t.sn) +
-      (nAl ? ' <span class="tabal" title="' + nAl + ' Wecker aktiv">⏰ ' + nAl + "</span>" : "") +
-      ' <button class="tabx" data-tx="' + i + '" title="Reiter schließen">✕</button></div>';
-  }).join("");
-  if (!h) { tabsbar.hidden = true; tabsbar.innerHTML = ""; return; }
+  for (const uid of barOrd) {
+    const si = tabs.findIndex(x => x.uid === uid);
+    if (si >= 0) {
+      const t = tabs[si];
+      const nAl = tabAlarmCount(t.sn);
+      const nm = defTabName("s", t);
+      h += '<div class="tab' + (si === activeTab ? " on" : "") + '" draggable="true" data-kind="s" data-uid="' + escapeHtml(uid) +
+        '" data-ti="' + si + '" title="🚏 ' + escapeHtml(nm) + ' – lange drücken (oder Rechtsklick): umbenennen und verschieben"><span class="tico">🚏</span>' +
+        '<span class="tabname">' + escapeHtml(nm) + "</span>" +
+        (nAl ? ' <span class="tabal" title="' + nAl + ' Wecker aktiv">⏰ ' + nAl + "</span>" : "") +
+        ' <button class="tabx" data-tx="' + si + '" title="Reiter schließen">✕</button></div>';
+      continue;
+    }
+    const ri = routeTabs.findIndex(x => x.uid === uid);
+    if (ri >= 0) {
+      const rt = routeTabs[ri];
+      const nm = defTabName("r", rt);
+      h += '<div class="tab' + (ri === routeActiveTab && routeTabActive ? " on" : "") +
+        '" draggable="true" data-kind="r" data-uid="' + escapeHtml(uid) + '" data-tr="' + ri +
+        '" title="🧭 Route: ' + escapeHtml(nm) + ' – lange drücken (oder Rechtsklick): umbenennen und verschieben"><span class="tico">🧭</span>' +
+        '<span class="tabname">' + escapeHtml(nm) + '</span>' +
+        ' <button class="tabx" data-tx="r' + ri + '" title="Route-Reiter schließen">✕</button></div>';
+      continue;
+    }
+    if (uid === "help" && helpTabOpen)
+      h += '<div class="tab' + (helpTabActive ? " on" : "") + '" data-kind="h" data-uid="help" data-ti="help"' +
+        ' title="Anleitung: Nutzung, Schwellen und Hintergründe">❓ Anleitung <button class="tabx" data-tx="help" title="Anleitung-Reiter schließen">✕</button></div>';
+  }
+  if (!h) { tabsbar.hidden = true; tabsbar.innerHTML = ""; saveView(); return; }
   tabsbar.hidden = false;
   tabsbar.innerHTML = h;
+  saveView();   // offene Reiter (inkl. Reihenfolge) überdauern einen Neustart
 }
 // Zustand des aktiven Reiters in sein Reiter-Objekt sichern (vor dem Wechseln)
 function saveActiveTab() {
+  saveActiveRouteTab();   // Globalzustand des offenen Route-Reiters mitsichern
   const t = tabs[activeTab];
   if (!t) return;
   t.sn = currentStop ? currentStop.shortName : t.sn;
@@ -2949,7 +2998,7 @@ function activateTab(i, refetch) {
 function openTab(sn) {
   const i = tabs.findIndex(t => t.sn === sn);
   if (i >= 0) { activateTab(i); return; }
-  tabs.push({ sn: sn, trips: [], activeTrip: -1 });
+  tabs.push({ sn: sn, trips: [], activeTrip: -1, uid: newTabUid() });
   activateTab(tabs.length - 1);
 }
 function closeTab(i) {
@@ -2971,6 +3020,7 @@ function closeTab(i) {
     activeTab = -1;
     currentStop = null; currentBus = null; currentTrip = null;
     if (tabs.length) activateTab(Math.min(i, tabs.length - 1), false);
+    else if (routeTabs.length) activateRouteTab(0);
   } else if (activeTab > i) activeTab--;
   renderTabs();
   renderPanels();
@@ -2979,45 +3029,124 @@ function closeTab(i) {
 tabsbar.addEventListener("click", e => {
   const x = e.target.closest(".tabx");
   if (x) {
-    if (x.dataset.tx === "route") closeRouteTab();
-    else if (x.dataset.tx === "help") closeHelpTab();
+    if (x.dataset.tx === "help") closeHelpTab();
+    else if (x.dataset.tx && x.dataset.tx[0] === "r") closeRouteTab(Number(x.dataset.tx.slice(1)));
     else closeTab(Number(x.dataset.tx));
     return;
   }
   const tb = e.target.closest(".tab");
   if (!tb) return;
-  if (tb.dataset.ti === "help") { if (!helpTabActive) activateHelpTab(); return; }
-  if (tb.dataset.ti === "route") { if (!routeTabActive) activateRouteTab(); return; }
+  if (tb.dataset.kind === "h") { if (!helpTabActive) activateHelpTab(); return; }
+  if (tb.dataset.kind === "r") {
+    const i = Number(tb.dataset.tr);
+    if (!(routeTabActive && i === routeActiveTab)) activateRouteTab(i);
+    return;
+  }
   if (Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
 });
-// Reiter verschieben: Drag & Drop innerhalb der Reiterleiste
-let dragTi = -1;
+// Reiter verschieben: Drag & Drop innerhalb der Reiterleiste (Stationen und
+// Routen gemeinsam). langes Drücken (Mobil) bzw. Rechtsklick (Rechner) öffnet
+// stattdessen das Umbenennen-Fenster mit ◀/▶.
+let dragUid = null, lpTimer = null, lpStart = null;
+function cancelLongPress() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } lpStart = null; }
+function barMoveUid(uid, dir) {   // ◀/▶ aus dem Umbenennen-Dialog
+  const i = barOrd.indexOf(uid);
+  if (i < 0) return;
+  const j = i + dir;
+  if (j < 0 || j >= barOrd.length) return;
+  barOrd.splice(j, 0, barOrd.splice(i, 1)[0]);
+  renderTabs();
+}
 tabsbar.addEventListener("dragstart", e => {
   const tb = e.target.closest(".tab");
   if (!tb) return;
-  dragTi = Number(tb.dataset.ti);
+  cancelLongPress();
+  dragUid = tb.dataset.uid || null;
   tb.classList.add("dragging");
   try { e.dataTransfer.effectAllowed = "move"; } catch (err) {}
 });
 tabsbar.addEventListener("dragend", e => {
   const tb = e.target.closest(".tab");
   if (tb) tb.classList.remove("dragging");
+  dragUid = null;
 });
 tabsbar.addEventListener("dragover", e => e.preventDefault());
 tabsbar.addEventListener("drop", e => {
   e.preventDefault();
   const tb = e.target.closest(".tab");
-  if (!tb || dragTi < 0 || dragTi >= tabs.length) { dragTi = -1; return; }
-  const to = Number(tb.dataset.ti);
-  if (to !== dragTi) {
-    const [moved] = tabs.splice(dragTi, 1);
-    tabs.splice(to, 0, moved);
-    if (activeTab === dragTi) activeTab = to;
-    else if (dragTi < activeTab && to >= activeTab) activeTab--;
-    else if (dragTi > activeTab && to <= activeTab) activeTab++;
-    renderTabs();
-  }
-  dragTi = -1;
+  const src = dragUid, dst = tb && tb.dataset.uid;
+  dragUid = null;
+  if (!src || !dst || src === dst) return;
+  const ord = barOrd.filter(u => u !== src);
+  let at = ord.indexOf(dst);
+  if (barOrd.indexOf(src) < barOrd.indexOf(dst)) at += 1;   // hinter das Ziel, wenn von vorne gezogen
+  ord.splice(at, 0, src);
+  barOrd = ord;
+  renderTabs();
+});
+// langes Drücken: Reiter umbenennen (und über ◀/▶ verschieben)
+function openTabRename(kind, idx) {
+  const obj = kind === "r" ? routeTabs[idx] : tabs[idx];
+  if (!obj || !obj.uid) return;
+  const oldWr = document.getElementById("tabRenameDlg");
+  if (oldWr) { oldWr.remove(); return; }
+  const def = defTabName(kind, obj);
+  const kindLbl = kind === "r" ? "🧭 Route-Reiter" : "🚏 Stations-Reiter";
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap"; wrap.id = "tabRenameDlg";
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">Reiter umbenennen</div>' +
+    '<div class="dim" style="font-size:.78rem;margin:2px 0 6px">Eigener Name für diesen ' + kindLbl +
+    '. Leeres Feld: wieder der Standardname („' + escapeHtml(def) + '“).</div>' +
+    '<input class="rtq" id="tabRenameName" type="text" maxlength="40" autocomplete="off" value="' + escapeHtml(obj.name || "") +
+    '" placeholder="' + escapeHtml(def) + '">' +
+    '<div class="dbtns"><button class="achip" data-mv="-1" title="Reiter in der Leiste nach links">◀</button>' +
+    '<button class="achip" data-mv="1" title="Reiter in der Leiste nach rechts">▶</button>' +
+    '<span style="flex:1"></span>' +
+    '<button class="acancel">Abbrechen</button>' +
+    '<button class="aok" data-rnok="1">Umbenennen</button></div></div>';
+  const inp = wrap.querySelector("#tabRenameName");
+  wrap.addEventListener("keydown", e2 => { if (e2.key === "Enter") wrap.querySelector("[data-rnok]").click(); });
+  wrap.addEventListener("click", e2 => {
+    const mv = e2.target.closest("[data-mv]");
+    if (mv) { barMoveUid(obj.uid, Number(mv.dataset.mv)); return; }
+    if (e2.target === wrap) { wrap.remove(); return; }
+    if (e2.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e2.target.closest("[data-rnok]")) {
+      obj.name = (inp.value || "").trim();
+      wrap.remove();
+      renderTabs();
+    }
+  });
+  document.body.appendChild(wrap);
+  try { inp.focus(); inp.select(); } catch (err) {}
+}
+function tabOfEvent(e) {   // {kind, idx} des angetippten Reiters oder null
+  const tb = e.target.closest(".tab");
+  if (!tb || tb.dataset.kind === "h") return null;
+  if (tb.dataset.kind === "r") return { kind: "r", idx: Number(tb.dataset.tr) };
+  return { kind: "s", idx: Number(tb.dataset.ti) };
+}
+tabsbar.addEventListener("pointerdown", e => {
+  const w = tabOfEvent(e);
+  if (!w) return;
+  lpStart = { x: e.clientX, y: e.clientY };
+  lpTimer = setTimeout(() => {
+    lpTimer = null;
+    if (!lpStart) return;
+    openTabRename(w.kind, w.idx);
+    lpStart = null;
+  }, 600);
+});
+tabsbar.addEventListener("pointermove", e => {
+  if (lpStart && (Math.abs(e.clientX - lpStart.x) > 12 || Math.abs(e.clientY - lpStart.y) > 12)) cancelLongPress();
+});
+["pointerup", "pointercancel", "pointerleave"].forEach(ev => tabsbar.addEventListener(ev, cancelLongPress));
+tabsbar.addEventListener("contextmenu", e => {   // Rechtsklick am Rechner: umbenennen
+  const w = tabOfEvent(e);
+  if (!w) return;
+  e.preventDefault();
+  openTabRename(w.kind, w.idx);
 });
 
 function selectStop(shortName) {
@@ -4774,23 +4903,31 @@ function openAlarmDialog(tripId, preSn) {
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
 const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-depall"];
-function kvgExportState() {
-  // Aktuell geöffnete Reiter (jeweils Kette Haltestelle -> Buslinie ->
-  // Fahrtverlauf) mit in den Export nehmen; sie werden beim Import
-  // wiederhergestellt/geöffnet.
+// Offene Reiter in kvg-view sichern: Stationen (Kette Haltestelle -> Buslinie
+// -> Fahrtverlauf, plus eigener Reiter-Name und UID für die Reihenfolge) und
+// alle parallelen Route-Reiter (Name, Start/Ziel, Zeit). saveView läuft bei
+// jeder Reiter-Änderung (renderTabs), die Reiter erscheinen nach Neustart oder
+// Import wieder.
+function saveView() {
   try {
-    saveActiveTab();
+    saveActiveTab();   // sichert auch den aktiven Route-Reiter in sein Objekt
     localStorage.setItem("kvg-view", JSON.stringify({
       tabs: tabs.map(t => {
         const trips = (t.trips || []).map(b =>
           ({ sn: b.sn, tripId: b.tripId, tripOpen: !!b.tripOpen }));
         const ab = (t.trips || [])[t.activeTrip];
-        return { sn: t.sn,
+        return { sn: t.sn, name: t.name || "", uid: t.uid || "",
           bus: ab ? { sn: ab.sn, tripId: ab.tripId, tripOpen: !!ab.tripOpen } : null,
           trips: trips };
       }),
+      rtabs: routeTabs.map(rt => ({ name: rt.name || "", uid: rt.uid || "", sel: rt.sel })),
+      ractive: routeActiveTab, ractiveOn: routeTabActive ? 1 : 0,
+      ord: barOrd,
       active: Math.max(0, activeTab) }));
   } catch (e) {}
+}
+function kvgExportState() {
+  saveView();   // kvg-view (offene Reiter, Reihenfolge, Route-Reiter) frisch in den Export
   const o = {};
   for (const k of STATE_KEYS) {
     const v = localStorage.getItem(k);
@@ -5063,7 +5200,7 @@ stopFavPanel.addEventListener("click", e => {
 
 function toggleFavSn(sn) {
   if (favs.includes(sn)) favs = favs.filter(f => f !== sn);
-  else { favs.unshift(sn); favs = favs.slice(0, 8); }
+  else favs.unshift(sn);   // beliebig viele Stationsfavoriten (frueher max. 8)
   localStorage.setItem("kvg-favs", JSON.stringify(favs));
   renderStopFavs();
   // alle Sterne dieser Station überall aktualisieren
@@ -6384,11 +6521,30 @@ try {
     } else selectStop(sn);
   };
   if (sv && Array.isArray(sv.tabs) && sv.tabs.length) {
-    sv.tabs.forEach(t => { if (t.sn && stops.find(s => s.shortName === t.sn)) openOne(t.sn, t.bus, t.trips); });
-    if (tabs.length) activateTab(Math.min(sv.active || 0, tabs.length - 1), false);
+    sv.tabs.forEach(t => {
+      if (t.sn && stops.find(s => s.shortName === t.sn)) {
+        openOne(t.sn, t.bus, t.trips);
+        const tb = tabs.find(x => x.sn === t.sn);
+        if (tb) { if (t.name) tb.name = t.name; if (t.uid) tb.uid = t.uid; }   // Name + UID (Reihenfolge) übernehmen
+      }
+    });
   } else if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
     openOne(sv.sn, sv.bus);   // altes Format (einzelner Reiter, v1.0.10)
   }
+  if (sv && Array.isArray(sv.rtabs)) {   // parallele Route-Reiter: Start/Ziel/Name stehen wieder, Suche läuft beim Antippen
+    for (const rt of (sv.rtabs || [])) {
+      if (!rt || !rt.sel || !rt.sel.start || !rt.sel.dest) continue;
+      routeTabs.push({ uid: rt.uid || newTabUid(), name: rt.name || "", sel: rt.sel,
+        cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null });
+    }
+    if (Array.isArray(sv.ord) && sv.ord.length) barOrd = sv.ord.slice();   // gemeinsame Reihenfolge
+  }
+  if (routeTabs.length && sv && sv.ractiveOn && sv.ractive >= 0 && routeTabs[sv.ractive]) {
+    activateRouteTab(sv.ractive);   // zuletzt aktiver Route-Reiter: erscheint und sucht einmalig selbst
+  } else if (tabs.length) {
+    activateTab(Math.min(sv && (sv.active || 0) || 0, tabs.length - 1), false);
+  }
+  renderTabs();
 } catch (e) {}
 
 // ---------- Sonstiges ----------
@@ -6616,12 +6772,18 @@ document.addEventListener("keydown", e => {
 // ---------- 🧭 Routenplanung: Start/Ziel wählen, Verbindungen über NAH.SH-HAFAS ----------
 // HAFAS-TripSearch (ver MUSS hier 1.94 sein, numF statt numTrips, kein gisFltrL!).
 // Dialog öffnet über den violetten Route-Knopf; Ergebnisse erscheinen im Route-Reiter.
-let routeTabOpen = false, routeTabActive = false;
+let routeTabActive = false;   // TRUE, wenn der aktive Reiter der Leiste ein Route-Reiter ist
+const routeTabs = [];         // parallele Route-Reiter: { uid, name, sel, cons, chosen, sub, err, loading, searched, searching }
+let routeActiveTab = -1;      // Index des aktiven Route-Reiters in routeTabs
+let tabUidSeq = 0;
+function newTabUid() { return "u" + Date.now().toString(36) + "." + (++tabUidSeq); }
+let barOrd = [];              // Anzeige-Reihenfolge der Reiterleiste: UIDs + "help"
+let routeSearchSeq = 0;       // laufende Nummer der Suchen (veraltete Ergebnisse verwerfen)
 // ❓ Anleitung-Reiter: statische in-app-Dokumentation (Nutzungszweige + Schwellen)
 let helpTabOpen = false, helpTabActive = false;
 const helpPanel = document.getElementById("helpPanel");
 const routePanel = document.getElementById("routePanel");
-const routeSel = { start: null, dest: null, time: "" };   // je: {label, kind, key, name, sn, lat, lon, lid, locType}
+let routeSel = { start: null, dest: null, time: "" };   // je Reiter: {label, kind, key, name, sn, lat, lon, lid, locType}
 let routeCons = [], routeLoading = false, routeSearchErr = null;
 let routeChosen = [];      // geöffnete Verbindungen als Unter-Reiter: {sig, con, secOpen[], at[], prog[]}
 let routeActive = -1;      // aktiver Route-Unter-Reiter
@@ -6636,20 +6798,51 @@ let routeArr = false;
 try { if (localStorage.getItem("kvg-routearr") === "1") routeArr = true; } catch (e) {}
 // Roller-Option: Leihfahrrad-Abschnitte (NAH.SH BIKE) als Roller einbeziehen,
 // je 2 min Ausleihen und 2 min Zurückstellen dazu. Ohne die Option werden nur
-// Verbindungen mit Fußwegen gezeigt (keine Fahrräder, keine Autos).
-let routeScoot = false;
-try { if (localStorage.getItem("kvg-routescoot") === "1") routeScoot = true; } catch (e) {}
-let routeScootMin = 5;   // Roller nur anzeigen, wenn er auf der Gesamtstrecke so viel spart
+// Drei-Modus-Schalter fuer Zubringer-Strecken: zu Fuss / mit dem Fahrrad /
+// mit dem Roller (Leihfahrrad-Abschnitte aus NAH.SH werden umgerechnet).
+// Fahrrad: eigenes Tempo waehlbar (15/20/25 km/h), Roller faehrt 17,5 km/h.
+// Das Haekchen "Ausleihe (+2 min)" rechnet je Strecke 2 Minuten Holen und
+// Abstellen ein (Leihfahrrad/-roller) UND blendet Verbindungen aus, deren
+// Rad-Strecke auch in 7 Gehminuten (5 km/h) zu schaffen waere - dafuer lohnt
+// sich kein Verleih. Die Spar-Schwelle gilt fuer Fahrrad UND Roller.
+let routeMob = "walk";   // "walk" | "bike" | "scoot"
+try {
+  const m = localStorage.getItem("kvg-routemob");
+  if (m === "bike" || m === "scoot") routeMob = m;
+  else if (localStorage.getItem("kvg-routescoot") === "1") routeMob = "scoot";   // Altbestand v1.2.20 uebernehmen
+} catch (e) {}
+let bikeSpeed = 15;   // Fahrrad-Tempo in km/h (15/20/25)
+try { const v = Number(localStorage.getItem("kvg-bikespeed"));
+  if (v === 15 || v === 20 || v === 25) bikeSpeed = v; } catch (e) {}
+let mobAusleihe = true;   // +2 min je Strecke (Holen/Abstellen) fuer Fahrrad UND Roller
+try { if (localStorage.getItem("kvg-ausleihe") === "0") mobAusleihe = false; } catch (e) {}
+const SCOOT_SPEED_KMH = 17.5;   // Leihroller-Tempo
+const MOB_FEET_MAX_MIN = 7;     // Strecken bis 7 Gehminuten bleiben Fussweg (bei Ausleihe)
+let routeScootMin = 5;   // Spar-Schwelle: Fahrrad-/Roller-Verbindungen nur, wenn sie so viel sparen
 try { const v = Number(localStorage.getItem("kvg-routescootmin"));
   if (v === 0 || v === 5 || v === 10 || v === 15) routeScootMin = v; } catch (e) {}
-function routeScootBtn() {   // Roller-Knopf in der Routen-Suchzeile (an/aus, wie der Modus-Knopf)
-  let h = ' <button class="achip' + (routeScoot ? " on" : "") + '" data-rtscoot="1" title="Roller-Option ' +
-    (routeScoot ? "AN: Leihfahrrad-Abschnitte zählen als Roller, je Strecke 2 min Holen und Abstellen (am Anfang/Ende landet das in Abfahrt/Ankunft)"
-                : "AUS: nur Verbindungen mit Fußwegen") +
-    ' – Klick schaltet um und sucht erneut">🛴</button>';
-  if (routeScoot) h += '<select class="rtscootmin" data-rtscootmin="1" title="Roller-Verbindungen nur anzeigen, wenn sie auf der Gesamtstrecke mindestens so viele Minuten sparen (0 = alle anzeigen)">' +
-    [0, 5, 10, 15].map(v => '<option value="' + v + '"' + (v === routeScootMin ? " selected" : "") +
-      ">+" + v + "</option>").join("") + "</select>";
+function routeMobName() { return routeMob === "bike" ? "Fahrrad" : "Roller"; }
+function routeMobBtn() {   // Drei-Modus-Schalter: zu Fuss -> Fahrrad -> Roller (Klick wechselt, Suche laeuft erneut)
+  const nx = routeMob === "walk" ? "mit dem Fahrrad" : routeMob === "bike" ? "mit dem Roller" : "nur zu Fuß";
+  let h = ' <button class="achip' + (routeMob === "walk" ? "" : " on") + '" data-rtmob="1" title="Zubringer-Strecken: ' +
+    (routeMob === "walk" ? "nur Fußwege" : "Leihfahrrad-Abschnitte als " + routeMobName()) +
+    ' – Klick wechselt zu: ' + nx + ' (und sucht erneut)">🚶/🚲/🛴 ' +
+    (routeMob === "walk" ? "zu Fuß" : routeMobName()) + '</button>';
+  if (routeMob !== "walk") {
+    if (routeMob === "bike") h += ' <select class="rtscootmin" data-rtbikespeed="1" title="Eigenes Fahrrad-Tempo: Die Fahrrad-Strecke wird mit diesem Tempo neu gerechnet (statt der NAH.SH-Zeit)">' +
+      [15, 20, 25].map(v => '<option value="' + v + '"' + (v === bikeSpeed ? " selected" : "") + ">" + v + " km/h</option>").join("") + "</select>";
+    h += ' <label class="achip' + (mobAusleihe ? " on" : "") + '" title="Ausleihe: rechnet je ' + routeMobName() +
+      '-Strecke 2 Minuten Holen und Abstellen ein; kurze Strecken (bis 7 Gehminuten, ca. 583 m) werden dann gar nicht mehr angeboten">' +
+      '<input type="checkbox" data-rtausl="1"' + (mobAusleihe ? " checked" : "") +
+      ' style="margin:0 4px 0 0" title="Ausleihe: +2 min je Strecke; kurze Strecken fallen dann weg">Ausleihe +2 min</label> ';
+    h += '<select class="rtscootmin" data-rtscootmin="1" title="Spar-Schwelle: ' + routeMobName() +
+      '-Verbindungen nur anzeigen, wenn sie auf der Gesamtstrecke mindestens so viele Minuten schneller sind als die schnellste Verbindung ohne ' + routeMobName() + ' (0 = alle anzeigen)">' +
+      [0, 5, 10, 15].map(v => '<option value="' + v + '"' + (v === routeScootMin ? " selected" : "") +
+      ">≥" + v + " min</option>").join("") + "</select>";
+    h += ' <span class="dim" style="font-size:.72rem">Spar-Schwelle: ' + routeMobName() +
+      '-Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als ' + routeScootMin +
+      ' Minuten schneller sind als die schnellste Verbindung ohne ' + routeMobName() + ' (0 = alle).</span>';
+  }
   return h;
 }
 function routeProdBtns() {   // EIN Knopf, Klick wechselt den Modus: ÖPNV -> Bus -> Bahn
@@ -7216,12 +7409,29 @@ function indSuffix(kind) {   // Klartext zur Fortbewegungsart (nur bei Nicht-Fu�
     kind === "scoot" ? "Roller (Leihfahrrad; inkl. 2 min Holen und Abstellen)" :
     kind === "ind" ? "individuell" : "";
 }
+// Externes Routing fuer EINEN Weg-Abschnitt (Fuss-/Fahrrad-/Roller-Strecke):
+// Google-Maps-Routenlink mit passendem Fortbewegungsmodus, dasselbe Karten-
+// Symbol (ROUTE_ICON), das auch an Adressen und Haltestellen steht.
+function routeLegExtUrl(a, b, mode) {
+  return "https://www.google.com/maps/dir/?api=1&origin=" + a.lat + "," + a.lon +
+    "&destination=" + b.lat + "," + b.lon + "&travelmode=" + mode;
+}
+function indExtIconHTML(sec) {
+  if (sec.kind !== "walk" && sec.kind !== "bike" && sec.kind !== "scoot") return "";
+  if (sec.fromLat == null || sec.fromLon == null || sec.toLat == null || sec.toLon == null) return "";
+  const mode = sec.kind === "walk" ? "walking" : "bicycling";   // Roller: Fahrrad-Modus ist der naechste
+  const lbl = sec.kind === "walk" ? "Fußweg" : sec.kind === "bike" ? "Fahrrad-Strecke" : "Roller-Strecke";
+  return ' <a class="ricon" target="_blank" rel="noopener" href="' +
+    routeLegExtUrl({ lat: sec.fromLat, lon: sec.fromLon }, { lat: sec.toLat, lon: sec.toLon }, mode) +
+    '" title="' + lbl + ' in einer externen Routing-App öffnen (z. B. Google Maps)" aria-label="' + lbl + ' extern routen">' + ROUTE_ICON + "</a>";
+}
 function indSecHTML(sec) {   // innerer HTML-Text eines Zubringer-Abschnitts (ohne div)
-  const sfx = indSuffix(sec.kind);
+  const sfx = sec.sfx != null ? sec.sfx : indSuffix(sec.kind);   // sfx: umgerechnete Fahrrad-/Roller-Strecken
   return indIcon(sec.kind) + " " + sec.mins + " min" +
     (sec.distM != null ? " · " + escapeHtml(formatDist(sec.distM)) : "") +
     (sfx ? " · " + sfx : "") + " · " +
-    escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?");
+    escapeHtml(sec.from || "?") + " → " + escapeHtml(sec.to || "?") +
+    indExtIconHTML(sec);
 }
 function routeWhen() {
   let d = new Date();
@@ -7291,6 +7501,10 @@ function parseRoutePage(res, date) {   // eine NAH.SH-TripSearch-Antwort in Verb
         if (k !== "walk") vWalk = false;   // Auto/Taxi/Rufbus/Fahrrad: default ungueltig
         if (k !== "walk" && k !== "bike") vScoot = false;   // mit Roller-Option zaehlt Leihfahrrad mit
         secs.push({ kind: k, from: from.name, to: to.name,
+          fromLat: (from.crd && from.crd.y != null) ? from.crd.y / 1e6 : null,
+          fromLon: (from.crd && from.crd.x != null) ? from.crd.x / 1e6 : null,
+          toLat: (to.crd && to.crd.y != null) ? to.crd.y / 1e6 : null,
+          toLon: (to.crd && to.crd.x != null) ? to.crd.x / 1e6 : null,
           distM: (sec.gis && sec.gis.dist != null) ? sec.gis.dist : null,
           mins: hafasDiffMin(sec.dep && sec.dep.dTimeS, sec.arr && sec.arr.aTimeS) ||
             hafasDurMin(sec.gis && sec.gis.dur) });
@@ -7333,7 +7547,7 @@ async function routeTripSearch() {
       const sig = routeSig(c);
       if (seen.has(sig)) continue;
       seen.add(sig);
-      if (routeScoot ? c.vScoot : c.vWalk) out.push(c);   // Zubringer-Filter
+      if (routeMob === "walk" ? c.vWalk : c.vScoot) out.push(c);   // Zubringer-Filter
     }
     if (routeArr) break;   // Ankunftssuche: nicht blaettern
     let maxMs = 0;
@@ -7345,45 +7559,63 @@ async function routeTripSearch() {
     when = { date: "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()),
       time: p(d.getHours()) + p(d.getMinutes()) + "00" };
   }
-  if (routeScoot) {   // Roller-Option: Leihfahrrad-Abschnitte als Roller, je Strecke
-    // 2 min Aufwand (Holen und Abstellen). Der Aufwand landet in den Gesamt-Zeiten:
-    // Roller-Strecke am ANFANG -> 2 min frueher losgehen (Abfahrt rutscht vor),
-    // am ENDE -> 2 min spaeter angekommen (Ankunft rutscht nach), und nur dieser
-    // Aufwand zaehlt zur Gesamtdauer (dur = Ankunft minus Abfahrt bleibt stimmig).
-    // MITTEN in der Verbindung verschiebt der Aufwand keine Bus-Zeiten (die legt
-    // NAH.SH fest), er steht im Abschnitt mit drin und frisst Umstiegs-Puffer.
+  if (routeMob !== "walk") {   // Fahrrad-/Roller-Modus: Leihfahrrad-Abschnitte umrechnen
+    // Die Dauer jeder Rad-Strecke wird aus der Strecke neu gerechnet: Fahrrad mit
+    // dem gewaehlten Tempo (15/20/25 km/h), Roller mit 17,5 km/h (statt der
+    // NAH.SH-Zeit). Das Ausleihe-Haekchen rechnet je Strecke 2 min Holen und
+    // Abstellen ein; die Deltas verschieben am ANFANG die Abfahrt (frueher los)
+    // und am ENDE die Ankunft (spaeter da), MITTEN in der Verbindung keine
+    // Bus-Zeiten (die legt NAH.SH fest) - der Rest steht im Abschnitt und frisst
+    // Umstiegs-Puffer. dur = Ankunft minus Abfahrt bleibt stimmig. Bei Ausleihe
+    // faellen zusaetzlich Verbindungen ganz weg, deren Rad-Strecke auch in
+    // 7 Gehminuten (5 km/h, ca. 583 m) zu schaffen waere - dafuer lohnt der
+    // Verleih nicht; ein eigenes Fahrrad bleibt davon unbetroffen.
+    const mobKind = routeMob;   // "bike" | "scoot"
+    const spd = routeMob === "scoot" ? SCOOT_SPEED_KMH : bikeSpeed;
     for (const c of out) {
-      let first = -1, last = -1;
-      for (let i = 0; i < c.secs.length; i++) if (c.secs[i].kind === "bike") {
-        c.secs[i].kind = "scoot";
-        c.secs[i].mins = (c.secs[i].mins || 0) + 2;
+      let first = -1, dFirst = 0, dLast = 0, footShort = false;
+      for (let i = 0; i < c.secs.length; i++) {
+        const sc = c.secs[i];
+        if (sc.kind !== "bike") continue;
         if (first < 0) first = i;
-        last = i;
+        const oldMins = sc.mins || 0;
+        if (sc.distM != null) sc.mins = Math.ceil(sc.distM / (spd * 1000 / 60));   // Tempo statt NAH.SH-Zeit
+        let delta = (sc.mins || 0) - oldMins;
+        if (mobAusleihe) { sc.mins += 2; delta += 2; }
+        sc.kind = mobKind;
+        sc.sfx = (mobKind === "scoot" ? "Roller" : "Fahrrad") + " (" + (routeMob === "scoot" ? "17,5" : bikeSpeed) +
+          " km/h" + (mobAusleihe ? "; inkl. 2 min Holen und Abstellen" : "") + ")";
+        if (mobAusleihe && sc.distM != null) {
+          const fm = footMin(sc.distM);   // Gehminuten bei 5 km/h
+          if (fm != null && fm <= MOB_FEET_MAX_MIN) footShort = true;   // kurze Strecke: kein Verleih
+        }
+        if (i === 0) dFirst = delta;   // erster Abschnitt verschiebt die Abfahrt
+        if (i === c.secs.length - 1) dLast = delta;   // letzter verschiebt die Ankunft
       }
       if (first < 0) continue;
-      let extra = 0;
-      if (first === 0) {   // Roller gleich am Anfang: 2 min frueher los
-        c.dep = hhmmShift(c.dep, -2); c.depP = hhmmShift(c.depP, -2);
-        if (c.depAbsMs != null) c.depAbsMs -= 120000;
-        if (c.depAbsMsP != null) c.depAbsMsP -= 120000;
-        extra += 2;
+      if (dFirst) {
+        c.dep = hhmmShift(c.dep, -dFirst); c.depP = hhmmShift(c.depP, -dFirst);
+        if (c.depAbsMs != null) c.depAbsMs -= dFirst * 60000;
+        if (c.depAbsMsP != null) c.depAbsMsP -= dFirst * 60000;
       }
-      if (last === c.secs.length - 1) {   // Roller ganz am Ende: 2 min laenger unterwegs
-        c.arr = hhmmShift(c.arr, 2); c.arrP = hhmmShift(c.arrP, 2);
-        extra += 2;
-      }
-      c.dur += extra;
+      if (dLast) { c.arr = hhmmShift(c.arr, dLast); c.arrP = hhmmShift(c.arrP, dLast); }
+      c.dur += dFirst + dLast;
+      c.footShort = footShort;
     }
-    // Roller nur, wenn es sich lohnt: Roller-Verbindungen faellen weg, die nicht
+    if (mobAusleihe) {   // kurze Rad-Strecken (bis 7 Gehminuten) bei Ausleihe: Verbindung weg
+      const keep = out.filter(c => !c.footShort);
+      if (keep.length) out = keep;
+    }
+    // Spar-Schwelle (Fahrrad UND Roller): Verbindungen fallen weg, die nicht
     // mindestens routeScootMin Minuten schneller sind als die schnellste
-    // Verbindung ohne Roller (0 = alle Roller-Varianten zeigen). Gibt es gar
-    // keine Verbindung ohne Roller, bleibt alles stehen.
+    // Verbindung ohne (0 = alle Varianten zeigen). Gibt es gar keine Verbindung
+    // ohne, bleibt alles stehen.
     let baseDur = null;
     for (const c of out)
-      if (!c.secs.some(s => s.kind === "scoot") && (baseDur == null || c.dur < baseDur)) baseDur = c.dur;
+      if (!c.secs.some(s => s.kind === "bike" || s.kind === "scoot") && (baseDur == null || c.dur < baseDur)) baseDur = c.dur;
     if (routeScootMin > 0 && baseDur != null) {
       const keep = out.filter(c =>
-        !c.secs.some(s => s.kind === "scoot") || baseDur - c.dur >= routeScootMin);
+        !c.secs.some(s => s.kind === "bike" || s.kind === "scoot") || baseDur - c.dur >= routeScootMin);
       if (keep.length) out = keep;
     }
   }
@@ -7395,17 +7627,27 @@ async function routeTripSearch() {
   return top.concat(rest);
 }
 async function routeRunSearch() {
+  const rtRef = routeActiveTab >= 0 ? routeTabs[routeActiveTab] : null;
+  const mySeq = ++routeSearchSeq;
+  if (rtRef) rtRef.searching = mySeq;
   routeLoading = true; routeSearchErr = null; routeCons = [];
   renderRoutePanel();
+  let cons = [], errMsg = null;
   try {
-    routeCons = await routeTripSearch();
-    routeUpdateChosen();   // geöffnete Unter-Reiter auf frische Echtzeit-Daten heben
-    if (!routeCons.length) routeSearchErr = "Keine Verbindung gefunden.";
+    cons = (await routeTripSearch()) || [];
   } catch (e) {
-    routeSearchErr = String(e && e.message || e);
+    errMsg = String(e && e.message || e);
   }
-  routeLoading = false;
-  renderRoutePanel();
+  if (!cons.length && !errMsg) errMsg = "Keine Verbindung gefunden.";
+  if (rtRef && rtRef.searching === mySeq) {   // Ergebnis gehört noch zu dieser Suche
+    rtRef.cons = cons; rtRef.err = errMsg; rtRef.loading = false; rtRef.searched = true; rtRef.searching = null;
+  }
+  if (rtRef && routeTabs[routeActiveTab] === rtRef && mySeq === routeSearchSeq) {   // Reiter ist noch aktiv
+    routeCons = cons; routeSearchErr = errMsg;
+    routeUpdateChosen();   // geöffnete Unter-Reiter auf frische Echtzeit-Daten heben
+    routeLoading = false;
+    renderRoutePanel();
+  }
 }
 function routeUpdateChosen() {   // gewählte Verbindungen nach einer (erneuten) Suche
   // zuordnen: Identität = Planzeiten + Linien. Gefundene bekommen die frischen
@@ -7421,18 +7663,69 @@ function routeUpdateChosen() {   // gewählte Verbindungen nach einer (erneuten)
     } else r.stale = true;
   }
 }
-function activateRouteTab() {
-  saveActiveTab();
+// Parallele Route-Reiter: Globalvariablen (routeSel/routeCons/...) sind die
+// Arbeitskopie des AKTIVEN Reiters; beim Wechseln wird in saveActiveRouteTab
+// gesichert und mit loadRouteTab wiederhergestellt. routeRunSearch schreibt
+// sein Ergebnis nur noch in den Reiter zurück, der sie gestartet hat.
+function saveActiveRouteTab() {
+  if (routeActiveTab < 0) return;
+  const rt = routeTabs[routeActiveTab];
+  if (!rt) return;
+  rt.sel = routeSel; rt.cons = routeCons; rt.chosen = routeChosen;
+  rt.sub = routeActive; rt.err = routeSearchErr; rt.loading = false;
+}
+function loadRouteTab(i) {
+  const rt = routeTabs[i];
+  if (!rt) return;
+  routeSel = rt.sel; routeCons = rt.cons || []; routeChosen = rt.chosen || [];
+  routeActive = rt.sub != null ? rt.sub : -1;
+  routeSearchErr = rt.err || null; routeLoading = false;
+  routeAbg.start = null; routeAbg.dest = null;   // Abgleich-Zustand gehoert zur Feldbelegung der Route
+}
+function activateRouteTab(i, refetchSearch) {
+  saveActiveTab();   // sichert Stationstab UND den bisher aktiven Route-Reiter
+  if (i == null) i = routeActiveTab < 0 ? routeTabs.length - 1 : routeActiveTab;
+  if (!routeTabs[i]) return;
   activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
   stationPanelOpen = true; stationPanelCache = "";
   routeTabActive = true;
   helpTabActive = false;
+  routeActiveTab = i;
+  loadRouteTab(i);
   renderTabs(); renderPanels();
+  const rt = routeTabs[i];
+  if (rt && !rt.searched && refetchSearch !== false) routeRunSearch();   // restaurierte Reiter suchen einmalig selbst
+  renderAlarmInd();
 }
-function closeRouteTab() {
-  routeTabOpen = false; routeTabActive = false;
-  if (tabs.length && activeTab < 0) activateTab(0, false);
+function closeRouteTab(i) {
+  if (routeActiveTab === i) {   // der aktive Reiter schließt sich selbst
+    saveActiveTab();
+    routeTabs.splice(i, 1);
+    routeActiveTab = -1;
+    routeTabActive = false;
+    routeCons = []; routeChosen = []; routeSearchErr = null; routeActive = -1; routeLoading = false;
+    if (routeTabs.length) activateRouteTab(Math.min(i, routeTabs.length - 1));
+    else if (tabs.length) activateTab(0, false);
+    else { renderTabs(); renderPanels(); renderAlarmInd(); }
+    return;
+  }
+  routeTabs.splice(i, 1);
+  if (routeActiveTab > i) routeActiveTab--;
   renderTabs(); renderPanels(); renderAlarmInd();
+}
+function openNewRouteTab() {   // aus dem Routen-Dialog: neuer paralleler Reiter mit dessen Start/Ziel
+  saveActiveTab();
+  const rt = { uid: newTabUid(), name: "",
+    sel: { start: routeSel.start, dest: routeSel.dest, time: routeSel.time },
+    cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null };
+  routeTabs.push(rt);
+  activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
+  stationPanelOpen = true; stationPanelCache = "";
+  routeTabActive = true; helpTabActive = false;
+  routeActiveTab = routeTabs.length - 1;
+  loadRouteTab(routeActiveTab);
+  renderTabs(); renderPanels();
+  return rt;
 }
 // ---------- ❓ Anleitung-Reiter ----------
 function activateHelpTab() {
@@ -7444,7 +7737,10 @@ function activateHelpTab() {
 }
 function closeHelpTab() {
   helpTabOpen = false; helpTabActive = false;
-  if (tabs.length && activeTab < 0) activateTab(0, false);
+  if (activeTab < 0) {
+    if (routeTabs.length) activateRouteTab(0);
+    else if (tabs.length) activateTab(0, false);
+  }
   renderTabs(); renderPanels(); renderAlarmInd();
 }
 function renderHelpPanel() {
@@ -7468,8 +7764,12 @@ function helpHTML() {
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. „⤢ ganzer Verlauf“ zeigt den kompletten Lauf, „ab Einstieg“ nur ab deiner Haltestelle. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
+  h += sec("🗂 Reiter: Stationen und Routen nebeneinander");
+  h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
+  h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart wieder da; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas; Zubringer sind Fußwege, mit der <b>Roller-Option</b> auch Leihfahrräder als Scooter (nur wenn sie mindestens 5 Minuten sparen).");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um.");
+  h += P("<b>Zubringer-Modus</b> (🚶/🚲/🛴-Schalter): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). „⤢ ganzer Verlauf“ lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
@@ -7477,7 +7777,7 @@ function helpHTML() {
   return h;
 }
 function renderRoutePanel() {
-  const show = routeTabOpen && routeTabActive;
+  const show = routeTabActive && routeActiveTab >= 0 && !!routeTabs[routeActiveTab];   // aktiver paralleler Route-Reiter
   routePanel.hidden = !show;
   if (!show) { routePanel.innerHTML = ""; delete routePanel.dataset.last; return; }
   const a = routeSel.start, b = routeSel.dest;
@@ -7492,7 +7792,7 @@ function renderRoutePanel() {
     '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
     ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
     ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
-    routeProdBtns() + routeScootBtn() + "</div>";
+    routeProdBtns() + routeMobBtn() + "</div>";
   if (routeLoading) {
     h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
   } else if (routeSearchErr) {
@@ -7652,15 +7952,15 @@ routePanel.addEventListener("click", e => {
     if (routeCons.length || routeSearchErr) routeRunSearch();   // bisherige Suche mit neuem Modus wiederholen
     return;
   }
-  if (e.target.closest("[data-rtscoot]")) {   // Roller-Option umschalten und erneut suchen
-    routeScoot = !routeScoot;
-    try { localStorage.setItem("kvg-routescoot", routeScoot ? "1" : "0"); } catch (e2) {}
+  if (e.target.closest("[data-rtmob]")) {   // Zubringer-Modus wechseln (zu Fuß/Fahrrad/Roller) und erneut suchen
+    routeMob = routeMob === "walk" ? "bike" : routeMob === "bike" ? "scoot" : "walk";
+    try { localStorage.setItem("kvg-routemob", routeMob); } catch (e2) {}
     renderRoutePanel();
     if (routeCons.length || routeSearchErr) routeRunSearch();
     return;
   }
   if (e.target.closest("[data-rtedit]")) {
-    openRouteDlg();   // derselbe Routen-Dialog wie beim Planen: Start/Ziel (und Zeit) neu wählen
+    openRouteDlg(false);   // derselbe Routen-Dialog, aber gebunden an diesen Reiter: Start/Ziel (und Zeit) neu wählen
     return;
   }
   if (e.target.closest("[data-rtsearch]")) {
@@ -7670,6 +7970,23 @@ routePanel.addEventListener("click", e => {
   }
 });
 routePanel.addEventListener("change", e => {
+  if (e.target.closest("[data-rtbikespeed]")) {   // Fahrrad-Tempo: Strecke neu gerechnet
+    const v = Number(e.target.value);
+    if (v === 15 || v === 20 || v === 25) {
+      bikeSpeed = v;
+      try { localStorage.setItem("kvg-bikespeed", String(v)); } catch (e2) {}
+      renderRoutePanel();
+      if (routeCons.length || routeSearchErr) routeRunSearch();
+    }
+    return;
+  }
+  if (e.target.closest("[data-rtausl]")) {   // Ausleihe-Häkchen: +2 min je Strecke (Fahrrad UND Roller)
+    mobAusleihe = !!(e.target && e.target.checked);
+    try { localStorage.setItem("kvg-ausleihe", mobAusleihe ? "1" : "0"); } catch (e2) {}
+    renderRoutePanel();
+    if (routeCons.length || routeSearchErr) routeRunSearch();
+    return;
+  }
   if (e.target.closest("[data-rtscootmin]")) {   // Roller-Mindestersparnis: Auswahl hinter dem 🛴
     const v = Number(e.target.value);
     if (v === 0 || v === 5 || v === 10 || v === 15) {
@@ -7745,9 +8062,21 @@ function routeDlgHTML() {
       '<button class="aok" data-rtgo="1">▶ Route suchen</button></div>' +
     '</div>';
 }
-function openRouteDlg() {
+function openRouteDlg(newTab) {
+  newTab = newTab !== false;   // Standard: der Dialog eröffnet bei GO einen NEUEN parallelen Reiter
   const old = document.getElementById("routeDlg");
   if (old) { old.remove(); return; }
+  if (newTab) {   // Dialog arbeitet auf einer Kopie von Start/Ziel, bis GO den neuen Reiter eröffnet
+    saveActiveRouteTab();
+    routeSel = { start: routeSel && routeSel.start ? Object.assign({}, routeSel.start) : null,
+      dest: routeSel && routeSel.dest ? Object.assign({}, routeSel.dest) : null,
+      time: routeSel ? routeSel.time : "" };
+  } else if (routeActiveTab >= 0) {   // Bearbeiten: Dialog bindet an den aktiven Reiter
+    loadRouteTab(routeActiveTab);
+  }
+  const cancelDlg = () => {
+    if (newTab && routeActiveTab >= 0 && routeTabs[routeActiveTab]) loadRouteTab(routeActiveTab);   // Kopie verwerfen
+  };
   const wrap = document.createElement("div");
   wrap.className = "dlgwrap"; wrap.id = "routeDlg";
   wrap.innerHTML = routeDlgHTML();
@@ -7755,7 +8084,7 @@ function openRouteDlg() {
     if (e.target.classList.contains("rttime")) routeSel.time = e.target.value;
   });
   wrap.addEventListener("click", e => {
-    if (e.target === wrap) { wrap.remove(); return; }
+    if (e.target === wrap) { wrap.remove(); cancelDlg(); return; }
     const pick = e.target.closest("[data-rtpick]");
     if (pick) { const parts = pick.dataset.rtpick.split(":"); openRoutePicker(parts[0], parts[1]); return; }
     const rg = e.target.closest("[data-rtgps]");
@@ -7779,13 +8108,17 @@ function openRouteDlg() {
     if (e.target.closest("[data-rtnow]")) { routeSel.time = ""; wrap.innerHTML = routeDlgHTML(); return; }
     const dwhen = e.target.closest("[data-rtwhen]");
     if (dwhen) { routeArrSet(dwhen.dataset.rtwhen === "arr"); wrap.innerHTML = routeDlgHTML(); return; }
-    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest(".acancel")) { wrap.remove(); cancelDlg(); return; }
     if (e.target.closest("[data-rtgo]")) {
       if (!routeSel.start || !routeSel.dest) { setLocNote("🧭 Bitte Start und Ziel wählen."); return; }
       wrap.remove();
-      routeTabOpen = true;
-      activateRouteTab();
-      routeRunSearch();
+      if (!newTab && routeActiveTab >= 0) {   // bestehenden Reiter neu planen
+        saveActiveRouteTab();
+        routeRunSearch();
+      } else {   // neuen parallelen Route-Reiter eröffnen und suchen
+        openNewRouteTab();
+        routeRunSearch();
+      }
     }
   });
   document.body.appendChild(wrap);
@@ -7847,7 +8180,7 @@ function openRoutePicker(kind, which) {
     // dedupliziert): So lassen sich über den Routen-Dialog, auch mehrfach und über
     // neue Dialog-Aufrufe hinweg, mehrere Stationsreiter parallel öffnen.
     if (en.sn && stops.some(s => s.shortName === en.sn) && !tabs.some(t => t.sn === en.sn)) {
-      tabs.push({ sn: en.sn, trips: [], activeTrip: -1 });
+      tabs.push({ sn: en.sn, trips: [], activeTrip: -1, uid: newTabUid() });
       renderTabs();
       const opened = stops.find(s => s.shortName === en.sn);
       setLocNote("🚏 „" + (opened && opened.name || en.sn) + "“ als eigenen Reiter geöffnet – Reiter oben antippen.");
@@ -8054,8 +8387,6 @@ setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffri
 
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
 updateGpsBtns(true);
-
-
 </script>
 
 <div class="apkdl pagefoot">
@@ -8064,7 +8395,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.21 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.22 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
