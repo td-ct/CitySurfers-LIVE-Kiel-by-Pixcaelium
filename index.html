@@ -3115,13 +3115,18 @@ function walkOrigin(sn) {
 function tabGpsBtnHTML(sn) {
   const own = (sn && tabGps[sn]) || depGps || null;   // GPS-Ursprung dieses Reiters (eigene oder geerbte Position)
   const st = gpsBtnState(own);
+  // gpsBtnState(null) liefert bei eingeschaltetem GPS "ok": Der Reiter hat
+  // keine eigene/geerbte Position, die Fußwege laufen dann über die globale
+  // Position. own.acc würde in diesem Fall crashen und das ganze Stations-
+  // Panel mitreißen („nur der Reitertitel, kein Inhalt bei aktivem GPS“)
+  const accPos = own || getPos();   // tatsächlich genutzte Position (eigenen oder globale)
   const title = st === "off"
     ? "GPS ist aus – Klick schaltet die Ortung ein und übernimmt die Position für diesen Reiter"
     : st === "busy"
       ? "GPS-Suche läuft …"
       : st === "stale"
         ? "Aktuelle Ortung liegt mehr als 200 m von der gespeicherten Position entfernt – Klick: neu orten ohne Dialog"
-        : "GPS an (±" + Math.round(own.acc || 0) + " m) für die Fußwege dieses Reiters – Klick schaltet das GPS aus";
+        : "GPS an (±" + Math.round((accPos && accPos.acc) || 0) + " m) für die Fußwege dieses Reiters – Klick schaltet das GPS aus";
   return '<button class="gpsbtn' + gpsBtnCls(st) + '" data-depgps="1" title="' + title + '">GPS</button>';
 }
 function renderStationPanel() {
@@ -7611,7 +7616,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.14 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.15 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
