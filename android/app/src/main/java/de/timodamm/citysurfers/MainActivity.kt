@@ -814,14 +814,36 @@ class NativeBridge(private val act: Activity) {
             GeofenceStore.put(ctx, id, f)
         }
         if (fences.isEmpty()) return
+        // Hintergrund-Standort ist Voraussetzung fuer Geofence-Wecker: Ohne die
+        // separate Freigabe "Bei allen Zeiten" (Android 11+) feuern die Zaune im
+        // Hintergrund nie – die Wecker klingeln dann nur noch ueber den JS-Ticker
+        // bei geoeffneter App. Frueher wurde das still verschluckt; jetzt bekommt
+        // die Seite ein System-Ereignis (setLocNote mit Anleitung).
+        try {
+            if (act.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                GeofenceStore.recordEvent(ctx, "__geofence_noperm",
+                    "Hintergrund-Standort nicht erteilt")
+                return
+            }
+        } catch (e: Exception) { }
         try {
             // INITIAL_TRIGGER_ENTER: steht man beim Stellen schon im Radius, feuert
-            // der Zaun sofort – dieselbe Semantik wie die Distanz-Prüfung der Seite.
+            // der Zaun sofort – dieselbe Semantik wie die Distanz-Pruefung der Seite.
             client.addGeofences(com.google.android.gms.location.GeofencingRequest.Builder()
                 .setInitialTrigger(com.google.android.gms.location.GeofencingRequest.INITIAL_TRIGGER_ENTER)
                 .addGeofences(fences)
                 .build(), pi)
-        } catch (e: Exception) { }
+                .addOnFailureListener { t ->
+                    // Registrierung gescheitert (z. B. Play-Services): der Seite
+                    // melden, statt es still zu verschlucken.
+                    GeofenceStore.recordEvent(ctx, "__geofence_error:" + t.javaClass.simpleName,
+                        t.message ?: "Registrierung fehlgeschlagen")
+                }
+        } catch (e: Exception) {
+            GeofenceStore.recordEvent(ctx, "__geofence_error:" + e.javaClass.simpleName,
+                e.message ?: "Registrierung fehlgeschlagen")
+        }
     }
 
     /** Ausgelöste Geofence-Ereignisse ([{key, name, ts}]) für die Seite, danach geleert. */

@@ -3498,6 +3498,25 @@ async function selectTrip(sn, tripId, force) {
     }
     currentTrip.loading = false;
     tripTitleSync();
+    // Einstiegshaltestelle: erster Stations-Durchgang dieser Fahrt an der
+    // angeklickten Station. Standardansicht des Verlaufs beginnt dort (Expand-
+    // Knopf zeigt den ganzen Lauf). Bestimmung wie bei den Zügen: Durchgang,
+    // dessen Zeit der Abfahrtszeit aus der Liste am nächsten kommt.
+    let fi = -1, fBest = null;
+    const depClock = (dep && (dep.actualTime || dep.plannedTime)) ||
+      (currentTrip.delay[sn + "|" + tripId] && currentTrip.delay[sn + "|" + tripId].actualTime) || "";
+    const [ch0, cm0] = depClock.split(":").map(Number);
+    (currentTrip.stops || []).forEach((s2, idx) => {
+      if (s2.shortName !== sn) return;
+      if (fi < 0) fi = idx;
+      if (!isFinite(ch0) || !isFinite(cm0)) return;
+      const t2 = s2.time || s2.plannedTime || "";
+      const [h2, m2] = t2.split(":").map(Number);
+      if (!isFinite(h2) || !isFinite(m2)) return;
+      const diff = Math.abs((h2 * 60 + m2) - (ch0 * 60 + cm0));
+      if (fBest == null || diff < fBest) { fBest = diff; fi = idx; }
+    });
+    currentTrip.fromIdx = fi > 0 ? fi : 0;
     // Soll-Zeiten aller Haltestellen automatisch mitladen (mit Cache-TTL, Batches)
     await kvgFillPlanned();
   } catch (e) {
@@ -3513,6 +3532,50 @@ async function selectTrip(sn, tripId, force) {
 // Globale Aktualisierung für Busse: Soll-Zeit jeder Haltestelle der Fahrt aus
 // den Abfahrtstafeln (eine Abfrage je Haltestelle, alle auf einen Schlag)
 const TRIP_PLANNED_TTL_MS = 5 * 60 * 1000;   // Soll-Zeit-Abfragen: so lange gelten sie
+// Schlauer Abgleich der „Gep.“-Zeiten, wenn die exakte Trip-ID nicht im
+// Abfahrtsboard der Station steht (Fahrt schon aus dem Board-Fenster gerutscht,
+// Konto der „nächsten Abfahrten“ voll, etc.): Variante A – erwartete Soll-Zeit
+// an der Station aus den bekannten Zeiten der Nachbar-Stationen interpolieren
+// (beidseitig, ansonsten Näherung über typische 1,5 min je Station);
+// Variante B – im Board die Abfahrt derselben Linie + Richtung suchen, deren
+// Soll-Zeit der Erwartung am nächsten liegt („letzte live-eintragung“).
+function hhmmToMin(t) {
+  const [h, m] = String(t == null ? "" : t).split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? (((h * 60 + m) % 1440) + 1440) % 1440 : null;
+}
+function circDiff(a, b) {
+  let d = a - b;
+  if (d > 720) d -= 1440; else if (d < -720) d += 1440;
+  return d;
+}
+function expectedPlannedMin(idxSelf, n, getMin) {
+  if (idxSelf == null || idxSelf < 0 || !n) return null;
+  let pj = null, pk = null;
+  for (let j = idxSelf - 1; j >= 0; j--) { const v = getMin(j); if (v != null) { pj = { i: j, v }; break; } }
+  for (let k = idxSelf + 1; k < n; k++) { const v = getMin(k); if (v != null) { pk = { i: k, v }; break; } }
+  const STEP = 1.5;   // Näherung: Stationstypische 1,5 min zwischen zwei Halten
+  if (pj && pk) return (((pj.v + ((idxSelf - pj.i) / ((pk.i - pj.i) || 1)) * circDiff(pk.v, pj.v)) % 1440) + 1440) % 1440;
+  if (pj) return ((pj.v + (idxSelf - pj.i) * STEP) % 1440 + 1440) % 1440;
+  if (pk) return (((pk.v - (pk.i - idxSelf) * STEP) % 1440) + 1440) % 1440;
+  return null;
+}
+function tripPlannedFallback(board, line, direction, expMin, tolMin) {
+  if (expMin == null) return null;
+  if (tolMin == null) tolMin = 25;
+  let best = null, bestDiff = null;
+  for (const x of (board || [])) {
+    if (!x || !x.plannedTime) continue;
+    if (line != null && String(x.patternText || "").trim() !== String(line || "").trim()) continue;
+    if (direction != null && String(x.direction || "").trim() !== String(direction || "").trim()) continue;
+    const xm = hhmmToMin(x.plannedTime);
+    if (xm == null) continue;
+    const ad = Math.abs(circDiff(xm, expMin));
+    if (ad > tolMin) continue;
+    if (bestDiff == null || ad < bestDiff) { best = x; bestDiff = ad; }
+  }
+  return best;
+}
+
 async function kvgFillPlanned() {
   const tripId = currentTrip.tripId;
   // nur Stationen ohne frische Soll-Zeit im Cache abfragen (Batches à 8)
@@ -3524,6 +3587,8 @@ async function kvgFillPlanned() {
   for (let bi = 0; bi < todo.length; bi += 8) {
     await Promise.all(todo.slice(bi, bi + 8).map(async s => {
       const key = s.key || (s.shortName + "|" + tripId);
+      const stopsArr = currentTrip.stops || [];
+      const idxSelf = stopsArr.indexOf(s);   // -1 möglich (Stopp nicht (mehr) in der Liste) -> ohne Fallback
       try {
         const res = await apiFetch("kvg", DEPART_URL, {
           method: "POST",
@@ -3532,7 +3597,22 @@ async function kvgFillPlanned() {
         });
         if (!res.ok) return;
         const data = await res.json();
-        const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === tripId);
+        const board = [...(data.actual || []), ...(data.oldActual || [])];
+        const fallbackFrom = Date.now();
+        let d = board.find(x => x.tripId === tripId);
+        let matched = "exact";
+        if (!d || !d.plannedTime) {
+          // Exakte Trip-ID nicht im Board -> schlauer Fallback (s. oben)
+          d = tripPlannedFallback(board, currentTrip.route, currentTrip.direction,
+            expectedPlannedMin(idxSelf, stopsArr.length, i => {
+              const s2 = stopsArr[i];
+              if (!s2 || i == null) return null;
+              const k2 = s2.key || (s2.shortName + "|" + tripId);
+              const c2 = tripDelayCache.get(k2) || currentTrip.delay[k2];
+              return hhmmToMin((c2 && c2.plannedTime) || s2.plannedTime || s2.time || (c2 && c2.actualTime));
+            }));
+          matched = "fallback";
+        }
         if (!d || !d.plannedTime) return;
         const old = currentTrip.delay[key] || {};
         const actualTime = old.actualTime || d.actualTime || d.plannedTime;
@@ -3542,13 +3622,118 @@ async function kvgFillPlanned() {
           plannedTime: d.plannedTime, actualTime,
           delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
             ? (ah * 60 + am) - (ph * 60 + pm) : null,
-          ts: Date.now()
+          ts: fallbackFrom
         };
+        if (matched === "fallback") info.fallback = true;   // Kennung: nicht exakt zugeordnet
         tripDelayCache.set(key, info);
         currentTrip.delay[key] = info;
       } catch (e) {}
     }));
   }
+}
+
+// ---------- GPS-Fortschritt im Fahrtverlauf (reine Funktion, testsicher) ----------
+// Station wird als erreicht markiert, sobald die Position auf 50 m heran ist.
+// Der Zeitpunkt der Markierung wird anhand der relativen Geschwindigkeit aus dem
+// Positionsverlauf auf den Moment projiziert, in dem die Station wirklich
+// passiert wird (ETA) – nicht auf den Moment des 50-m-Kreuzens.
+// Beim Verlassen des 50-m-Radius entscheidet die BEWEGUNGSRICHTUNG (Vektor aus
+// dem Positionsverlauf, verglichen mit den Koordinaten der nächsten und der
+// vorherigen Station): Richtung nächste Station -> Fortschritt committen
+// (Station bleibt durchgestrichen); Richtung vorherige Station (typische
+// Positionsungenauigkeit) -> temporär zurücknehmen, bei erneuter Annäherung
+// wird wieder markiert. Ohne nutzbare Richtung gilt das alte Verhalten
+// (committen) als Fallback.
+const TRIP_MARK_M = 50;            // Annäherung: Station als „erreicht“ markieren
+const TRIP_MARK_ETA_MAX_MS = 180000;   // Projektion maximal 3 Minuten voraus
+const TRIP_TRAIL_MS = 5 * 60 * 1000;    // Positionsverlauf: letzte 5 Minuten
+function tripProgressUpdate(trip, pos, nowMs, opts) {
+  const out = { atIdx: null, commitIdx: null, revoke: false, etaTs: null, suspect: false };
+  if (!trip || !trip.stops || !trip.stops.length || !pos) return out;
+  const coordsOf = opts && opts.coordsOf;
+  if (!coordsOf) return out;
+  // Positionsverlauf führen (jeder Aufruf prüft auf neue Position)
+  const trail = (trip.gpsTrail = trip.gpsTrail || []);
+  const lastT = trail.length ? trail[trail.length - 1] : null;
+  if (!lastT || lastT.ts < nowMs - 500 ||
+      Math.abs(lastT.lat - pos.lat) > 1e-7 || Math.abs(lastT.lon - pos.lon) > 1e-7) {
+    trail.push({ lat: pos.lat, lon: pos.lon, ts: nowMs });
+  }
+  while (trail.length && (nowMs - trail[0].ts > TRIP_TRAIL_MS || trail.length > 12)) trail.shift();
+  // Bewegungsvektor + Geschwindigkeit: ältester Punkt im Verlag gegen aktuell
+  let h = null, speed = 0;
+  if (trail.length >= 2) {
+    const p0 = trail[0];
+    const dt = (nowMs - p0.ts) / 1000;
+    if (dt >= 3) {
+      const dLat = pos.lat - p0.lat, dLon = pos.lon - p0.lon;
+      const dm = dist(p0, pos);
+      if (dm >= 2) { h = { lat: dLat, lon: dLon }; speed = dm / dt; }   // < 2 m: steht (fast) still
+    }
+  }
+  // Plausibilität: Kann die Fahrt an der Station gerade wirklich sein?
+  // (Maßstab: Abfahrtszeit dort, erweitertes Fenster; wie im Rendering)
+  const plausible = i => {
+    const s = trip.stops[i];
+    const key0 = s.key || (s.shortName + "|" + trip.tripId);
+    const dl0 = trip.delay[key0];
+    const depStr = (dl0 && dl0.actualTime) || s.time || s.plannedTime || "";
+    const [dh0, dm0] = depStr.split(":").map(Number);
+    if (!isFinite(dh0) || !isFinite(dm0)) return true;   // keine Zeitinfo -> zulassen
+    const n0 = new Date(nowMs);
+    const nowMin0 = n0.getHours() * 60 + n0.getMinutes() + n0.getSeconds() / 60;
+    const depMin0 = dh0 * 60 + dm0;
+    let tripLagMin = 0;
+    for (const k in trip.delay) {
+      const dd = trip.delay[k];
+      if (dd && dd.delayMin != null && dd.delayMin > tripLagMin) tripLagMin = dd.delayMin;
+    }
+    const hasActual = !!(dl0 && dl0.actualTime) || !!s.time;
+    const winBefore = 3;
+    const winAfter = hasActual ? 5 : tripLagMin + 5;
+    if (nowMin0 < depMin0 - winBefore || nowMin0 > depMin0 + winAfter) {
+      if (opts && typeof opts.onSuspect === "function") opts.onSuspect(i);
+      out.suspect = true;
+      return false;
+    }
+    return true;
+  };
+  // Nächste plausible Station im 50-m-Radius (bei mehreren die mit dem kleinsten Abstand)
+  let best = null;
+  for (let i = 0; i < trip.stops.length; i++) {
+    const c = coordsOf(i);
+    if (!c) continue;
+    const dm = dist(pos, c);
+    if (dm > TRIP_MARK_M) continue;
+    if (best != null && dm >= best.dm) continue;
+    if (!plausible(i)) continue;
+    best = { i, dm };
+  }
+  if (best != null) {
+    out.atIdx = best.i;
+    // ETA: projizierter Moment des Passierens der Station selbst („50 m weiter
+    // auf die Station verlegt“). Nur bei Bewegung; sonst live Uhr wie gehabt.
+    if (speed >= 0.5 && best.dm > 2) {
+      const eta = nowMs + (best.dm / speed) * 1000;
+      out.etaTs = Math.min(eta, nowMs + TRIP_MARK_ETA_MAX_MS);
+    }
+    return out;
+  }
+  // Kein 50-m-Treffer. Stand die Position zuletzt an einer Station (alter atIdx),
+  // entscheidet die Bewegungsrichtung über committen oder temporäres Zurücknehmen.
+  const prev = trip.atIdx;
+  if (prev == null) return out;
+  const posPrev = coordsOf(prev);
+  if (!posPrev || dist(pos, posPrev) <= TRIP_MARK_M) return out;   // noch drin (implausibel geworden)
+  const prevC = prev > 0 ? coordsOf(prev - 1) : null;
+  const nextC = prev < trip.stops.length - 1 ? coordsOf(prev + 1) : null;
+  if (h && prevC && nextC) {
+    const dotPrev = h.lat * (prevC.lat - pos.lat) + h.lon * (prevC.lon - pos.lon);
+    const dotNext = h.lat * (nextC.lat - pos.lat) + h.lon * (nextC.lon - pos.lon);
+    if (dotPrev > 0 && dotPrev > dotNext) { out.revoke = true; return out; }   // Richtung vorherige: zurücknehmen
+  }
+  out.commitIdx = prev;   // Richtung nächste Station / ohne Richtung: committen
+  return out;
 }
 
 function tripSectionHTML() {
@@ -3564,58 +3749,43 @@ function tripSectionHTML() {
   }
   const pos = getPos();
   const tstops = currentTrip.stops;
-  // Fortschritt: GPS nahe an einer Station der Fahrt -> alle bis dahin ausgrauen.
-  // Radius: 75 m bei Bussen, 250 m bei Zügen/Schienenersatz (größere Halteflächen)
-  const gpsR = isDB(currentTrip.sn) ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
-  let gpsKey = null;   // Station im Radius (plausibel): dort live Ist-Abfahrt füllen
-  let atIdx = null;    // Index der Station, in deren Radius das GPS gerade steht
+  // Fortschritt (GPS): Station wird ab 50 m Annäherung als erreicht markiert;
+  // Richtung (vorherige/nächste Station) und Geschwindigkeit bestimmen, ob der
+  // Stand beim Verlassen committen oder temporär zurückgenommen wird. Details:
+  // tripProgressUpdate (reine Funktion, weiter oben).
+  let gpsKey = null;   // Station im 50-m-Radius (plausibel): dort live Ist-Abfahrt füllen
   if (pos) {
-    for (let i = 0; i < tstops.length; i++) {
-      const s = tstops[i];
-      const stop = stops.find(x => x.shortName === s.shortName);
-      if (!stop) continue;
-      if (dist(pos, stop) >= gpsR) continue;
-      // Station im Radius. Plausibilitätsprüfung: Kann die Fahrt hier wirklich gerade
-      // sein? Maßstab ist die Abfahrtszeit dieser Fahrt an der Station (Ist-Zeit, falls
-      // schon abgefragt, sonst Soll), erweitertes Fenster ± 2 Minuten um die Systemzeit.
-      const key0 = s.key || (s.shortName + "|" + currentTrip.tripId);
-      const dl0 = currentTrip.delay[key0];
-      const depStr = (dl0 && dl0.actualTime) || s.time || s.plannedTime || "";
-      const [dh0, dm0] = depStr.split(":").map(Number);
-      if (isFinite(dh0) && isFinite(dm0)) {
-        const n0 = new Date();
-        const nowMin0 = n0.getHours() * 60 + n0.getMinutes() + n0.getSeconds() / 60;
-        const depMin0 = dh0 * 60 + dm0;
-        // groebekannte Verspaetung der Fahrt: maximum aller bisherigen Ist/Soll-Differenzen
-        let tripLagMin = 0;
-        for (const k in currentTrip.delay) {
-          const dd = currentTrip.delay[k];
-          if (dd && dd.delayMin != null && dd.delayMin > tripLagMin) tripLagMin = dd.delayMin;
-        }
-        // Ist-Zeit bekannt: Fenster -3 bis +5 min. Nur Soll-Zeit bekannt:
-        // Fenster um die Verspaetung der Fahrt erweitern (-3 bis +tripLag+5).
-        const hasActual = !!(dl0 && dl0.actualTime) || !!s.time;
-        const winBefore = 3;
-        const winAfter = hasActual ? 5 : tripLagMin + 5;
-        if (nowMin0 < depMin0 - winBefore || nowMin0 > depMin0 + winAfter) {
-          // Systemzeit passt nicht ins erweiterte Fenster: Die Fahrt kann hier gerade
-          // gar nicht sein -> diese Station ueberspringen, GPS-Knopf rot aufblinken
-          // lassen und die Linie genau jetzt sowie noch mal 2 Minuten später abfragen.
-          triggerSuspectRefetch(currentTrip.sn, currentTrip.tripId);
-          continue;
-        }
+    const pr = tripProgressUpdate(currentTrip, pos, Date.now(), {
+      coordsOf: i => {
+        const st = stops.find(x => x.shortName === tstops[i].shortName);
+        return st ? st : null;
+      },
+      onSuspect: () => triggerSuspectRefetch(currentTrip.sn, currentTrip.tripId)
+    });
+    if (pr.atIdx != null) {
+      currentTrip.atIdx = pr.atIdx;
+      currentTrip.mark = pr.etaTs != null ? { idx: pr.atIdx, etaTs: pr.etaTs } : null;
+      gpsKey = tstops[pr.atIdx].key || (tstops[pr.atIdx].shortName + "|" + currentTrip.tripId);
+      notifyTripProgress(pr.atIdx);
+    } else if (currentTrip.atIdx != null) {
+      // 50-m-Radius verlassen: Richtung nächste Station -> committen (bleibt
+      // durchgestrichen); Richtung vorherige Station -> temporär zurücknehmen.
+      if (pr.commitIdx != null) {
+        currentTrip.progressIdx = Math.max(currentTrip.progressIdx, pr.commitIdx);
       }
-      atIdx = i;        // plausibel (oder keine Zeitinfo): gerade an dieser Station
-      gpsKey = key0;    // dort laufend die aktuelle Uhrzeit als Ist-Abfahrt füllen
-      break;
+      currentTrip.atIdx = null;
+      currentTrip.mark = null;
     }
   }
-  // Radius erst VERLASSEN: dann durchstreichen/ausgrauen, solange davor: Uhrzeit blinkt
-  if (atIdx == null && currentTrip.atIdx != null) {
-    currentTrip.progressIdx = Math.max(currentTrip.progressIdx, currentTrip.atIdx);
-    currentTrip.atIdx = null;
-  }
-  if (atIdx != null) { currentTrip.atIdx = atIdx; notifyTripProgress(atIdx); }
+  const done = currentTrip.progressIdx;
+  const last = tstops.length - 1;
+  // Standardansicht: nur die Stationen ab der Einstiegshaltestelle (auf Klick im
+  // Stationsdialog / Routing). Expand-Knopf oben schaltet auf den ganzen Lauf.
+  const fromRaw = currentTrip.expand ? 0 :
+    (currentTrip.fromIdx != null ? currentTrip.fromIdx :
+      (currentTrip.startIdx != null ? currentTrip.startIdx : 0));
+  const theFrom = Math.max(0, Math.min(fromRaw || 0, last));
+  const hasFrom = theFrom > 0 || currentTrip.expand;   // Expand-Knopf auch im aufgeklappten Zustand zeigen
   // Eine Glocke für die ganze Fahrt: Zustand = irgendein Wecker dieser Fahrt
   const tKeys = tstops.map(x => currentTrip.tripId + "|" + x.shortName);
   const tRing = tKeys.some(k => ringing.has(k));
@@ -3626,14 +3796,17 @@ function tripSectionHTML() {
     escapeHtml(currentTrip.route) + " → " + escapeHtml(currentTrip.direction) + "</span>" +
     '<button class="rowref" data-tripref="' + escapeHtml(currentTrip.tripId) +
       '" title="Fahrtverlauf und alle Haltestellen global neu abfragen">↻</button>' +
+    (hasFrom ? '<button class="rowref" data-tripexp="1" title="' +
+      (currentTrip.expand ?
+        "Nur die ab der Einstiegshaltestelle verbleibenden Stationen anzeigen" :
+        "Ganzer Verlauf von der Start- bis zur Endhaltestelle anzeigen (inkl. geplanter Abfahrten)") +
+      '">' + (currentTrip.expand ? "⤡ ab Einstieg" : "⤢ ganzer Verlauf") + "</button>" : "") +
     '<button class="' + tBellCls + '" data-alarmtrip="' + escapeHtml(currentTrip.tripId) +
       '" title="' + (tFired ? "Wecker ausgelöst – Dialog öffnen (Löschen beendet)" :
         tArmed ? "Wecker gestellt – antippen zum Ändern/Löschen" : "Wecker für eine Station dieser Fahrt stellen") +
       '">' + (tArmed || tFired ? "⏰" : "🔔") + "</button></div>" +
     '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
-  const done = currentTrip.progressIdx;
-  const last = tstops.length - 1;
-  for (let i = 0; i < tstops.length; i++) {
+  for (let i = theFrom; i < tstops.length; i++) {
     const s = tstops[i];
     const key = s.key || (s.shortName + "|" + currentTrip.tripId);
     const dl = currentTrip.delay[key];
@@ -3647,8 +3820,25 @@ function tripSectionHTML() {
     }
     // GPS-Live: eigene Position an dieser Station -> laufend die aktuelle Uhrzeit als
     // Ist-Abfahrt eintragen (+/- Indikator), solange bis die Station wieder verlassen
-    // wird; danach bleibt der letzte Stand eingefroren (es sind Abfahrtszeiten)
-    if (gpsKey && key === gpsKey) {
+    // wird; danach bleibt der letzte Stand eingefroren (es sind Abfahrtszeiten).
+    // Annäherung mit Geschwindigkeit: Bis zur projizierten Passierzeit (ETA aus dem
+    // Positionsverlauf) steht dort zuerst die VORAUSGESICHTE Zeit („50 m weiter
+    // auf die Station verlegt“), danach die laufende Uhr.
+    const mark = currentTrip.mark;
+    if (gpsKey && key === gpsKey && mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) {
+      const eD = new Date(mark.etaTs);
+      const [ph, pm] = (planned || "").split(":").map(Number);
+      if (isFinite(ph) && isFinite(pm)) {
+        const etaClock = String(eD.getHours()).padStart(2, "0") + ":" +
+          String(eD.getMinutes()).padStart(2, "0");
+        const eMin = (eD.getHours() * 60 + eD.getMinutes()) - (ph * 60 + pm);
+        if (Math.abs(eMin) < 720) {
+          actual = "≈" + etaClock;
+          delayHtml = '<span class="tdelay ' + (eMin > 0 ? "up" : eMin < 0 ? "down" : "ok") + '">' +
+            (eMin > 0 ? "+" + eMin + "m" : eMin < 0 ? eMin + "m" : "0m") + "</span>";
+        }
+      }
+    } else if (gpsKey && key === gpsKey) {
       const [ph, pm] = (planned || "").split(":").map(Number);
       const nowD = new Date();
       if (isFinite(ph) && isFinite(pm)) {
@@ -3664,13 +3854,13 @@ function tripSectionHTML() {
         }
       }
     }
-    const hereIdx = atIdx != null ? atIdx : done;
-    const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
-      (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
+    const hereIdx = currentTrip.atIdx != null ? currentTrip.atIdx : done;
+    const rowCls = (i <= done && i !== currentTrip.atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
+      (i === theFrom ? " frow" : "") + (i === last ? " lrow" : "");
     const canOpen = stops.some(x => x.shortName === s.shortName);   // klickbar -> neuer Reiter
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
-      '<span class="takt' + (i === atIdx ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
+      '<span class="takt' + (i === currentTrip.atIdx && !(mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
       delayHtml +
       '<span class="tname' + (canOpen ? " tnameclick" : "") + '"' +
         (canOpen ? ' data-stopopen="' + escapeHtml(s.shortName) +
@@ -3885,6 +4075,21 @@ window.kvgGeofenceEvents = function (json) {
     let n = 0;
     for (const ev of evs) {
       const aKey = ev.key || ev;
+      // System-Hinweise der App (keine Wecker): Geofence-Registrierung gescheitert.
+      // Erwartet v. a. "__geofence_noperm" (Hintergrund-Standort nicht erteilt)
+      // und "__geofence_error:<Typ>" (Play-Services-Fehler beim Zaun-Setzen).
+      if (typeof aKey === "string" && aKey.indexOf("__geofence") === 0) {
+        if (aKey === "__geofence_noperm") {
+          setLocNote("⚠ Hintergrund-Standort fehlt: Geofence-Wecker klingeln sonst erst beim Öffnen der App. " +
+            "In den Android-Einstellungen: Apps → CitySurfers → Berechtigungen → Standort → „Bei allen Zeiten zulassen“.");
+        } else {
+          setLocNote("⚠ Geofence-Wecker konnten nicht registriert werden (" +
+            (ev && ev.name ? ev.name : "Unbekannter Fehler") +
+            ") – Hintergrund-Wecker klingeln nur bei geöffneter App.");
+        }
+        n++;
+        continue;
+      }
       const a = alarms.get(aKey);
       if (!a) continue;
       firedAlarms.add(aKey);   // Distanz-Wecker bleiben gestellt (stopRinging deaktiviert)
@@ -4412,7 +4617,7 @@ function openAlarmDialog(tripId, preSn) {
       }).join("") + "</select>" +
     '<div class="dlabel">Distanz</div>' +
     '<div class="achips">' +
-      chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
+      chip("250 m", 250, "d") + chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
       chip("5 km", 5000, "d") + chip("10 km", 10000, "d") + "</div>" +
     '<div class="doder">ODER</div>' +
     '<div class="dlabel">Zeit vor gepl. / akt. Abfahrt</div>' +
@@ -4695,6 +4900,13 @@ busPanel.addEventListener("click", e => {
   }
   const tripref = e.target.closest("[data-tripref]");
   if (tripref) { selectTrip(currentBus.sn, tripref.dataset.tripref, true); return; }
+  const tripexp = e.target.closest("[data-tripexp]");
+  if (tripexp && currentTrip) {
+    currentTrip.expand = !currentTrip.expand;   // ganzer Lauf <-> ab Einstiegshaltestelle
+    if (currentTrip.expand) kvgFillPlanned();   // ganze Strecke: geplante Abfahrten überall eintragen
+    renderBusPanel();
+    return;
+  }
   const ref = e.target.closest("[data-ref]");
   if (ref) refetchStop(ref.dataset.ref, true);
 });
@@ -5431,6 +5643,7 @@ async function dbTrip(tripId, depTime, kvgPlanned) {
     }
     if (start < 0) start = (firstHit < 0) ? 0 : firstHit;
     currentTrip.startIdx = start;   // angeklickte Station (SEV-Schleifen: eindeutiger Durchgang)
+    currentTrip.fromIdx = start;    // Standardansicht des Verlaufs beginnt hier (s. tripSectionHTML)
     currentTrip.stops = j.stopL.map((p, k) => {   // ganzer Lauf: Abfahrts- bis Endstation
       const idx = k;
       const loc = locL[p.locX] || {};
@@ -7655,7 +7868,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.16 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.17 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
