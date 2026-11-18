@@ -3159,6 +3159,23 @@ function renderStationPanel() {
   if (v && v.fetched) {
     if (v.error)   // letzte Aktualisierung fehlgeschlagen: Altdaten + Hinweis statt Stillstand
       body += '<small class="rowinfo dim">⚠️ Aktualisierung fehlgeschlagen – zeige den letzten Stand. ↻ oben versucht es erneut.</small>';
+    // Live-Abfrage leer (z. B. mitten in der Nacht): planmäßige Verbindungen
+    // automatisch nachladen (NAH.SH-Fahrplan, gleiche 10-min-TTL wie „später“)
+    // und eine entsprechende Anzahl sofort freischalten (erste Seite = 6 Einträge,
+    // weitere über „später“). Züge haben von Hause aus ~10 h Live-Fenster.
+    if (!(v.deps && v.deps.length) && !v.error && !isDB(v.stop.shortName)) {
+      if ((!v.plannedTried || Date.now() - (v.plannedTs || 0) > 600000) && !v.plannedLoading) {
+        v.plannedLoading = true;
+        fetchPlannedDeps(v.stop.shortName).catch(() => {}).finally(() => {
+          v.plannedLoading = false;
+          renderPanels();   // geladene Plan-Verbindungen sofort anzeigen
+        });
+      }
+      if ((v.planned || []).length) {   // Plan vorhanden: erste Seite sofort zeigen
+        v.moreOpen = true;
+        v.fwdShown = Math.max(v.fwdShown || 0, 6);
+      }
+    }
     const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
       // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen.
@@ -3179,6 +3196,11 @@ function renderStationPanel() {
     }
     if (!lines.length && v.deps.length) {
       body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 💨-Knopf oben zeigt alle Abfahrten.</small>';
+    }
+    if (!lines.length && !v.deps.length && !v.error) {
+      body += '<small class="rowinfo dim">' + (v.plannedLoading
+        ? "Keine Live-Abfahrten (z. B. nachts) – planmäßige Verbindungen werden geladen …"
+        : "Keine Live-Abfahrten in den nächsten Minuten.") + "</small>";
     }
     body += earlierHTML(v) + lines.map(l => l.html).join("") + laterHTML(v);
   } else if (v && v.error) {
@@ -5468,6 +5490,11 @@ async function enrichRow(stop, force) {
     } finally {
       v.reloading = false;
     }
+    // Vorab-Laden abgeschlossen: Auch das Stations-Panel nachziehen. Ohne das
+    // blieb der frisch geöffnete Reiter bei „Daten werden geladen …“ hängen,
+    // wenn die Zeile angeklickt wurde, während ihr Vorab-Lauf noch lief
+    // (refetchStop springt dann am reloading-Guard an und rendert nie selbst).
+    renderPanels();
   }
 }
 
@@ -7584,7 +7611,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.13 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.14 · Build: 18.11.2026</div>
 </div>
 </body>
 </html>
