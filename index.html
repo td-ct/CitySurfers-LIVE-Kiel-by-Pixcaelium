@@ -434,7 +434,7 @@
   .trip .tname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   /* Wandernder, leuchtender Punkt im Fahrtverlauf: läuft kontinuierlich auf
      der blauen Linie zwischen den Stationen, HINTER den Stations-Kreisen */
-  .trip .tripdot { position: absolute; left: 7.5px; top: 0; width: 8px; height: 8px;
+  .trip .tripdot { position: absolute; left: 6.5px; top: 0; width: 10px; height: 10px;
     border-radius: 50%; background: #7dd3fc; display: none; z-index: 2;
     box-shadow: 0 0 0 4px rgba(125, 211, 252, .28), 0 0 12px rgba(125, 211, 252, .85);
     transition: top 1s linear; }
@@ -446,6 +446,9 @@
   .rtrail .routesec { position: relative; padding-left: 30px; }
   .rtrail .rtleg { position: absolute; left: 10px; top: 10px; bottom: -11px; width: 3px;
     border-radius: 2px; background: #3b1631; }
+  /* Ausgeklappter Fahrverlauf: pinke Linie endet am Abschnitt, der schraege
+     Uebergang fuehrt zur blauen Verlaufs-Linie (rtlast weiter unten gewinnt). */
+  .rtrail .rtopen .rtleg { bottom: 0; }
   .rtrail .rtlast .rtleg { bottom: 10px; }
   .rtrail .rfill { position: absolute; left: 0; top: 0; width: 3px; height: 0;
     border-radius: 2px; background: #ec4899; transition: height 1s linear; }
@@ -453,10 +456,19 @@
     background: #0b1222; border: 2px solid #ec4899; box-sizing: border-box; z-index: 3; }
   .rtrail .rtc.rttop { top: 5px; }
   .rtrail .rtc.rtbot { bottom: 5px; }
-  .rtrail .rtdot { position: absolute; left: 7.5px; top: 0; width: 8px; height: 8px;
+  .rtrail .rtdot { position: absolute; left: 6.5px; top: 0; width: 10px; height: 10px;
     border-radius: 50%; background: #f472b6; display: none; z-index: 2;
     box-shadow: 0 0 0 4px rgba(236, 72, 153, .25), 0 0 12px rgba(236, 72, 153, .8);
     transition: top 1s linear; }
+  /* Schraege Uebergaenge zwischen der pinken Route-Linie und der blauen
+     Verlaufs-Linie: oben pink->blau, unten blau->pink (nur wenn ein Abschnitt
+     folgt). Der Punkt laeuft darueber hinweg, unter allen Ringen hindurch. */
+  .rtrail > .trip::before { content: ""; position: absolute; left: 8px; top: -4px;
+    width: 3px; height: 20px; border-radius: 2px; z-index: 1;
+    background: linear-gradient(#ec4899, #38bdf8); transform: rotate(20deg); }
+  .rtrail > .trip:not(:last-child)::after { content: ""; position: absolute; left: 8px;
+    bottom: -4px; width: 3px; height: 20px; border-radius: 2px; z-index: 1;
+    background: linear-gradient(#38bdf8, #ec4899); transform: rotate(-20deg); }
 
   /* API-Indikatoren: in der festen Statusleiste oben rechts (mit GPS-Symbol) */
   #apiInd .ind { pointer-events: auto; cursor: pointer; }
@@ -7210,7 +7222,7 @@ function updateTripDot() {
     y = y0 + f * (r1.top + r1.height / 2 - wrapR.top - y0);
   }
   dot.style.display = "";
-  dot.style.top = (y - 4) + "px";
+  dot.style.top = (y - 5) + "px";
 }
 // Pinker Punkt + Balken-Fuellung in der gewaehlten Route (nur Stile setzen):
 // Der Punkt wandert hinter den Abschnitts-Kreisen entlang der Gesamtroute,
@@ -7231,9 +7243,15 @@ function updateRouteDots() {
   if (pos && pr.cur != null) {
     const secEl = wrapEl.querySelector('.routesec[data-rsi="' + pr.cur + '"]');
     if (secEl) {
-      const y = secEl.offsetTop + 10 + pr.frac * Math.max(0, secEl.offsetHeight - 20);
+      // Track-Anker = Ringmitten der Abschnitte in DOM-Reihenfolge; der Punkt
+      // laeuft lueckenlos von Ring zu Ring, auch durch ausgeklappte Fahrverlaege
+      const start = secEl.offsetTop + 10;                       // Ring-Mitte oben (Start-/Umsteige-Punkt)
+      const nextEl = wrapEl.querySelector('.routesec[data-rsi="' + (pr.cur + 1) + '"]');
+      const end = nextEl ? (nextEl.offsetTop + 10)             // naechster Umsteige-Ring
+                         : (secEl.offsetTop + secEl.offsetHeight - 10);   // End-Ring des letzten Abschnitts
+      const y = start + pr.frac * Math.max(0, end - start);
       dot.style.display = "";
-      dot.style.top = (y - 4) + "px";
+      dot.style.top = (y - 5) + "px";
     } else dot.style.display = "none";
   } else dot.style.display = "none";
 }
@@ -8078,7 +8096,7 @@ function helpHTML() {
   h += P("<b>Sekunden-Countdown:</b> Steht eine KVG-<b>Echtzeit</b>-Fahrt unmittelbar bevor (bis 3 Minuten), tickt „fährt in 2:54 min“ im Sekundentakt. Bewusst nur bei Echtzeit: Fahrplandaten haben keine Sekunden, ein Countdown daraus wäre getürkt. Während ein Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
   h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. Durchgestrichene = abgefahren. Die Zusatz-Zeile „auch in … min“ nennt Folgfahrten derselben Linie.");
   h += sec("👁 Fahrtverlauf");
-  h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit, hinter den Stations-Kreisen, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
+  h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Distanz wird <b>nur mit aktiver GPS-Ortung</b> gemessen (◎ oben): Ohne GPS bliebe der Abstand gegen eine stehenbleibende alte Position falsch, deshalb ruht der Wecker dann still (mit Warnhinweis am Eintrag und beim Stellen). Bahnhöfe der DB sind eingeschlossen, ihre Koordinaten kommen aus der Bahnhof-Liste. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
   h += sec("🗂 Reiter: Stationen und Routen nebeneinander");
@@ -8088,7 +8106,7 @@ function helpHTML() {
   h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Im Route-Reiter klappen die kleinen ▾-Pfeile im Titelbalken den oberen Teil (Suchzeile mit Verbindungsvorschlägen) und den unteren Block („Gewählte Route“) ein und aus: Eingeklappt bleibt der zuletzt angezeigte Stand eingefroren stehen, bis wieder ausgeklappt wird – so verrutscht nichts, während man unterwegs ist.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
-  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt, ein pink leuchtender Punkt wandert kontinuierlich über die Gesamtroute (hinter den Kreisen); bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt.");
+  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch (Übergänge leicht schräg). Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
@@ -8202,18 +8220,20 @@ function renderRoutePanel() {
         subHTML += '<div class="rtrail"><i class="rtdot"></i>';
         c.secs.forEach((sec, si) => {
           const lastLeg = si === lastSi;
-          const legCls = lastLeg ? " rtlast" : "";
           const rail = '<i class="rtleg"><i class="rfill" data-rsi="' + si + '"></i></i>' +
             '<i class="rtc rttop"></i>' + (lastLeg ? '<i class="rtc rtbot"></i>' : "");
           if (sec.kind === "jny") {
             const open = !!rc.secOpen[si];
+            let stopsHTML = "";
+            if (open) stopsHTML = routeSecStopsHTML(rc, si);   // ausgeklappt: der blaue Verlauf schiebt die Route auseinander
+            const legCls = ((lastLeg ? " rtlast" : "") + (open && stopsHTML ? " rtopen" : "")).trim();
             subHTML += rtJnyHTML(sec,
               ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span>",
               ' data-rtsec="' + si + '" data-rsi="' + si + '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"',
-              rail, legCls.trim());
-            if (open) subHTML += routeSecStopsHTML(rc, si);
+              rail, legCls);
+            if (stopsHTML) subHTML += stopsHTML;
           } else {
-            subHTML += '<div class="routesec' + legCls + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + "</div>";
+            subHTML += '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + "</div>";
           }
         });
         subHTML += "</div></div>";
@@ -8830,7 +8850,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.25 · Build: 19.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.26 · Build: 19.11.2026</div>
 </div>
 </body>
 </html>
