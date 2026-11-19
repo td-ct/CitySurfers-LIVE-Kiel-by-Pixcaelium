@@ -785,9 +785,7 @@
   </footer>
 </div>
 
-<script>
-
-"use strict";
+<script>"use strict";
 
 // =====================================================================
 // Steuerkonstanten: alle wichtigen Ortungsradius-Schwellen und Cache-/Zeit-Intervalle.
@@ -879,6 +877,16 @@ try { stopGpsPos = JSON.parse(localStorage.getItem("kvg-stopgps") || "null"); } 
 let tabGps = {};
 try { tabGps = JSON.parse(localStorage.getItem("kvg-tabgps") || "{}") || {}; } catch (e) { tabGps = {}; }
 function saveTabGps() { try { localStorage.setItem("kvg-tabgps", JSON.stringify(tabGps)); } catch (e) {} }
+// GPS-Sortier-Ursprung je Feld des Routen-Dialogs (Start/Ziel-Auswahl): eigene
+// Position, die NUR die Sortierung der jeweiligen Auswahlliste steuert und
+// unabhaengig vom globalen GPS-Schalter gespeichert bleibt (kvg-rtpickgps).
+let routePickGps = { start: null, dest: null };
+try {
+  const _rpg = JSON.parse(localStorage.getItem("kvg-rtpickgps") || "{}") || {};
+  routePickGps = { start: _rpg.start || null, dest: _rpg.dest || null };
+} catch (e) { routePickGps = { start: null, dest: null }; }
+function saveRoutePickGps() { try { localStorage.setItem("kvg-rtpickgps", JSON.stringify(routePickGps)); } catch (e) {} }
+let routePickRefreshFn = null;   // Refresh-Closure des gerade offenen Start-/Ziel-Auswahl-Dialogs
 const GPS_STALE_M = 200;   // ab dieser Entfernung (m) zur gespeicherten Position: GPS-Knopf gelb
 function listPos() { return stopGpsPos || (addrPos || null); }
 
@@ -1133,15 +1141,27 @@ function gpsBtnState(stored) {
   if (stored && dist(myPos, stored) > GPS_STALE_M) return "stale";
   return "ok";
 }
+// Feld-lokaler GPS-Knopf-Zustand (Adressfeld, Haltestellen-Suchfeld, Route-Dialog,
+// Start-/Ziel-Auswahl): Drei Zustaende je Feld – grau = nichts uebernommen (Liste
+// alphabetisch bzw. nach Aehnlichkeit), gruen = die gespeicherte Position gilt
+// (bleibt auch stehen, wenn das GPS aus ist), gelb = Position > 200 m gewandert
+// (Druck nimmt die neue sofort). "GPS aus" beendet NUR die Uebernahme dieses
+// Feldes, das GPS selbst laeuft weiter.
+function gpsLocalBtnState(stored) {
+  if (gpsState === "searching") return "busy";
+  if (!stored) return "off";
+  if (gpsState === "on" && myPos && dist(myPos, stored) > GPS_STALE_M) return "stale";
+  return "ok";
+}
 function gpsBtnCls(st) { return st === "ok" ? " active" : st === "stale" ? " stale" : st === "busy" ? " busy" : ""; }
 // Farben der GPS-Knöpfe (Adressfeld, Haltestellenfeld, Reiter-Kopfzeile) neu
 // bewerten; renderPanels zieht den Kopfzeilen-Knopf nach (diff-guarded).
 let gpsBtnSig = "init";
 function updateGpsBtns(force) {
-  const sAddr = gpsBtnState(addrPos && addrPos.gps ? addrPos : null);
-  const sStop = gpsBtnState(stopGpsPos);
+  const sAddr = gpsLocalBtnState(addrPos && addrPos.gps ? addrPos : null);
+  const sStop = gpsLocalBtnState(stopGpsPos);
   const sTab = currentStop ? gpsBtnState(tabGps[currentStop.shortName] || depGps || null) : "";
-  const sig = sAddr + "|" + sStop + "|" + sTab;
+  const sig = sAddr + "|" + sStop + "|" + sTab + "|" + routePickGpsState("start") + "|" + routePickGpsState("dest");
   if (!force && sig === gpsBtnSig) return;
   gpsBtnSig = sig;
   posBtn.className = "gpsbtn" + gpsBtnCls(sAddr);
@@ -1149,15 +1169,16 @@ function updateGpsBtns(force) {
   // GPS-Knoepfe im Route-Dialog (Start/Ziel) nachziehen, falls er offen ist
   document.querySelectorAll("[data-rtgps]").forEach(b => {
     const g = routeSel[b.dataset.rtgps];
-    b.className = "achip rtgps" + gpsBtnCls(gpsBtnState(g && g.gps ? g : null));
+    b.className = "achip rtgps" + gpsBtnCls(gpsLocalBtnState(g && g.gps ? g : null));
   });
+  if (routePickRefreshFn) routePickRefreshFn();   // offener Start-/Ziel-Auswahl-Dialog: Chip + Liste nachziehen
   renderPanels();
 }
 // Eigene GPS-Position des Haltestellen-Suchfelds setzen/löschen (Liste sortiert danach)
 function setStopGpsPos(p) {
   stopGpsPos = p;
   try { localStorage.setItem("kvg-stopgps", p ? JSON.stringify(p) : "null"); } catch (e) {}
-  document.getElementById("gpsGoBtn").className = "gpsbtn" + gpsBtnCls(gpsBtnState(stopGpsPos));
+  document.getElementById("gpsGoBtn").className = "gpsbtn" + gpsBtnCls(gpsLocalBtnState(stopGpsPos));
   sortStops();   // Grundsortierung (GPS-Entfernung oder alphabetisch) nachziehen
   if (!sugBox.hidden && !search.value.trim()) updateSuggestions();
 }
@@ -1208,6 +1229,7 @@ function gpsAdoptForList(kind, p) {
     " übernommen (±" + Math.round(p.accuracy || 0) + " m) – Liste wird danach sortiert.");
 }
 function gpsAdoptDispatch(p) {
+  if (gpsTakeTarget.indexOf("rpick:") === 0) { routePickGpsAdopt(gpsTakeTarget.slice(6), p); return; }
   if (gpsTakeTarget === "addrFav" || gpsTakeTarget === "stopFav") gpsAdoptForList(gpsTakeTarget, p);
   else if (gpsTakeTarget === "addr") adoptGpsPos(p);
   else if (gpsTakeTarget === "addrSave") saveGpsAddrFav(p);
@@ -1225,7 +1247,8 @@ function gpsTakeOverFor(kind) {
   }
   // gute Ortung: direkt hinterlegen; sonst Dialog (schaltet GPS nötigenfalls ein)
   if (gpsState === "on" && myPos && (myPos.accuracy == null || myPos.accuracy <= GPS_ACC_DIRECT_M)) {
-    if (kind === "addr") adoptGpsPos(myPos);
+    if (kind.indexOf("rpick:") === 0) routePickGpsAdopt(kind.slice(6), myPos);
+    else if (kind === "addr") adoptGpsPos(myPos);
     else if (kind === "dephead") depGpsAdopt(myPos);
     else if (kind === "route") routeGpsAdopt(myPos);
     else gpsAdoptForList(kind, myPos);
@@ -1238,12 +1261,35 @@ function gpsTakeOverFor(kind) {
 // ---------- Einheitliche GPS-Knopf-Semantik (alle farbigen GPS-Knöpfe) ----------
 // grau = einschalten bzw. Position übernehmen (Dialog nur bei schlechter Ortung),
 // gelb = neue Ortung ohne Dialog übernehmen (Knopf wird wieder grün),
-// grün = GPS ausschalten (Knöpfe werden grau, erneuter Druck ortet wieder),
-// blau pulsierend = Suche läuft, Klick wird ignoriert.
+// grün = bei feld-lokalen Knöpfen (Adressfeld, Haltestellen-Suchfeld, Route-Dialog,
+// Start-/Ziel-Auswahl) NUR die Übernahme dieses Feldes beenden – sonst GPS ganz
+// ausschalten; blau pulsierend = Suche läuft, Klick wird ignoriert.
 function gpsBtnClick(kind, stored) {
-  const st = gpsBtnState(stored);
+  // feld-lokale Knöpfe bewerten ihren Zustand wie ihre Anzeige: ohne gespeicherte
+  // Position grau statt grün, damit "aus" wirklich nur die Übernahme meint.
+  const st = (kind === "stops" || kind === "addr" || kind === "route") ? gpsLocalBtnState(stored) : gpsBtnState(stored);
   if (st === "busy") return;
   if (st === "ok") {
+    if (kind === "stops") {
+      setStopGpsPos(null);
+      setLocNote("GPS-Übernahme für die Haltestellensuche beendet – die Liste sortiert wieder alphabetisch. Das GPS selbst bleibt an.");
+      return;
+    }
+    if (kind === "addr") {
+      clearAddr(false);
+      setLocNote("GPS-Übernahme für das Adressfeld beendet – das GPS selbst bleibt an.");
+      return;
+    }
+    if (kind === "route") {
+      const w = gpsTakeWhich;
+      routeSel[w] = null;
+      routeAbg[w] = null;
+      const d = document.getElementById("routeDlg");
+      if (d) d.innerHTML = routeDlgHTML();
+      updateGpsBtns(true);
+      setLocNote("GPS-Position als " + (w === "start" ? "Start" : "Ziel") + " entfernt – im Dialog neu wählen. Das GPS selbst bleibt an.");
+      return;
+    }
     gpsStop();
     setLocNote("GPS ausgeschaltet – die GPS-Knöpfe sind wieder grau; ein erneuter Druck ortet neu.");
     return;
@@ -2629,6 +2675,7 @@ function renderMoreRows(n) {
 
 function updateSuggestions() {
   searchIndex = -1;
+  updateGpsBtns();   // GPS-Knöpfe stets zuerst prüfen (gelb, wenn die Position weggewandert ist)
   if (!stops.length) { sugBox.hidden = true; return; }
   if (listMode === "flat") { sugHits = []; sugRendered = 0; buildFlatList(); return; }
   const pos = listPos();
@@ -4272,7 +4319,9 @@ function pollGeofenceEvents() {
     }
   } catch (e) {}
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) pollGeofenceEvents(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { pollGeofenceEvents(); updateGpsBtns(); }   // GPS-Knöpfe neu bewerten (gelb, wenn weggewandert)
+});
 
 // ---------- Finde nach Hause: direkte Fahrten zu Favoriten-Zielen finden ----------
 // Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im
@@ -6535,7 +6584,8 @@ try {
     for (const rt of (sv.rtabs || [])) {
       if (!rt || !rt.sel || !rt.sel.start || !rt.sel.dest) continue;
       routeTabs.push({ uid: rt.uid || newTabUid(), name: rt.name || "", sel: rt.sel,
-        cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null });
+        cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null,
+        topOpen: true, subOpen: true, cachedTop: "", cachedSub: "" });
     }
     if (Array.isArray(sv.ord) && sv.ord.length) barOrd = sv.ord.slice();   // gemeinsame Reihenfolge
   }
@@ -6826,8 +6876,8 @@ function routeMobBtn() {   // Drei-Modus-Schalter: zu Fuss -> Fahrrad -> Roller 
   const nx = routeMob === "walk" ? "mit dem Fahrrad" : routeMob === "bike" ? "mit dem Roller" : "nur zu Fuß";
   let h = ' <button class="achip' + (routeMob === "walk" ? "" : " on") + '" data-rtmob="1" title="Zubringer-Strecken: ' +
     (routeMob === "walk" ? "nur Fußwege" : "Leihfahrrad-Abschnitte als " + routeMobName()) +
-    ' – Klick wechselt zu: ' + nx + ' (und sucht erneut)">🚶/🚲/🛴 ' +
-    (routeMob === "walk" ? "zu Fuß" : routeMobName()) + '</button>';
+    ' – Klick wechselt zu: ' + nx + ' (und sucht erneut)">' +
+    (routeMob === "walk" ? "🚶" : routeMob === "bike" ? "🚲" : "🛴") + '</button>';
   if (routeMob !== "walk") {
     if (routeMob === "bike") h += ' <select class="rtscootmin" data-rtbikespeed="1" title="Eigenes Fahrrad-Tempo: Die Fahrrad-Strecke wird mit diesem Tempo neu gerechnet (statt der NAH.SH-Zeit)">' +
       [15, 20, 25].map(v => '<option value="' + v + '"' + (v === bikeSpeed ? " selected" : "") + ">" + v + " km/h</option>").join("") + "</select>";
@@ -7092,8 +7142,7 @@ function routePickRowsHTML(entries) {   // Trefferzeilen im Auswahl-Picker des
     "</span>" +
     (en.distTxt ? '<span class="rtsmall">' + en.distTxt + "</span>" : "") + "</div>").join("");
 }
-function routeFavList(kind) {   // kind "addr" | "stop"
-  const pos = getPos();
+function routeFavList(kind, pos) {   // kind "addr" | "stop"; pos = Sortier-Bezugspunkt oder null (dann alphabetisch)
   let items;
   if (kind === "addr") {
     // Alias als Label (im Routing-Menü sichtbar), Adresse als Unterzeile; die
@@ -7717,7 +7766,8 @@ function openNewRouteTab() {   // aus dem Routen-Dialog: neuer paralleler Reiter
   saveActiveTab();
   const rt = { uid: newTabUid(), name: "",
     sel: { start: routeSel.start, dest: routeSel.dest, time: routeSel.time },
-    cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null };
+    cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null,
+    topOpen: true, subOpen: true, cachedTop: "", cachedSub: "" };
   routeTabs.push(rt);
   activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
   stationPanelOpen = true; stationPanelCache = "";
@@ -7768,8 +7818,9 @@ function helpHTML() {
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart wieder da; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um.");
-  h += P("<b>Zubringer-Modus</b> (🚶/🚲/🛴-Schalter): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Im Route-Reiter klappen die kleinen ▾-Pfeile im Titelbalken den oberen Teil (Suchzeile mit Verbindungsvorschlägen) und den unteren Block („Gewählte Route“) ein und aus: Eingeklappt bleibt der zuletzt angezeigte Stand eingefroren stehen, bis wieder ausgeklappt wird – so verrutscht nichts, während man unterwegs ist.");
+  h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
+  h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). „⤢ ganzer Verlauf“ lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
@@ -7780,6 +7831,7 @@ function renderRoutePanel() {
   const show = routeTabActive && routeActiveTab >= 0 && !!routeTabs[routeActiveTab];   // aktiver paralleler Route-Reiter
   routePanel.hidden = !show;
   if (!show) { routePanel.innerHTML = ""; delete routePanel.dataset.last; return; }
+  const rt = routeTabs[routeActiveTab];
   const a = routeSel.start, b = routeSel.dest;
   let h = '<div class="sechead"><span class="sarr">▾</span>🧭 Route: ' +
     escapeHtml(a ? a.label : "?") + " → " + escapeHtml(b ? b.label : "?") +
@@ -7787,88 +7839,113 @@ function renderRoutePanel() {
     ((a && b && a.lat != null && b.lat != null)
       ? ' <a class="achip" target="_blank" rel="noopener" href="' + routeExtUrl(a, b) +
         '" title="Diese Route in einer externen Routing-App öffnen (z. B. Google Maps, ÖPNV-Modus)">🗺</a>'
-      : "") + "</div>";
-  h += '<div class="dstage" style="margin:6px 0; flex-wrap:wrap">' + routeWhenBtnsHTML() +
-    '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
-    ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
-    ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
-    routeProdBtns() + routeMobBtn() + "</div>";
-  if (routeLoading) {
-    h += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
-  } else if (routeSearchErr) {
-    h += '<div style="padding:8px 2px;color:#f87171">' + escapeHtml(routeSearchErr) + "</div>";
-  } else if (!routeCons.length) {
-    h += '<div style="padding:8px 2px;color:#94a3b8">Noch keine Suche – „▶ Suchen“ ruft die nächsten Verbindungen ab.</div>';
+      : "") +
+    (rt.topOpen === false ? ' <span class="sfrozen">(eingefroren)</span>' : "") +
+    ' <span class="sarr rtfold" style="margin-left:auto" data-rfold="top" title="Suchzeile und Verbindungsvorschläge ein-/ausklappen – zugeklappt bleibt der zuletzt angezeigte Stand unverändert stehen">' +
+    (rt.topOpen === false ? "▸" : "▾") + "</span></div>";
+  // Oberer Block (Suchzeile und Verbindungsvorschläge): der Pfeil ganz rechts im
+  // Titelbalken klappt ihn ein/aus. Eingeklappt = eingefroren, der zuletzt
+  // gerenderte Stand bleibt sichtbar und wird nicht mehr aktualisiert.
+  if (rt.topOpen === false && rt.cachedTop) {
+    h += rt.cachedTop;
   } else {
-    h += routeCons.map((c, ci) => {
-      const chosen = routeChosen.some(r => r.sig === routeSig(c));
-      let x = '<div class="routecon' + (chosen ? " on" : "") + '" data-rcopen="' + ci +
-        '" title="Antippen: Verbindung als Unter-Reiter öffnen und dorthin springen">' +
-        '<div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
-        "<span>" + c.dur + " min</span>" +
-        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
-      for (const sec of c.secs) {
-        if (sec.kind === "jny") {
-          x += rtJnyHTML(sec);
-        } else {
-          x += '<div class="routesec">' + indSecHTML(sec) + "</div>";
+    let topHTML = '<div class="dstage" style="margin:6px 0; flex-wrap:wrap">' + routeWhenBtnsHTML() +
+      '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
+      ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
+      ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
+      routeProdBtns() + routeMobBtn() + "</div>";
+    if (routeLoading) {
+      topHTML += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
+    } else if (routeSearchErr) {
+      topHTML += '<div style="padding:8px 2px;color:#f87171">' + escapeHtml(routeSearchErr) + "</div>";
+    } else if (!routeCons.length) {
+      topHTML += '<div style="padding:8px 2px;color:#94a3b8">Noch keine Suche – „▶ Suchen“ ruft die nächsten Verbindungen ab.</div>';
+    } else {
+      topHTML += routeCons.map((c, ci) => {
+        const chosen = routeChosen.some(r => r.sig === routeSig(c));
+        let x = '<div class="routecon' + (chosen ? " on" : "") + '" data-rcopen="' + ci +
+          '" title="Antippen: Verbindung als Unter-Reiter öffnen und dorthin springen">' +
+          '<div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
+          "<span>" + c.dur + " min</span>" +
+          (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") + "</div>";
+        for (const sec of c.secs) {
+          if (sec.kind === "jny") {
+            x += rtJnyHTML(sec);
+          } else {
+            x += '<div class="routesec">' + indSecHTML(sec) + "</div>";
+          }
         }
-      }
-      return x + "</div>";
-    }).join("");
+        return x + "</div>";
+      }).join("");
+    }
+    rt.cachedTop = topHTML;
+    h += topHTML;
   }
   // Gewählte Routen als parallele Unter-Reiter, Titel = Abfahrtszeit an der ersten
   // Station (Soll, mit Echtzeit aktualisiert) plus Buslinien-Schilder und Minuten
-  // bis zur Abfahrt („xm“: grün / gelb ≤ 3 min / rot abgefahren, läuft über den
-  // 15-Sekunden-Ticker mit). Darunter der genaue Verlauf mit ausklappbaren
-  // Abschnitten (Haltestellen wie in der Stationsansicht).
+  // bis zur Abfahrt („los in X min.“, nach Abfahrt „vor X min.“ – grün / gelb ≤ 3
+  // min / rot abgefahren, läuft über den 15-Sekunden-Ticker mit). Darunter der
+  // genaue Verlauf mit ausklappbaren Abschnitten (Haltestellen wie in der
+  // Stationsansicht). Der ganze Block lässt sich über seinen eigenen Kopf
+  // ein-/ausklappen, eingeklappt = eingefroren.
   if (routeChosen.length) {
-    h += '<div class="subtabbar">' + routeChosen.map((r, ri) => {
-      let st = '<span class="stt">' + escapeHtml(r.con.dep);
-      const seenLn = new Set();
-      for (const s of r.con.secs) if (s.kind === "jny" && !seenLn.has(s.line)) {
-        seenLn.add(s.line);
-        st += ' <span class="rtbadge rmini">' + escapeHtml(s.line || "?") + "</span>";
-      }
-      if (r.con.depAbsMs != null) {
-        const xm = Math.round((r.con.depAbsMs - Date.now()) / 60000);
-        st += ' <span class="rtxm ' + (xm < 0 ? "missed" : xm <= 3 ? "soon" : "ok") + '">' + xm + "m</span>";
-      }
-      st += "</span>";
-      return '<div class="subtab' + (ri === routeActive ? " on" : "") + '" data-rtb="' + ri +
-        '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
-        escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '">' + st +
-        ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>';
-    }).join("") + "</div>";
-    const rc = routeChosen[routeActive] || routeChosen[0];
-    if (rc) {
-      const c = rc.con;
-      h += '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
-        "<span>" + c.dur + " min</span>" +
-        (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") +
-        ' <button class="achip" data-rtrefresh="1" title="Echtzeitdaten neu abrufen und diese Ansicht aktualisieren"' +
-        (routeLoading ? " disabled" : "") + ">↻</button></div>";
-      // Verbindung nicht mehr fahrbar? (abgefahren per Uhr, oder nach Aktualisierung
-      // nicht mehr von NAH.SH angeboten) – dann mit einem Tipp zurück zur Auswahl.
-      const rcXm = c.depAbsMs != null ? Math.round((c.depAbsMs - Date.now()) / 60000) : null;
-      if (rc.stale || (rcXm != null && rcXm < 0)) {
-        h += '<div class="routesec rtstale">⚠ ' +
-          (rc.stale ? "Diese Verbindung wird von NAH.SH nicht mehr angeboten – bitte neu wählen."
-                    : "Diese Verbindung ist abgefahren.") +
-          ' <button class="achip" data-rttotop="1" title="Zurück zur Verbindungsauswahl">▲ Verbindungsauswahl</button></div>';
-      }
-      c.secs.forEach((sec, si) => {
-        if (sec.kind === "jny") {
-          const open = !!rc.secOpen[si];
-          h += rtJnyHTML(sec,
-            ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span>",
-            ' data-rtsec="' + si + '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"');
-          if (open) h += routeSecStopsHTML(rc, si);
-        } else {
-          h += '<div class="routesec">' + indSecHTML(sec) + "</div>";
+    h += '<div class="sechead" data-rfold="sub" title="Gewählte Route ein-/ausklappen – zugeklappt bleibt der zuletzt angezeigte Stand unverändert stehen">' +
+      '<span class="sarr">' + (rt.subOpen === false ? "▸" : "▾") + "</span> " +
+      (routeChosen.length > 1 ? "Gewählte Routen" : "Gewählte Route") +
+      (rt.subOpen === false ? ' <span class="sfrozen">(eingefroren)</span>' : "") + "</div>";
+    if (rt.subOpen === false && rt.cachedSub) {
+      h += rt.cachedSub;
+    } else {
+      let subHTML = '<div class="subtabbar">' + routeChosen.map((r, ri) => {
+        let st = '<span class="stt">' + escapeHtml(r.con.dep);
+        const seenLn = new Set();
+        for (const s of r.con.secs) if (s.kind === "jny" && !seenLn.has(s.line)) {
+          seenLn.add(s.line);
+          st += ' <span class="rtbadge rmini">' + escapeHtml(s.line || "?") + "</span>";
         }
-      });
-      h += "</div>";
+        if (r.con.depAbsMs != null) {
+          const xm = Math.round((r.con.depAbsMs - Date.now()) / 60000);
+          st += ' <span class="rtxm ' + (xm < 0 ? "missed" : xm <= 3 ? "soon" : "ok") + '">' +
+            (xm < 0 ? "vor " + (-xm) + " min." : "los in " + xm + " min.") + "</span>";
+        }
+        st += "</span>";
+        return '<div class="subtab' + (ri === routeActive ? " on" : "") + '" data-rtb="' + ri +
+          '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
+          escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '">' + st +
+          ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>';
+      }).join("") + "</div>";
+      const rc = routeChosen[routeActive] || routeChosen[0];
+      if (rc) {
+        const c = rc.con;
+        subHTML += '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
+          "<span>" + c.dur + " min</span>" +
+          (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") +
+          ' <button class="achip" data-rtrefresh="1" title="Echtzeitdaten neu abrufen und diese Ansicht aktualisieren"' +
+          (routeLoading ? " disabled" : "") + ">↻</button></div>";
+        // Verbindung nicht mehr fahrbar? (abgefahren per Uhr, oder nach Aktualisierung
+        // nicht mehr von NAH.SH angeboten) – dann mit einem Tipp zurück zur Auswahl.
+        const rcXm = c.depAbsMs != null ? Math.round((c.depAbsMs - Date.now()) / 60000) : null;
+        if (rc.stale || (rcXm != null && rcXm < 0)) {
+          subHTML += '<div class="routesec rtstale">⚠ ' +
+            (rc.stale ? "Diese Verbindung wird von NAH.SH nicht mehr angeboten – bitte neu wählen."
+                      : "Diese Verbindung ist abgefahren.") +
+            ' <button class="achip" data-rttotop="1" title="Zurück zur Verbindungsauswahl">▲ Verbindungsauswahl</button></div>';
+        }
+        c.secs.forEach((sec, si) => {
+          if (sec.kind === "jny") {
+            const open = !!rc.secOpen[si];
+            subHTML += rtJnyHTML(sec,
+              ' <span class="rtsmall">' + (open ? "▾" : "▸") + " Verlauf</span>",
+              ' data-rtsec="' + si + '" title="Haltestellen-Verlauf dieses Abschnitts ein-/ausklappen"');
+            if (open) subHTML += routeSecStopsHTML(rc, si);
+          } else {
+            subHTML += '<div class="routesec">' + indSecHTML(sec) + "</div>";
+          }
+        });
+        subHTML += "</div>";
+      }
+      rt.cachedSub = subHTML;
+      h += subHTML;
     }
   }
   // nur bei geändertem Inhalt neu bauen; laufende Eingabe im Abfahrtsfeld bleibt erhalten
@@ -7884,6 +7961,18 @@ function renderRoutePanel() {
   }
 }
 routePanel.addEventListener("click", e => {
+  // Pfeil im Titelbalken (bzw. am unteren Block): oberen/unteren Routen-Block
+  // ein-/ausklappen – eingeklappt bleibt der zuletzt gerenderte Stand stehen.
+  const rfold = e.target.closest("[data-rfold]");
+  if (rfold) {
+    const rt = routeTabs[routeActiveTab];
+    if (rt) {
+      if (rfold.dataset.rfold === "sub") rt.subOpen = rt.subOpen === false;
+      else rt.topOpen = rt.topOpen === false;
+      renderRoutePanel();
+    }
+    return;
+  }
   const rtbx = e.target.closest("[data-rtbx]");
   if (rtbx) {
     routeChosen.splice(Number(rtbx.dataset.rtbx), 1);
@@ -8013,16 +8102,59 @@ function routeFieldHTML(which) {
     routeGpsChipHTML(which) + '</div>';
 }
 // GPS-Knopf fuer Start/Ziel im Route-Dialog: grau = aktuelle Position uebernehmen,
-// gelb = neu orten ohne Dialog, gruen = GPS ausschalten (Farben wie ueberall:
-// grau = GPS aus, blau pulsierend = Suche, gruen <= 200 m, gelb > 200 m).
+// gelb = neu orten ohne Dialog (Position hat sich geaendert), gruen = die
+// Uebernahme NUR dieses Feldes beenden (das GPS selbst bleibt an).
 // ✕ (data-rtclear) nimmt die Auswahl zurueck.
 let gpsTakeWhich = "start";   // Start/Ziel, fuer das die laufende GPS-Uebernahme gilt
 function routeGpsChipHTML(which) {
   const sel = routeSel[which];
-  return '<button class="achip rtgps' + gpsBtnCls(gpsBtnState(sel && sel.gps ? sel : null)) +
+  return '<button class="achip rtgps' + gpsBtnCls(gpsLocalBtnState(sel && sel.gps ? sel : null)) +
     '" data-rtgps="' + which + '" title="GPS-Position als ' +
     (which === "start" ? "Start" : "Ziel") +
-    ': grau = übernehmen, gelb = neu orten (ohne Dialog), grün = GPS ausschalten">◎ GPS</button>';
+    ': grau = übernehmen, gelb = neu orten (ohne Dialog), grün = Übernahme für dieses Feld beenden">◎ GPS</button>';
+}
+// GPS-Sortier-Ursprung je Feld der Start-/Ziel-AUSWAHL (Route-Dialog): Drei
+// Zustaende je Feld, unabhaengig vom globalen GPS-Schalter (kvg-rtpickgps).
+// grau = nichts uebernommen: Treffer alphabetisch bzw. nach Aehnlichkeit;
+// gruen = gespeicherte Position sortiert die Treffer nach Entfernung und bleibt
+// als interne Koordinate stehen, bis sie neu uebernommen wird;
+// gelb = Position > 200 m weggewandert, Druck nimmt die neue sofort.
+function routePickGpsState(which) {
+  if (gpsState === "searching") return "busy";
+  const st = routePickGps[which];
+  if (!st) return "off";
+  if (gpsState === "on" && myPos && dist(myPos, st) > GPS_STALE_M) return "stale";
+  return "ok";
+}
+function routePickGpsTitle(which) {
+  const st = routePickGpsState(which);
+  const w = which === "start" ? "Start" : "Ziel";
+  return st === "ok" ? "GPS-Sortierung der " + w + "-Auswahl läuft – Druck beendet nur diese Übernahme (Treffer wieder alphabetisch, GPS bleibt an)"
+    : st === "stale" ? "Position weggewandert – Druck übernimmt die neue Position (Treffer neu nach Entfernung)"
+    : st === "busy" ? "Ortung läuft …"
+    : "GPS-Position als Sortier-Ursprung der " + w + "-Auswahl übernehmen – Treffer stehen dann nach Entfernung";
+}
+function pickOrigin(which) { return (routePickGps && routePickGps[which]) || null; }
+function routePickGpsClick(which) {
+  const st = routePickGpsState(which);
+  if (st === "busy") return;
+  if (st === "ok") {
+    routePickGps[which] = null;
+    saveRoutePickGps();
+    updateGpsBtns(true);
+    setLocNote("GPS-Sortierung der " + (which === "start" ? "Start" : "Ziel") +
+      "-Auswahl beendet – Treffer stehen wieder alphabetisch bzw. nach Ähnlichkeit. Das GPS selbst bleibt an.");
+    return;
+  }
+  gpsTakeOverFor("rpick:" + which);   // grau: übernehmen, gelb: neu übernehmen
+}
+function routePickGpsAdopt(which, p) {
+  if (!p) return;
+  routePickGps[which] = { lat: p.lat, lon: p.lon, acc: Math.round(p.accuracy || 0), t: Date.now() };
+  saveRoutePickGps();
+  updateGpsBtns(true);
+  setLocNote("📍 GPS-Position (±" + Math.round(p.accuracy || 0) + " m) als Sortier-Ursprung der " +
+    (which === "start" ? "Start" : "Ziel") + "-Auswahl übernommen – Treffer nach Entfernung.");
 }
 function routeGpsSet(which, p) {
   if (!p) return;
@@ -8046,7 +8178,7 @@ function routeGpsSet(which, p) {
 function routeGpsAdopt(p) { routeGpsSet(gpsTakeWhich, p); }
 function routeGpsBtn(which) {
   gpsTakeWhich = which;
-  gpsBtnClick("route", routeSel[which] && routeSel[which].gps ? routeSel[which] : null);   // grau: übernehmen, gelb: neu orten, grün: GPS aus
+  gpsBtnClick("route", routeSel[which] && routeSel[which].gps ? routeSel[which] : null);   // grau: übernehmen, gelb: neu orten, grün: Übernahme beenden
 }
 function routeDlgHTML() {
   return '<div class="dlg">' +
@@ -8131,7 +8263,12 @@ function openRoutePicker(kind, which) {
   wrap.className = "dlgwrap"; wrap.id = "routePickDlg";
   const titles = { addr: "🔍 Adresse suchen", addrfav: "⭐ Adressfavoriten",
                    stop: "🚏 Haltestelle suchen", stopfav: "⭐ Haltestellenfavoriten" };
+  // GPS-Sortier-Chip je Feld (Start/Ziel): grau = alphabetisch/Ähnlichkeit, grün =
+  // Treffer nach Entfernung zur gespeicherten Position, gelb = neu übernehmen.
   wrap.innerHTML = '<div class="dlg"><div class="dtitle">' + titles[kind] + "</div>" +
+    '<div class="rtswap"><button class="achip rtgps' + gpsBtnCls(routePickGpsState(which)) +
+    '" data-rpickgps="' + which + '" title="' + escapeHtml(routePickGpsTitle(which)) +
+    '">◎ GPS-Sortierung</button></div>' +
     ((kind === "addr" || kind === "stop")
       ? '<input class="rtq" id="routeQ" placeholder="' +
         (kind === "addr" ? "Adresse eingeben, z. B. Legienstraße 14, Kiel"
@@ -8141,6 +8278,7 @@ function openRoutePicker(kind, which) {
     '<div class="dbtns"><button class="acancel">Zurück</button></div></div>';
   const listEl = () => wrap.querySelector("#routePickList");
   let cur = [], timer = null;
+  let refreshList = () => {};   // je kind: Liste bei GPS-Änderung neu sortiert aufbauen
   function rows(entries) {
     cur = entries;
     listEl().innerHTML = routePickRowsHTML(entries);
@@ -8185,18 +8323,22 @@ function openRoutePicker(kind, which) {
       const opened = stops.find(s => s.shortName === en.sn);
       setLocNote("🚏 „" + (opened && opened.name || en.sn) + "“ als eigenen Reiter geöffnet – Reiter oben antippen.");
     }
+    routePickRefreshFn = null;
     wrap.remove();
     const d = document.getElementById("routeDlg");
     if (d) d.innerHTML = routeDlgHTML();
     if (!sel.lid) routeAbgleich(which);   // Vorab-Abgleich mit sichtbaren Treffern unter dem Feld
   }
-  const pos = getPos();
   if (kind === "addrfav" || kind === "stopfav") {
-    const renderFavs = () => rows(routeFavList(kind === "addrfav" ? "addr" : "stop").map(it => ({
-      label: it.label, sub: it.sub || "", kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
-      lat: it.lat, lon: it.lon, star: "⭐ ",
-      distTxt: (pos && it.lat != null) ? formatDist(dist(pos, it)) : "" })));
+    const renderFavs = () => {
+      const pos = pickOrigin(which);   // eigene GPS-Position DIESES Feldes oder null (alphabetisch)
+      rows(routeFavList(kind === "addrfav" ? "addr" : "stop", pos).map(it => ({
+        label: it.label, sub: it.sub || "", kkind: it.kind, key: it.key, name: it.name, sn: it.sn || null,
+        lat: it.lat, lon: it.lon, star: "⭐ ",
+        distTxt: (pos && it.lat != null) ? formatDist(dist(pos, it)) : "" })));
+    };
     renderFavs();
+    refreshList = renderFavs;
     if (kind === "stopfav") {
       // NAH.SH-Namen der Stationsfavoriten im Hintergrund nachziehen (LocMatch-Cache,
       // 30-s-Guard wie beim Favoriten-Panel) – die Unterzeile erscheint dann sofort
@@ -8214,17 +8356,21 @@ function openRoutePicker(kind, which) {
   } else if (kind === "stop") {
     const input = wrap.querySelector("#routeQ");
     const upd = () => {
+      const pos = pickOrigin(which);   // eigene GPS-Position DIESES Feldes oder null (alphabetisch)
       const ql = (input.value || "").trim().toLowerCase();
       let ss = stops.filter(st => !ql || st.name.toLowerCase().includes(ql));
       if (!ql && pos) ss = ss.slice().sort((a, b) => dist(pos, a) - dist(pos, b));
+      else if (!ql) ss = ss.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "de"));
       else ss = ss.slice().sort((a, b) =>
-        (a.name.toLowerCase().startsWith(ql) ? 0 : 1) - (b.name.toLowerCase().startsWith(ql) ? 0 : 1));
+        (a.name.toLowerCase().startsWith(ql) ? 0 : 1) - (b.name.toLowerCase().startsWith(ql) ? 0 : 1) ||
+        (pos ? dist(pos, a) - dist(pos, b) : String(a.name).localeCompare(String(b.name), "de")));
       rows(ss.slice(0, 8).map(st => ({ label: st.name, kkind: "stop", key: null, name: st.name,
         sn: st.shortName, lat: st.lat, lon: st.lon,
         distTxt: (pos && st.lat != null) ? formatDist(dist(pos, st)) : "" })));
     };
     input.addEventListener("input", upd);
     upd();
+    refreshList = upd;
   } else {   // addr: Favoriten-Treffer + Nominatim
     const input = wrap.querySelector("#routeQ");
     const upd = async () => {
@@ -8236,11 +8382,14 @@ function openRoutePicker(kind, which) {
       }
       listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Suche …</span></div>';
       const words = qv.toLowerCase().split(/\s+/).filter(Boolean);
+      const pos = pickOrigin(which);   // GPS-Sortierung dieses Feldes: Treffer nach Entfernung
       let found = addrFavs
         .filter(f => words.every(w => (f.name || "").toLowerCase().includes(w) || (f.label || "").toLowerCase().includes(w)))
         .map(f => ({ label: f.name, sub: (f.label && f.label !== f.name) ? f.label : "",
           kkind: "addr", key: "addr:" + f.name,
-          name: f.label || f.name, lat: f.lat, lon: f.lon, star: "⭐ " }));
+          name: f.label || f.name, lat: f.lat, lon: f.lon, star: "⭐ ",
+          distTxt: (pos && f.lat != null) ? formatDist(dist(pos, f)) : "" }));
+      found.sort((a, b) => pos ? dist(pos, a) - dist(pos, b) : String(a.label).localeCompare(String(b.label), "de"));
       try {
         const u = await unifiedAddrSearch(qv);   // OSM + NAH.SH, gemergte Treffer
         if (!u || (input.value || "").trim() !== qv) return;   // Eingabe inzwischen geändert
@@ -8254,8 +8403,19 @@ function openRoutePicker(kind, which) {
     input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(upd, 700); });   // NAH.SH-Gate: Abstand zwischen Anfragen
     listEl().innerHTML = '<div class="rtrow"><span class="rtname" style="color:#94a3b8">Adresse eingeben – gespeicherte Favoriten erscheinen zuerst.</span></div>';
   }
+  routePickRefreshFn = () => {   // GPS-Update: Chip-Zustand + Liste des offenen Dialogs nachziehen
+    if (!document.body.contains(wrap)) return;
+    const chip = wrap.querySelector("[data-rpickgps]");
+    if (chip) {
+      chip.className = "achip rtgps" + gpsBtnCls(routePickGpsState(which));
+      chip.title = routePickGpsTitle(which);
+    }
+    refreshList();
+  };
   wrap.addEventListener("click", e => {
-    if (e.target === wrap || e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target === wrap || e.target.closest(".acancel")) { routePickRefreshFn = null; wrap.remove(); return; }
+    const rpChip = e.target.closest("[data-rpickgps]");
+    if (rpChip) { routePickGpsClick(rpChip.dataset.rpickgps); return; }
     const row = e.target.closest("[data-rt]");
     if (row) { const en = cur[Number(row.dataset.rt)]; if (en) pickEntry(en); }
   });
@@ -8386,8 +8546,7 @@ renderFhInd();      // 🏠 der Statusleiste initial füllen
 setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffrischen
 
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
-updateGpsBtns(true);
-</script>
+updateGpsBtns(true);</script>
 
 <div class="apkdl pagefoot">
   📱 <strong>Android-App nachinstallieren bzw. aktualisieren:</strong>
@@ -8395,7 +8554,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.22 · Build: 18.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.23 · Build: 19.11.2026</div>
 </div>
 </body>
 </html>
