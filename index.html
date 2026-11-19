@@ -459,16 +459,20 @@
   .rtrail .rtdot { position: absolute; left: 6.5px; top: 0; width: 10px; height: 10px;
     border-radius: 50%; background: #f472b6; display: none; z-index: 2;
     box-shadow: 0 0 0 4px rgba(236, 72, 153, .25), 0 0 12px rgba(236, 72, 153, .8);
-    transition: top 1s linear; }
-  /* Schraege Uebergaenge zwischen der pinken Route-Linie und der blauen
-     Verlaufs-Linie: oben pink->blau, unten blau->pink (nur wenn ein Abschnitt
-     folgt). Der Punkt laeuft darueber hinweg, unter allen Ringen hindurch. */
-  .rtrail > .trip::before { content: ""; position: absolute; left: 8px; top: -4px;
-    width: 3px; height: 20px; border-radius: 2px; z-index: 1;
-    background: linear-gradient(#ec4899, #38bdf8); transform: rotate(20deg); }
-  .rtrail > .trip:not(:last-child)::after { content: ""; position: absolute; left: 8px;
-    bottom: -4px; width: 3px; height: 20px; border-radius: 2px; z-index: 1;
-    background: linear-gradient(#38bdf8, #ec4899); transform: rotate(-20deg); }
+    transition: top 1s linear, background .4s linear, box-shadow .4s linear; }
+  /* Farbübergang des Punkts: im ausgeklappten blauen Verlauf leuchtet er blau */
+  .rtrail .rtdot.rtblue { background: #7dd3fc;
+    box-shadow: 0 0 0 4px rgba(125, 211, 252, .28), 0 0 12px rgba(125, 211, 252, .85); }
+  /* Direkte Uebergaenge zwischen der pinken Route-Linie und der blauen
+     Verlaufs-Linie: senkrechte Faruebergang-Punkte exakt auf der Linien-Achse,
+     oben pink->blau, unten blau->pink (nur wenn ein Abschnitt folgt). Der
+     Punkt laeuft darueber hinweg, unter allen Ringen hindurch. */
+  .rtrail > .trip::before { content: ""; position: absolute; left: 10px; top: -4px;
+    width: 3px; height: 20px; border-radius: 3px; z-index: 1;
+    background: linear-gradient(#ec4899, #38bdf8); }
+  .rtrail > .trip:not(:last-child)::after { content: ""; position: absolute; left: 10px;
+    bottom: -4px; width: 3px; height: 20px; border-radius: 3px; z-index: 1;
+    background: linear-gradient(#38bdf8, #ec4899); }
 
   /* API-Indikatoren: in der festen Statusleiste oben rechts (mit GPS-Symbol) */
   #apiInd .ind { pointer-events: auto; cursor: pointer; }
@@ -4323,8 +4327,9 @@ function syncGeofences() {
   for (const [aKey, a] of alarms) {
     if (!a.dist) continue;   // nur Distanz-Wecker; Zeit-Wecker klingelt nativ per AlarmManager
     if (a.paused) continue;  // deaktivierte Distanz-Wecker: kein Zaun
-    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn);   // DB-Bahnhof: Geofence statt gar kein Zaun
-    if (!stop) continue;
+    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn) ||   // DB-Bahnhof: Geofence statt gar kein Zaun
+      (a.lat != null ? { lat: a.lat, lon: a.lon } : null);   // Route-Station: Koord. direkt aus der Route
+    if (!stop || stop.lat == null) continue;
     list.push({ key: aKey, lat: stop.lat, lon: stop.lon, radius: a.dist,
       name: a.name || a.sn, vib: a.vib !== false, tone: a.tone !== false,
       snd: a.snd || "alarm", vol: a.vol == null ? 1 : a.vol });
@@ -4777,14 +4782,22 @@ function nativeVibrate(pat) { nativeCall("vibrate", JSON.stringify(pat)); }
 // Weckzeit (Epoch-ms) = geplante/aktuelle Abfahrt minus Vorlauf, inkl. Tagesumbruch
 function nativeAlarmEpoch(aKey, leadMin) {
   const trip = tripById(aKey.slice(0, aKey.indexOf("|")));
-  if (!trip) return null;
-  const sn = aKey.slice(aKey.indexOf("|") + 1);
-  const s = (trip.stops || []).find(x => x.shortName === sn);
-  if (!s) return null;
-  const key = s.key || (sn + "|" + trip.tripId);
-  const dl = trip.delay[key] || {};
-  const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
-  const [h, m] = t.split(":").map(Number);
+  let h = NaN, m = NaN;
+  if (!trip) {   // Route-Wecker: Zeit direkt aus der gewaehlten Route
+    const a = alarms.get(aKey);
+    const depMin = a ? routeAlarmDepMin(a) : null;
+    if (depMin == null) return null;
+    h = Math.floor(depMin / 60); m = depMin % 60;
+  } else {
+    const sn = aKey.slice(aKey.indexOf("|") + 1);
+    const s = (trip.stops || []).find(x => x.shortName === sn);
+    if (!s) return null;
+    const key = s.key || (sn + "|" + trip.tripId);
+    const dl = trip.delay[key] || {};
+    const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+    const parts = t.split(":").map(Number);
+    h = parts[0]; m = parts[1];
+  }
   if (!isFinite(h) || !isFinite(m)) return null;
   const now = new Date();
   let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
@@ -4795,9 +4808,33 @@ function nativeAlarmEpoch(aKey, leadMin) {
 }
 
 // Abfahrtszeit (Minuten des Tages) der Wecker-Station aus dem aktuellen Fahrtverlauf
+// Route-Wecker (Glocke in der gewaehlten Route): Abfahrtszeit der Station
+// direkt aus der Route suchen, Echtzeit vor Plan – dazu muessen Fahrtverlauf
+// und tripById nichts wissen; gesucht wird in allen offenen Verbindungen nach
+// dem Abschnitt (jid) und dem Stations-Namen.
+function routeAlarmDepMin(a) {
+  if (!a || !a.jid || a.rtName == null) return null;
+  const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+  const want = norm(String(a.rtName).replace(/\s*\(DB\)\s*$/, ""));
+  for (const rc of routeChosen) {
+    const con = rc && rc.con;
+    if (!con) continue;
+    for (const sec of con.secs || []) {
+      if (!sec || sec.jid !== a.jid) continue;
+      const sts = (sec.expand && sec.fullStops && sec.fullStops.length) ? sec.fullStops : (sec.stops || []);
+      for (const st of sts) {
+        if (!st || norm(String(st.name).replace(/\s*\(DB\)\s*$/, "")) !== want) continue;
+        const parts = (st.dR || st.dS || "").split(":").map(Number);
+        if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) return null;
+        return parts[0] * 60 + parts[1];
+      }
+    }
+  }
+  return null;
+}
 function alarmDepMin(a) {
   const trip = tripById(a.tripId);
-  if (!trip) return null;
+  if (!trip) return routeAlarmDepMin(a);   // Route-Wecker: kein Fahrverlauf noetig
   const s = (trip.stops || []).find(x => x.shortName === a.sn);
   if (!s) return null;
   const key = s.key || (a.sn + "|" + a.tripId);
@@ -4848,7 +4885,8 @@ function alarmTick() {
   const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
   for (const [aKey, a] of [...alarms]) {
     if (a.paused) continue;   // deaktiviert: nicht prüfen, nicht läuten
-    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn);   // KVG-Liste oder DB-Bahnhof
+    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn) ||   // KVG-Liste oder DB-Bahnhof
+      (a.lat != null ? { lat: a.lat, lon: a.lon } : null);   // Route-Station: Koordinaten direkt aus der Route
     if (a.dist && pos && stop && dist(pos, stop) <= a.dist) { fireAlarm(aKey, a); continue; }
     if (a.leadMin != null) {
       if (Date.now() - (a.lastPoll || 0) > a.leadMin * 30000) {   // alle leadMin/2 Minuten
@@ -5040,6 +5078,214 @@ function openAlarmDialog(tripId, preSn) {
         (selDist && gpsState !== "on" ? " · ⚠ Distanz misst nur mit aktiver GPS-Ortung (◎ oben einschalten), sonst bleibt der Wecker stumm" : "") +
         (selDist && window.KvgNative ? " · klingelt in der App dank Geofence auch bei ausgeschaltetem Display" : ""));
       if (currentBus) renderBusPanel();
+    }
+  });
+}
+
+// ---------- Glocke in der gewählten Route: Wecker für die GESAMT-Route ----------
+// Stations-Liste der gewählten Route: alle Haltestellen aller Fahrzeug-Abschnitte
+// in Fahrtrichtung gemeinsam (Zubringer haben keine Haltestellen). Jede Station
+// wird auf eine KVG-/DB-Station abgebildet (exakter Name, sonst Koordinate
+// <= 250 m); fremde Stationen bekommen ein Pseudo-sn UND die Koordinaten aus
+// der Route mit, damit Distanz-Wecker und Geofence auch dort arbeiten.
+function routeAlarmStations(rc) {
+  const out = [];
+  const con = rc && rc.con;
+  const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+  (con && con.secs || []).forEach(sec => {
+    if (!sec || sec.kind !== "jny") return;
+    const sts = (sec.expand && sec.fullStops && sec.fullStops.length) ? sec.fullStops : (sec.stops || []);
+    sts.forEach(st => {
+      if (!st || st.name == null) return;
+      const stN = norm(String(st.name).replace(/\s*\(DB\)\s*$/, ""));
+      const byName = stops.find(s => norm(String(s.name || "").replace(/\s*\(DB\)\s*$/, "")) === stN);
+      let sn = byName ? byName.shortName : null;
+      if (!sn && st.lat != null && st.lon != null) {
+        let best = null;
+        for (const s of stops) {
+          if (s.lat == null || s.lon == null) continue;
+          const d = dist(st, s);
+          if (d < 250 && (!best || d < best.d)) best = { s: s, d: d };
+        }
+        sn = best ? best.s.shortName : null;
+      }
+      if (!sn) sn = "N:" + stN;
+      if (out.some(x => x.jid === sec.jid && x.sn === sn)) return;   // Durchgang im selben Lauf nur einmal
+      out.push({ jid: sec.jid, tripId: "rt!" + sec.jid, sn: sn, name: String(st.name),
+        lat: st.lat, lon: st.lon, rail: !!sec.rail,
+        time: (st.dR || st.dS || st.aR || st.aS || "") });
+    });
+  });
+  out.forEach(x => { x.aKey = x.tripId + "|" + x.sn; });
+  return out;
+}
+// Wecker-Dialog der Route: baugleich mit dem Fahrverlauf-Dialog (gelbe Glocke,
+// Distanz ODER Zeit vor Abfahrt, Vibration/Weckton/Test/Löschen), nur dass die
+// Stations-Auswahl ALLE Busse und Bahnen der Gesamt-Route umfasst.
+function openRouteAlarmDialog() {
+  const rc = routeChosen[routeActive] || routeChosen[0];
+  if (!rc || !rc.con) return;
+  const c = rc.con;
+  const ents = routeAlarmStations(rc);
+  if (!ents.length) { setLocNote("Diese Route hat keine Haltestellen für einen Wecker (nur Zubringer)."); return; }
+  // Marker für die Stationsauswahl: 📍 GPS steht im Stations-Radius,
+  // ▶ nächste Station der Route (erste Abfahrt ab jetzt)
+  const mPos = livePos();
+  let gpsKey = null, nextKey = null;
+  if (mPos) {
+    for (const x of ents) {
+      if (x.lat == null) continue;
+      if (dist(mPos, x) <= (x.rail ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M)) { gpsKey = x.aKey; break; }
+    }
+  }
+  {
+    const n0 = new Date(), nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+    for (const x of ents) {
+      const parts = (x.time || "").split(":").map(Number);
+      if (parts.length >= 2 && isFinite(parts[0]) && isFinite(parts[1]) &&
+          parts[0] * 60 + parts[1] >= nowMin0 - 1) { nextKey = x.aKey; break; }
+    }
+  }
+  // Vorbelegung: läutend > ausgelöst > gestellt; sonst GPS-nah bzw. nächste
+  let selKey = null;
+  {
+    const hit = ents.find(x => ringing.has(x.aKey)) || ents.find(x => firedAlarms.has(x.aKey)) ||
+      ents.find(x => alarms.has(x.aKey));
+    selKey = hit ? hit.aKey : (gpsKey || nextKey);
+  }
+  let aKey = null, a = { tripId: "", sn: "", name: "" }, old = {};
+  let selDist = null, selLead = null;
+  const cfg = alarmCfg();
+  const hasVib = !!(navigator.vibrate || window.KvgNative);
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const chip = (label, val, group) =>
+    '<button class="achip" data-g="' + group + '" data-v="' + val + '">' + label + "</button>";
+  wrap.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dtitle">Wecker: Route ' + c.dep + " – " + c.arr + "</div>" +
+    '<div class="dlabel">Station dieser Gesamt-Route (' + ents.length + ')</div>' +
+    '<select class="astop"><option value="">– Station wählen –</option>' +
+      ents.map(x => {
+        const mk = x.aKey === gpsKey ? "📍 " : x.aKey === nextKey ? "▶ " : "";
+        const arm = (alarms.has(x.aKey) || firedAlarms.has(x.aKey)) ? "⏰ " : "";
+        return '<option value="' + escapeHtml(x.aKey) + '"' + (selKey === x.aKey ? " selected" : "") + '>' +
+          mk + arm + escapeHtml((x.time ? x.time + "  " : "") + x.name) + "</option>";
+      }).join("") + "</select>" +
+    '<div class="dlabel">Distanz</div>' +
+    '<div class="achips">' +
+      chip("250 m", 250, "d") + chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
+      chip("5 km", 5000, "d") + chip("10 km", 10000, "d") + "</div>" +
+    '<div class="doder">ODER</div>' +
+    '<div class="dlabel">Zeit vor gepl. / akt. Abfahrt</div>' +
+    '<div class="achips">' +
+      chip("2 min", 2, "t") + chip("5 min", 5, "t") + chip("10 min", 10, "t") + chip("20 min", 20, "t") + "</div>" +
+    '<div class="dstages">' +
+      '<label class="dstage"><input type="checkbox" class="avib"' + ((old.vib !== false) ? " checked" : "") + (hasVib ? "" : " disabled") +
+        "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
+      '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage">Ton <select class="asnd">' +
+        ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cfg.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") +
+        "</select></label>" +
+      '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cfg.vol + '" title="Weckton-Lautstärke" /></label>' +
+      '<button class="atest" title="Weckton und Vibration sofort ausprobieren">▶ Test</button>' +
+    "</div>" +
+    '<div class="dbtns">' +
+      '<button class="adel" hidden title="Gestellten Wecker entfernen">🗑 Wecker löschen</button>' +
+      '<button class="acancel">Abbrechen</button>' +
+    '<button class="aok" disabled>Wecker stellen</button></div>' +
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser klingelt oder vibriert der Wecker nicht, ' +
+      'während die Seite im Hintergrund ist oder das Display aus ist. ' +
+      'Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a> ' +
+      '(Download im selben Verzeichnis wie diese Seite).</div>') +
+    "</div>";
+  document.body.appendChild(wrap);
+  const okBtn = wrap.querySelector(".aok");
+  const delBtn = wrap.querySelector(".adel");
+  const titleEl = wrap.querySelector(".dtitle");
+  const stopSel = wrap.querySelector(".astop");
+  // Station gewählt: Titel, ggf. gestellten Wecker dieser Station vorbelegen
+  function pickStation(v) {
+    aKey = v || null;
+    const ent = ents.find(x => x.aKey === v);
+    a = ent ? { tripId: ent.tripId, sn: ent.sn, name: ent.name, jid: ent.jid,
+      rtName: ent.name, lat: ent.lat, lon: ent.lon } : a;
+    old = (aKey && alarms.get(aKey)) || {};
+    selDist = old.dist || null;
+    selLead = old.leadMin || null;
+    if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
+    if (delBtn) delBtn.hidden = !(old.dist || old.leadMin);
+    sync();
+  }
+  const sync = () => {
+    wrap.querySelectorAll(".achip").forEach(c => {
+      const on = c.dataset.g === "d" ? Number(c.dataset.v) === selDist
+                                     : Number(c.dataset.v) === selLead;
+      c.classList.toggle("on", on);
+    });
+    okBtn.disabled = !(selDist || selLead) || !aKey;
+  };
+  if (stopSel) stopSel.addEventListener("change", () => pickStation(stopSel.value));
+  if (selKey) pickStation(selKey); else sync();
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {
+      const c = { snd: wrap.querySelector(".asnd").value,
+                  vol: Number(wrap.querySelector(".avol").value) };
+      saveAlarmCfg(c);
+      if (wrap.querySelector(".atone").checked) alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".avib").checked && hasVib) vibratePattern([200, 100, 200]);
+      return;
+    }
+    const cEl = e.target.closest(".achip");
+    if (cEl) {
+      const v = Number(cEl.dataset.v);
+      if (cEl.dataset.g === "d") selDist = selDist === v ? null : v;
+      else selLead = selLead === v ? null : v;
+      sync();
+      return;
+    }
+    if (e.target.closest(".adel") && aKey) {
+      alarms.delete(aKey);
+      saveAlarms();
+      stopRinging(aKey, true);
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔕 Wecker gelöscht: " + a.name);
+      if (routePanel && !routePanel.hidden) renderRoutePanel();
+      return;
+    }
+    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest(".aok") && aKey && (selDist || selLead)) {
+      const snd = wrap.querySelector(".asnd").value;
+      const vol = Number(wrap.querySelector(".avol").value);
+      saveAlarmCfg({ snd: snd, vol: vol });
+      const useVib = hasVib && wrap.querySelector(".avib").checked;
+      const useTone = wrap.querySelector(".atone").checked;
+      firedAlarms.delete(aKey);
+      alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
+        jid: a.jid, rtName: a.rtName, lat: a.lat, lon: a.lon,   // Route-Wecker: Zeit aus der Route
+        paused: false,
+        tabSn: null,   // gehört der Route, keinem Reiter: überlebt Reiter-Schließen
+        dist: selDist, leadMin: selLead,
+        vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
+      saveAlarms();
+      if (selLead && !alarmsOff) {
+        const ms = nativeAlarmEpoch(aKey, selLead);
+        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
+          JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
+      }
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔔 Wecker gestellt: " + a.name +
+        (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
+        (selDist && selLead ? " oder " : "") +
+        (selLead ? selLead + " min vor Abfahrt" : "") +
+        (selDist && gpsState !== "on" ? " · ⚠ Distanz misst nur mit aktiver GPS-Ortung (◎ oben einschalten), sonst bleibt der Wecker stumm" : "") +
+        (selDist && window.KvgNative ? " · klingelt in der App dank Geofence auch bei ausgeschaltetem Display" : ""));
+      if (routePanel && !routePanel.hidden) renderRoutePanel();
     }
   });
 }
@@ -5382,13 +5628,20 @@ const fhList = document.getElementById("fhList");
 function alarmRingEpoch(a) {
   if (a.leadMin == null) return null;
   const trip = tripById(a.tripId);
-  if (!trip) return null;
-  const s = (trip.stops || []).find(x => x.shortName === a.sn);
-  if (!s) return null;
-  const key = s.key || (a.sn + "|" + trip.tripId);
-  const dl = (trip.delay || {})[key] || {};
-  const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
-  const [h, m] = t.split(":").map(Number);
+  let h = NaN, m = NaN;
+  if (!trip) {   // Route-Wecker: Zeit direkt aus der gewaehlten Route
+    const depMin = routeAlarmDepMin(a);
+    if (depMin == null) return null;
+    h = Math.floor(depMin / 60); m = depMin % 60;
+  } else {
+    const s = (trip.stops || []).find(x => x.shortName === a.sn);
+    if (!s) return null;
+    const key = s.key || (a.sn + "|" + trip.tripId);
+    const dl = (trip.delay || {})[key] || {};
+    const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+    const parts = t.split(":").map(Number);
+    h = parts[0]; m = parts[1];
+  }
   if (!isFinite(h) || !isFinite(m)) return null;
   const now = new Date();
   let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
@@ -7250,6 +7503,16 @@ function updateRouteDots() {
       const end = nextEl ? (nextEl.offsetTop + 10)             // naechster Umsteige-Ring
                          : (secEl.offsetTop + secEl.offsetHeight - 10);   // End-Ring des letzten Abschnitts
       const y = start + pr.frac * Math.max(0, end - start);
+      // Farbübergang des Punkts: auf der pinken Route-Linie leuchtet er pink,
+      // innerhalb eines ausgeklappten blauen Verlaufs färbt er sich blau
+      // (die CSS-Transition blendet den Wechsel weich über)
+      const wrapTop = wrapEl.getBoundingClientRect().top;
+      let inTrip = false;
+      wrapEl.querySelectorAll(".trip").forEach(t => {
+        const r = t.getBoundingClientRect();
+        if (y >= r.top - wrapTop - 6 && y <= r.bottom - wrapTop + 6) inTrip = true;
+      });
+      dot.classList.toggle("rtblue", inTrip);
       dot.style.display = "";
       dot.style.top = (y - 5) + "px";
     } else dot.style.display = "none";
@@ -8106,7 +8369,7 @@ function helpHTML() {
   h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Im Route-Reiter klappen die kleinen ▾-Pfeile im Titelbalken den oberen Teil (Suchzeile mit Verbindungsvorschlägen) und den unteren Block („Gewählte Route“) ein und aus: Eingeklappt bleibt der zuletzt angezeigte Stand eingefroren stehen, bis wieder ausgeklappt wird – so verrutscht nichts, während man unterwegs ist.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
-  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch (Übergänge leicht schräg). Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt.");
+  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau (die Übergänge sind direkt mit Farbübergang gezeichnet). Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
@@ -8202,11 +8465,25 @@ function renderRoutePanel() {
       const rc = routeChosen[routeActive] || routeChosen[0];
       if (rc) {
         const c = rc.con;
+        // Wecker-Glocke (wie im Fahrtverlauf, gelbe Glocke): Zustand über JEDE
+        // Station der Gesamt-Route; öffnet den Wecker-Dialog mit der gemeinsamen
+        // Auswahlliste aller Busse und Bahnen
+        const rtEnts = routeAlarmStations(rc);
+        const rtKeysA = rtEnts.map(x => x.aKey);
+        const rtRingB = rtKeysA.some(k => ringing.has(k));
+        const rtFiredB = rtRingB || rtKeysA.some(k => firedAlarms.has(k));
+        const rtArmedB = rtKeysA.some(k => alarms.has(k));
+        const rtBellCls = rtRingB ? " abell fired ring" : rtFiredB ? " abell fired" : rtArmedB ? " abell on" : " abell";
         subHTML += '<div class="routecon"><div class="rchead"><span class="rcdur">' + c.dep + " – " + c.arr + "</span>" +
           "<span>" + c.dur + " min</span>" +
           (c.chg ? '<span class="rtsmall">· ' + c.chg + "× umsteigen</span>" : "") +
           ' <button class="achip" data-rtrefresh="1" title="Echtzeitdaten neu abrufen und diese Ansicht aktualisieren"' +
-          (routeLoading ? " disabled" : "") + ">↻</button></div>";
+          (routeLoading ? " disabled" : "") + ">↻</button>" +
+          '<button class="' + rtBellCls + '" data-rtalarm="1" title="' +
+            (rtFiredB ? "Wecker ausgelöst – Dialog öffnen (Löschen beendet)" :
+              rtArmedB ? "Wecker gestellt – antippen zum Ändern/Löschen" :
+              "Wecker für eine Station dieser Gesamt-Route stellen (alle Busse und Bahnen gemeinsam)") +
+            '">' + (rtArmedB || rtFiredB ? "⏰" : "🔔") + "</button></div>";
         // Verbindung nicht mehr fahrbar? (abgefahren per Uhr, oder nach Aktualisierung
         // nicht mehr von NAH.SH angeboten) – dann mit einem Tipp zurück zur Auswahl.
         const rcXm = c.depAbsMs != null ? Math.round((c.depAbsMs - Date.now()) / 60000) : null;
@@ -8304,6 +8581,10 @@ routePanel.addEventListener("click", e => {
   }
   const rcop = e.target.closest("[data-rcopen]");
   if (rcop) { openRouteCon(Number(rcop.dataset.rcopen)); return; }
+  if (e.target.closest("[data-rtalarm]")) {   // gelbe Glocke: Wecker-Dialog über die Gesamt-Route
+    openRouteAlarmDialog();
+    return;
+  }
   if (e.target.closest("[data-rtrefresh]")) {
     if (refetchGateOk("rtsearch")) routeRunSearch();   // Echtzeitdaten nachladen; Unter-Reiter werden mit angehoben
     else setLocNote("↻ zuletzt vor wenigen Sekunden gedrückt – frühestens in 5 Sekunden wieder.");
@@ -8850,7 +9131,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.26 · Build: 19.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.27 · Build: 19.11.2026</div>
 </div>
 </body>
 </html>
