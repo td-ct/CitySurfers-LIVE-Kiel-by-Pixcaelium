@@ -418,6 +418,9 @@
   .trip .trow.done::after { border-color: #475569; }
   .trip .trow.here::after { background: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, .25); }
   .trip .trow.done { color: #64748b; }
+  /* Erweiterung auf den ganzen Lauf: Zeilen vor dem Zustieg / nach dem
+     Ausstieg sind reine Plan-Anzeige ausserhalb der eigenen Strecke -> gedimmt */
+  .trip .trow.ext, .trip .trow.ext .tgep, .trip .trow.ext .takt, .trip .trow.ext .tname { color: #64748b; }
   .trip .tgep { flex-shrink: 0; min-width: 44px; font-size: 0.85rem; color: #94a3b8; }
   .trip .trow.done .tgep { text-decoration: line-through; }
   .trip .takt { flex-shrink: 0; min-width: 48px; font-weight: 700; }
@@ -463,16 +466,14 @@
   /* Farbübergang des Punkts: im ausgeklappten blauen Verlauf leuchtet er blau */
   .rtrail .rtdot.rtblue { background: #7dd3fc;
     box-shadow: 0 0 0 4px rgba(125, 211, 252, .28), 0 0 12px rgba(125, 211, 252, .85); }
-  /* Direkte Uebergaenge zwischen der pinken Route-Linie und der blauen
-     Verlaufs-Linie: senkrechte Faruebergang-Punkte exakt auf der Linien-Achse,
-     oben pink->blau, unten blau->pink (nur wenn ein Abschnitt folgt). Der
-     Punkt laeuft darueber hinweg, unter allen Ringen hindurch. */
-  .rtrail > .trip::before { content: ""; position: absolute; left: 10px; top: -4px;
-    width: 3px; height: 20px; border-radius: 3px; z-index: 1;
-    background: linear-gradient(#ec4899, #38bdf8); }
-  .rtrail > .trip:not(:last-child)::after { content: ""; position: absolute; left: 10px;
-    bottom: -4px; width: 3px; height: 20px; border-radius: 3px; z-index: 1;
-    background: linear-gradient(#38bdf8, #ec4899); }
+  /* EINE durchgehende Linie an der linken Seite der Route: Die rtspine wird
+     per JS von der Mitte des Start-Rings bis zur Mitte des End-Rings gezeichnet
+     (dunkelpinke Basis, in ausgeklappten Verlaeufen dunkelblau, weiche
+     Farbgange an den Grenzen) und schliesst JEDE Luecke, auch ueber Block-
+     Abstaende und Verlaufs-Koepfe hinweg. Sie liegt als erstes Element im
+     .rtrail unter Rail, Fuellung, Ringen und Zeilen; der Punkt laeuft darauf
+     entlang, ganz exakt dort, wo das GPS ihn sieht. */
+  .rtrail .rtspine { position: absolute; left: 10px; width: 3px; display: none; border-radius: 2px; }
 
   /* API-Indikatoren: in der festen Statusleiste oben rechts (mit GPS-Symbol) */
   #apiInd .ind { pointer-events: auto; cursor: pointer; }
@@ -4821,7 +4822,7 @@ function routeAlarmDepMin(a) {
     if (!con) continue;
     for (const sec of con.secs || []) {
       if (!sec || sec.jid !== a.jid) continue;
-      const sts = (sec.expand && sec.fullStops && sec.fullStops.length) ? sec.fullStops : (sec.stops || []);
+      const sts = sec.stops || [];   // die Segment-Liste bleibt immer die Basis (Erweiterung nur Anzeige)
       for (const st of sts) {
         if (!st || norm(String(st.name).replace(/\s*\(DB\)\s*$/, "")) !== want) continue;
         const parts = (st.dR || st.dS || "").split(":").map(Number);
@@ -5094,7 +5095,7 @@ function routeAlarmStations(rc) {
   const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
   (con && con.secs || []).forEach(sec => {
     if (!sec || sec.kind !== "jny") return;
-    const sts = (sec.expand && sec.fullStops && sec.fullStops.length) ? sec.fullStops : (sec.stops || []);
+    const sts = sec.stops || [];   // die Segment-Liste bleibt immer die Basis (Erweiterung nur Anzeige)
     sts.forEach(st => {
       if (!st || st.name == null) return;
       const stN = norm(String(st.name).replace(/\s*\(DB\)\s*$/, ""));
@@ -7480,9 +7481,52 @@ function updateTripDot() {
 // Pinker Punkt + Balken-Fuellung in der gewaehlten Route (nur Stile setzen):
 // Der Punkt wandert hinter den Abschnitts-Kreisen entlang der Gesamtroute,
 // die pinke Fuellung zeigt den GPS-Fortschritt je Abschnitt.
+// ---------- Eine durchgehende Linie durch die gesammte Route ----------
+// Die Linie links laeuft von der Mitte des Start-Rings bis zur Mitte des
+// End-Rings OHNE Luecke (auch ueber Block-Abstaende und ausgeklappte
+// Verlaeufe hinweg): Basis dunkelpink, innerhalb ausgeklappter Verlaeufe
+// dunkelblau, weiche Farbgane an den Grenzen. Sie liegt als erstes Element
+// im .rtrail und dadurch unter Rail/Fuellung/Ringen/Zeilen; der Punkt
+// laeuft auf ihr entlang, ganz exakt dort, wo das GPS ihn sieht.
+function paintRouteSpine(wrapEl) {
+  const spine = wrapEl.querySelector(".rtspine");
+  if (!spine) return;
+  const secs = wrapEl.querySelectorAll(".routesec[data-rsi]");
+  if (!secs.length) { spine.style.display = "none"; return; }
+  const wrapTop = wrapEl.getBoundingClientRect().top;
+  const top = secs[0].offsetTop + 10;                       // Mitte des Start-Rings
+  const lastEl = secs[secs.length - 1];
+  const bottom = Math.max(top, lastEl.offsetTop + lastEl.offsetHeight - 10);   // Mitte des End-Rings
+  const H = bottom - top;
+  // blaue Zonen = ausgeklappte Verlaeufe (trip-Bloecke), Rest pinke Basis
+  const zones = [];
+  wrapEl.querySelectorAll(".trip").forEach(t => {
+    const r = t.getBoundingClientRect();
+    const z0 = Math.max(top, r.top - wrapTop), z1 = Math.min(bottom, r.bottom - wrapTop);
+    if (z1 > z0) zones.push([z0, z1]);
+  });
+  zones.sort((a, b) => a[0] - b[0]);
+  const P = "#3b1631", B = "#1e3a5f", TR = 9;   // TR = Weichheit des Farbgangs
+  const parts = [];
+  let cur = 0;
+  const push = (col, px) => {
+    px = Math.max(0, Math.min(H, px));
+    if (px < cur) px = cur;
+    parts.push(col + " " + Math.round(px) + "px");
+    cur = px;
+  };
+  push(P, 0);
+  for (const z of zones) { push(P, z[0] - TR); push(B, z[0] + TR); push(B, z[1] - TR); push(P, z[1] + TR); }
+  push(P, H);
+  spine.style.top = top + "px";
+  spine.style.height = H + "px";
+  spine.style.background = "linear-gradient(to bottom, " + parts.join(", ") + ")";
+  spine.style.display = "";
+}
 function updateRouteDots() {
   const wrapEl = (routePanel && !routePanel.hidden) ? routePanel.querySelector(".rtrail") : null;
   if (!wrapEl) return;
+  paintRouteSpine(wrapEl);   // durchgehende Linie unabhaengig vom GPS zeichnen
   const dot = wrapEl.querySelector(".rtdot");
   const rc = routeChosen[routeActive];
   if (!rc) { if (dot) dot.style.display = "none"; return; }
@@ -7558,16 +7602,47 @@ async function routeLegFull(sec) {
   } catch (e) { return null; }
 }
 
+// Segment im GESAMTEN Lauf wiederfinden (fuer die Erweiterung): Name UND
+// Planzeit muessen am Zustiegs- und Ausstiegs-Eintrag passen; passen die
+// Zeiten nicht (SEV-Schleifen o. ae.), faellt der Vergleich auf reine
+// Namens-Gleichheit zurueck, der Lauf muss aber mindestens das gesamte
+// Segment umspannen, sonst gibt es keine Zuordnung.
+function routeExtOf(sec) {
+  const seg = sec.stops || [];
+  const full = sec.extStops || [];
+  const norm = v => String(v || "").trim();
+  const sameName = (x, t) => norm(x.name) === norm(t.name);
+  const sameTime = (x, t) => {
+    const pairs = [[x.dS, t.dS], [x.aS, t.dS], [x.dS, t.aS], [x.aS, t.aS]];
+    return pairs.some(pr => pr[0] != null && pr[1] != null && pr[0] === pr[1]);
+  };
+  if (!seg.length || !full.length) return null;
+  const t0 = seg[0], tN = seg[seg.length - 1];
+  let from = full.findIndex(x => sameName(x, t0) && sameTime(x, t0));
+  let to = -1;
+  for (let i = full.length - 1; i > from; i--)
+    if (sameName(full[i], tN) && sameTime(full[i], tN)) { to = i; break; }
+  if (from < 0 || to < from + seg.length - 1) {   // Zeiten passen nicht: nur Namen, Span pruefen
+    const f2 = full.findIndex(x => sameName(x, t0));
+    let t2 = -1;
+    for (let i = full.length - 1; i > f2; i--)
+      if (sameName(full[i], tN)) { t2 = i; break; }
+    if (f2 < 0 || t2 < f2 + seg.length - 1) return null;
+    from = f2; to = t2;
+  }
+  return { from: from, to: to };
+}
 function routeSecStopsHTML(rc, si) {
   const sec = rc.con.secs[si];
-  // Expand angefordert, ganzer Lauf aber noch nicht da -> Ladehinweis (der Rest
-  // der Ansicht bleibt beim alten Stand, bis die JourneyDetails durch sind)
-  if (sec.expand && sec.fullLoading && !(sec.fullStops && sec.fullStops.length)) {
-    return '<div class="trip"><small class="rowinfo dim">Ganzer Verlauf wird geladen …</small></div>';
-  }
-  const full = !!(sec.expand && sec.fullStops && sec.fullStops.length);
-  const sts = full ? sec.fullStops : (sec.stops || []);
+  // Die Liste dieses Abschnitts bleibt immer unverändert stehen (inkl.
+  // GPS-Markierung, ETA, Delays). Der ganze Lauf wird nur als Erweiterung
+  // darueber (vor dem Zustieg) und darunter (nach dem Ausstieg) eingeblendet.
+  const sts = sec.stops || [];
   if (!sts.length) return "";
+  const extOn = !!(sec.ext && sec.extStops && sec.extStops.length &&
+    sec.extFrom != null && sec.extTo != null);
+  const extUp = extOn && sec.extFrom > 0 ? sec.extStops.slice(0, sec.extFrom) : [];
+  const extDn = extOn && sec.extTo < sec.extStops.length - 1 ? sec.extStops.slice(sec.extTo + 1) : [];
   const pos = livePos();
   // GPS-Fortschritt (NUR Live-Ortung): jetzt identisch zum Haupt-Fahrtverlauf (tripProgressUpdate):
   // 50-m-Markierung, Richtung (vorherige/nächste Station), Geschwindigkeits-
@@ -7600,17 +7675,29 @@ function routeSecStopsHTML(rc, si) {
     }
   }
   const done = rc.prog[si] == null ? -1 : rc.prog[si];
+  const extRow = (st, cls) => {   // Erweiterungs-Zeile: nur Planzeit, gedimmt, klickbare Station
+    const kvg = routeStopMatch(st.name);
+    return '<div class="trow ext' + (cls ? " " + cls : "") + '">' +
+      '<span class="tgep">' + escapeHtml(st.dS || st.aS || "–") + "</span>" +
+      '<span class="takt">–</span>' +
+      '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
+        (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
+        ">" + escapeHtml(st.name) + "</span></div>";
+  };
   let html = '<div class="trip">';
-  // Expand-Knopf (wie im Haupt-Fahrtverlauf): ganzer Lauf <-> nur dieser Abschnitt
+  // Erweiterungs-Knopf (wie im Haupt-Fahrtverlauf): ganzer Lauf <-> nur dieser
+  // Abschnitt. Die Basis-Liste bleibt stehen, es wird nur erweitert/eingeklappt.
   if (sec.jid) {
     html += '<div class="thead"><span class="rtsmall">' +
-      (full ? "ganzer Lauf dieser Fahrt" : "Abschnitt " + escapeHtml(sec.from) + " → " + escapeHtml(sec.to)) +
+      (extOn ? "ganzer Lauf dieser Fahrt" : "Abschnitt " + escapeHtml(sec.from) + " → " + escapeHtml(sec.to)) +
       '</span><button class="rowref" data-rtexp="' + si + '" title="' +
-      (full ? "Nur die Stationen dieses Abschnitts anzeigen" :
-        "Ganzer Verlauf von der Start- bis zur Endhaltestelle anzeigen") +
-      '">' + (full ? "⤡" : "⤢") + "</button></div>";
+      (extOn ? "Erweiterung wieder einklappen: nur die Stationen dieses Abschnitts anzeigen" :
+        "Ganzen Lauf einblenden: die Liste bleibt und wird nur nach oben (bis zum Startpunkt) und nach unten (bis zum Laufende) erweitert") +
+      '">' + (extOn ? "⤡" : "⤢") + "</button></div>" +
+    (sec.ext && sec.extLoading && !extOn ? '<small class="rowinfo dim">Ganzer Lauf wird geladen …</small>' : "");
   }
   html += '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  extUp.forEach((st, i) => { html += extRow(st, i === 0 ? "frow" : ""); });   // Lauf-Anfang bis Zustieg
   const last = sts.length - 1;
   for (let i = 0; i < sts.length; i++) {
     const st = sts[i];
@@ -7652,7 +7739,7 @@ function routeSecStopsHTML(rc, si) {
     }
     const hereIdx = atIdx != null ? atIdx : done;
     const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
-      (i === 0 ? " frow" : "") + (i === last ? " lrow" : "");
+      (i === 0 && !extUp.length ? " frow" : "") + (i === last && !extDn.length ? " lrow" : "");
     const kvg = routeStopMatch(st.name);
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
@@ -7662,6 +7749,7 @@ function routeSecStopsHTML(rc, si) {
         (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
         ">" + escapeHtml(st.name) + "</span></div>";
   }
+  extDn.forEach((st, i, arr) => { html += extRow(st, i === arr.length - 1 ? "lrow" : ""); });   // Ausstieg bis Lauf-Ende
   return html + "</div>";
 }
 
@@ -8369,7 +8457,7 @@ function helpHTML() {
   h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Im Route-Reiter klappen die kleinen ▾-Pfeile im Titelbalken den oberen Teil (Suchzeile mit Verbindungsvorschlägen) und den unteren Block („Gewählte Route“) ein und aus: Eingeklappt bleibt der zuletzt angezeigte Stand eingefroren stehen, bis wieder ausgeklappt wird – so verrutscht nichts, während man unterwegs ist.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
-  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol lädt den kompletten Lauf nach: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau (die Übergänge sind direkt mit Farbübergang gezeichnet). Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt.");
+  h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten, die weich die Farbe wechselt, wo die pinke Route in einen blauen Verlauf übergeht. Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
@@ -8494,7 +8582,7 @@ function renderRoutePanel() {
             ' <button class="achip" data-rttotop="1" title="Zurück zur Verbindungsauswahl">▲ Verbindungsauswahl</button></div>';
         }
         const lastSi = c.secs.length - 1;
-        subHTML += '<div class="rtrail"><i class="rtdot"></i>';
+        subHTML += '<div class="rtrail"><i class="rtspine"></i><i class="rtdot"></i>';
         c.secs.forEach((sec, si) => {
           const lastLeg = si === lastSi;
           const rail = '<i class="rtleg"><i class="rfill" data-rsi="' + si + '"></i></i>' +
@@ -8562,19 +8650,30 @@ routePanel.addEventListener("click", e => {
   }
   const rtexp = e.target.closest("[data-rtexp]");
   if (rtexp) {
-    // Expand je Abschnitt: ganzer Lauf der Fahrt (via JourneyDetails) <-> nur Segment
+    // Erweiterung je Abschnitt auf den GESAMTEN Lauf (via JourneyDetails):
+    // Die Basis-Liste bleibt unberuehrt stehen (GPS-Markierung, Delays,
+    // Fortschritt), es werden nur Zeilen vor dem Zustieg und nach dem
+    // Ausstieg ein- bzw. wieder ausgeblendet.
     const rc = routeChosen[routeActive];
-    const sec = rc && rc.con && rc.con.secs && rc.con.secs[Number(rtexp.dataset.rtexp)];
+    const si = Number(rtexp.dataset.rtexp);
+    const sec = rc && rc.con && rc.con.secs && rc.con.secs[si];
     if (sec && sec.jid) {
-      sec.expand = !sec.expand;
-      // Indizes des GPS-Fortschritts beziehen sich auf die je Ansicht andere Liste
-      if (rc.at) { const si2 = Number(rtexp.dataset.rtexp); rc.at[si2] = null;
-        if (rc.prog) rc.prog[si2] = -1; if (rc.mark) rc.mark[si2] = null; }
-      if (sec.expand && !sec.fullStops && !sec.fullLoading) {
-        sec.fullLoading = true;
+      sec.ext = !sec.ext;
+      if (sec.ext && !(sec.extStops && sec.extStops.length)) {
+        sec.extLoading = true;
         renderRoutePanel();
-        routeLegFull(sec).then(stops => { if (stops && stops.length) sec.fullStops = stops; })
-          .catch(() => {}).finally(() => { sec.fullLoading = false; renderRoutePanel(); });
+        routeLegFull(sec).then(stops => {
+          sec.extLoading = false;
+          if (stops && stops.length) {
+            sec.extStops = stops;
+            const idx = routeExtOf(sec);
+            if (idx) { sec.extFrom = idx.from; sec.extTo = idx.to; }
+            else { sec.ext = false; sec.extStops = null;   // Lauf passt nicht zum Abschnitt: keine Erweiterung
+              setLocNote("Der Lauf dieser Fahrt konnte dem Abschnitt nicht zugeordnet werden – Erweiterung bleibt aus."); }
+          } else { sec.ext = false;
+            setLocNote("Ganzer Lauf konnte nicht geladen werden (Netzwerk?) – später nochmal versuchen."); }
+          renderRoutePanel();
+        }).catch(() => { sec.extLoading = false; sec.ext = false; renderRoutePanel(); });
       } else renderRoutePanel();
     }
     return;
@@ -9131,7 +9230,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.27 · Build: 19.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.28 · Build: 19.11.2026</div>
 </div>
 </body>
 </html>
