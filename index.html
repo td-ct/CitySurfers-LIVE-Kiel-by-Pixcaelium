@@ -110,9 +110,21 @@
   #bigAssignDlg .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a;
     color: #cbd5e1; border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; margin-top: 6px; }
   #bigAssignDlg .afbtn:hover { background: #334155; }
-  #gpsDlg, #favDlg { position: fixed; inset: 0; z-index: 82; background: rgba(2,6,23,.65);
+  #gpsDlg, #favDlg, #vehDlg { position: fixed; inset: 0; z-index: 82; background: rgba(2,6,23,.65);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
-  #gpsDlg[hidden], #favDlg[hidden] { display: none; }
+  #gpsDlg[hidden], #favDlg[hidden], #vehDlg[hidden] { display: none; }
+  .vehwrap { display: block; }
+  .vehrow { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 4px;
+    border-radius: 6px; }
+  .vehrow:hover { background: #273449; }
+  .vehrow.dimrow { cursor: default; }
+  .vehrow.dimrow .dl { background: #334155; color: #94a3b8; }
+  .vehrow .vdir { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 30px; }
+  .vehrow .vpct { font-weight: 700; color: #7dd3fc; flex-shrink: 0; }
+  #vehDlgList .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 6px 8px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  #vehDlgList .subinfo .nxopen { color: #7dd3fc; text-decoration: underline dotted; }
+  #vehDlgState { font-size: 0.85rem; }
   .gpsdlg-row { display: flex; align-items: center; gap: 10px; }
   .accbox input[type="text"] { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px;
     border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
@@ -606,6 +618,17 @@
     </div>
   </div>
 </div>
+<div id="vehDlg" hidden>
+  <div class="accbox" style="max-width:430px;">
+    <div><b>🚍 Welches Fahrzeug fahre ich?</b>
+      <button class="rowref" id="vehDlgRefresh" title="Erneut erkennen">↻</button></div>
+    <div id="vehDlgState" class="dim"></div>
+    <div id="vehDlgList"></div>
+    <div class="acbtns">
+      <button class="chip bad" id="vehDlgClose">Schließen</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <header>
     <h1>CitySurfers <span class="h1sub"><span class="live">● LIVE</span><span class="kiel">@ Kiel</span> <span class="by">by Pixcaelium</span></span></h1>
@@ -618,8 +641,8 @@
 
   <div class="bigbtns" id="bigbtns">
     <button class="bigbtn green" id="bbNear" title="Abfahrten ganz in der Nähe: GPS-Ortung aktivieren und Haltestellenliste nach Entfernung öffnen"><span class="bbsym">🧭</span><small>Nähe</small></button>
-    <button class="bigbtn orange" id="bbAlarm" title="Alle Wecker ein/aus (global)"><span class="bbsym">⏰</span><small>Wecker</small></button>
-    <button class="bigbtn blue" id="bbFh" title="Alle „Finde nach Hause“-Hinweise ein/aus (global)"><span class="bbsym">🏠</span><small>nach Hause</small></button>
+    <button class="bigbtn orange" id="bbMute" title="Wecker und „Finde nach Hause“ gemeinsam steuern (Ruhe-Knopf)"><span class="bbsym">🔔</span><small>beides an</small></button>
+    <button class="bigbtn teal" id="bbVeh" title="Ich sitze im Bus oder Zug: die gerade genutzte Linie automatisch erkennen"><span class="bbsym">🚍</span><small>Dabei?</small></button>
     <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
     <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
@@ -1044,6 +1067,7 @@ function onPos(pos) {
     Math.abs(myPos.lat - newPos.lat) > 0.0002 ||
     Math.abs(myPos.lon - newPos.lon) > 0.0002;
   myPos = newPos;
+  vehTrailPush(newPos, Date.now());   // Spur fuer die Fahrzeug-Erkennung
   gpsState = "on";
   gpsErrShown = false;
   renderGpsBtn();
@@ -5750,7 +5774,7 @@ function renderFhInd() {
   if (fhList.hidden) return;
   let html = "";
   if (fhOff)
-    html += '<div class="alrow"><span class="afsname dim">Finde nach Hause ist global aus (🏠-Knopf „nach Hause“ unten).</span></div>';
+    html += '<div class="alrow"><span class="afsname dim">„Finde nach Hause“ ist aus (Ruhe-Knopf 🔔/🔕 oben: alles wieder an mit einem Druck).</span></div>';
   if (n)
     html += '<div class="alrow"><span class="afsname dim">Aktive Hinweise:</span></div>' +
       [...fhCandidates.values()]
@@ -6828,6 +6852,7 @@ setInterval(() => {
   if (routePanel && !routePanel.hidden) renderRoutePanel();   // Route-Verlauf: GPS-Balken/Uhrzeit live
   if (helpPanel && !helpPanel.hidden) renderHelpPanel();
   alarmTick();
+  if (vehDlg && !vehDlg.hidden) vehScan(false);   // Erkennung im offenen Dialog auffrischen
   updateTripDot();
   updateRouteDots();
   if (window.KvgNative) {
@@ -6983,8 +7008,8 @@ renderAddrFavs();
 
 // ---------- Große Knopf-Reihe oben: Schnellzugriffe + belegbare Favoriten-Knöpfe ----------
 const bbNear = document.getElementById("bbNear");
-const bbAlarm = document.getElementById("bbAlarm");
-const bbFh = document.getElementById("bbFh");
+const bbMute = document.getElementById("bbMute");
+const bbVeh = document.getElementById("bbVeh");
 const bbBtns = [1, 2].map(i => document.getElementById("bb" + i));
 
 // Belegung der drei rechten Knöpfe: {kind:"addr", name} | {kind:"stop", sn} | null
@@ -6995,17 +7020,32 @@ try {
 } catch (e) {}
 function saveBigAssign() { try { localStorage.setItem("kvg-bigbtns", JSON.stringify(bigAssign)); } catch (e) {} }
 
+// Ruhe-Knopf (früher zwei Knöpfe ⏰ + 🏠): beides an -> beides aus -> nur
+// Wecker aus -> nur „Finde nach Hause“ aus -> beides an. Schnelle Kette
+// (< MUTE_CYCLE_GAP_MS seit dem letzten Druck) läuft im Zyklus weiter; nach
+// einer Weile stellt EIN Druck alles wieder an (Rücksetzen).
+const MUTE_CYCLE_GAP_MS = 3000;
+function muteNextState(state, msSinceLastPress) {
+  if (state === 0) return 3;   // alles an: ein Druck stummt alles
+  return msSinceLastPress < MUTE_CYCLE_GAP_MS
+    ? (state === 3 ? 1 : state === 1 ? 2 : 0)   // schnelle Kette: Zyklus weiter
+    : 0;                                        // nach einer Weile: alles wieder an
+}
 function renderBigToggles() {
-  bbAlarm.classList.toggle("off", alarmsOff);
-  bbAlarm.classList.toggle("strike", alarmsOff);
-  bbAlarm.title = alarmsOff
-    ? "Wecker global AUS – Antippen stellt alle Wecker wieder scharf"
-    : "Wecker global EIN – Antippen schaltet alle Wecker stumm (sie bleiben gestellt)";
-  bbFh.classList.toggle("off", fhOff);
-  bbFh.classList.toggle("strike", fhOff);
-  bbFh.title = fhOff
-    ? "Nach-Hause-Hinweise global AUS – Antippen schaltet sie wieder ein"
-    : "Nach-Hause-Hinweise global EIN – Antippen schaltet alle „Finde nach Hause“-Hinweise aus";
+  const anyMuted = alarmsOff || fhOff;
+  const bothMuted = alarmsOff && fhOff;
+  bbMute.classList.toggle("off", anyMuted);
+  bbMute.classList.toggle("strike", bothMuted);
+  bbMute.querySelector(".bbsym").textContent = anyMuted ? "🔕" : "🔔";
+  bbMute.querySelector("small").textContent =
+    bothMuted ? "beides aus" : alarmsOff ? "Wecker aus" : fhOff ? "Hinweise aus" : "beides an";
+  bbMute.title = bothMuted
+    ? "Wecker und „Finde nach Hause“ sind stumm – Antippen schaltet beides wieder ein. Schnell mehrfach antippen: nur Wecker bzw. nur Hinweise."
+    : alarmsOff
+      ? "Nur die Wecker sind stumm (gestellt bleiben sie) – Antippen schaltet alles wieder an; schnell weiter antippen: beides aus, Hinweise aus."
+      : fhOff
+        ? "Nur „Finde nach Hause“ ist stumm – Antippen schaltet alles wieder an; schnell weiter antippen: beides aus, Wecker aus."
+        : "Wecker und „Finde nach Hause“ sind an. Antippen: beides stumm. Schnell weiter antippen: nur Wecker aus, nur Hinweise aus, wieder an.";
 }
 
 function renderBigBtns() {
@@ -7052,9 +7092,9 @@ bbNear.addEventListener("click", () => {
   search.scrollIntoView({ block: "nearest" });
 });
 
-// ⏰ Wecker global ein/aus
-bbAlarm.addEventListener("click", () => {
-  alarmsOff = !alarmsOff;
+// 🔔/🔕 Ruhe-Knopf: Wecker und „Finde nach Hause“ gemeinsam (Zyklus s. oben)
+function setAlarmsOff(off) {   // Wecker global: Nebenwirkungen wie frueher einzeln
+  alarmsOff = off;
   try { localStorage.setItem("kvg-alarms-off", alarmsOff ? "1" : "0"); } catch (e) {}
   if (alarmsOff) {
     for (const k of [...ringing.keys()]) stopRinging(k, true);   // laufende Läut-Ketten beenden
@@ -7070,22 +7110,28 @@ bbAlarm.addEventListener("click", () => {
       }
     }
   }
-  renderBigToggles();
-  renderAlarmInd();
-  setLocNote(alarmsOff
-    ? "🔕 Alle Wecker global ausgestellt – gestellt bleiben sie, es klingelt nichts."
-    : "⏰ Wecker wieder scharf – alle gestellten Wecker laufen wieder.");
-});
-
-// 🏠 Alle „Finde nach Hause“-Hinweise ein/aus
-bbFh.addEventListener("click", () => {
-  fhOff = !fhOff;
+}
+function setFhOff(off) {   // Nach-Hause-Suche global
+  fhOff = off;
   try { localStorage.setItem("kvg-fh-off", fhOff ? "1" : "0"); } catch (e) {}
   if (fhOff) nativeCall("cancelNotify", "fh-scan");
+}
+let muteLastTs = 0;
+bbMute.addEventListener("click", () => {
+  const state = (alarmsOff ? 1 : 0) | (fhOff ? 2 : 0);   // 0=an/an 1=Wecker aus 2=Hinweise aus 3=beides aus
+  const next = muteNextState(state, Date.now() - muteLastTs);
+  muteLastTs = Date.now();
+  if (!!(next & 1) !== alarmsOff) setAlarmsOff(!!(next & 1));
+  if (!!(next & 2) !== fhOff) setFhOff(!!(next & 2));
   renderBigToggles();
-  setLocNote(fhOff
-    ? "🏠 Alle „Finde nach Hause“-Hinweise aus – es wird nicht mehr gesucht und nicht mehr gemeldet."
-    : "🏠 „Finde nach Hause“ wieder an – laufendes GPS sucht wieder nach direkten Fahrten.");
+  renderAlarmInd();
+  setLocNote(next === 3
+    ? "🔕 Wecker und „Finde nach Hause“ stumm. Schnell nochmal antippen: nur Wecker bzw. nur Hinweise."
+    : next === 1
+      ? "🔕 Nur die Wecker sind stumm (gestellt bleiben sie) – „Finde nach Hause“ läuft weiter."
+      : next === 2
+        ? "🔕 Nur „Finde nach Hause“ ist stumm – die Wecker laufen weiter."
+        : "🔔 Wecker und „Finde nach Hause“ wieder an.");
 });
 
 // Drei belegbare Knöpfe: langer Druck = Belegung, einfacher Klick = Aktion
@@ -7126,6 +7172,360 @@ bbBtns.forEach((b, i) => {
       openStopListAfterFav();   // Haltestellenliste gleich mit aufklappen
     }
   });
+});
+
+// ---------- 🚍 Fahrzeug-Erkennung: „Ich sitze gerade im Bus/Zug“ ----------
+// Kern (vehProj/vehSegInfo/vehPathDist/vehScore/muteNextState) ist DOM-frei und
+// per Grab getestet (test-v1231.cjs). Die Erkennung vergleicht die eigene GPS-
+// Spur gegen die Luftlinien-Interpolation der Haltestellen-Folge aller als
+// Kandidaten in Frage kommenden Live-Fahrten der Umgebung.
+const vehDlg = document.getElementById("vehDlg");
+const vehDlgList = document.getElementById("vehDlgList");
+const vehDlgState = document.getElementById("vehDlgState");
+let vehResults = [];          // letzte Erkennung: sortierte Kandidaten
+let vehScanning = false;
+let vehLastScan = 0;
+let vehScanId = 0;            // stehende alte Durchläufe verwerfen
+const vehStopsCache = new Map();   // tripId -> { ts, stops, route, dir } | { ts, bad: true }
+const VEH_STOP_R = 400;            // Stationen im Umkreis der aktuellen Position
+const VEH_STOP_TRAIL_R = 250;     // ... oder des Positionsverlaufs
+const VEH_TRAIL_PT_MS = 4 * 60 * 1000;   // wie weit der Trail für die Umkreis-Suche zählt
+const VEH_MAX_STOPS = 12;          // gleichzeitig abzufragende Stationen (Ratenlimit)
+const VEH_DEP_BACK_S = 120;        // Abfahrten bis 2 Minuten zurück ...
+const VEH_DEP_FUT_S = 480;         // ... bis 8 Minuten voraus sind Kandidaten
+const VEH_MAX_TRIPS = 10;          // Fahrtverläufe je Durchlauf laden
+const VEH_CORRIDOR_M = 120;         // Bus: Korridor um die Luftlinien-Interpolation
+const VEH_CORRIDOR_DB_M = 250;      // Bahn: großzügiger
+const VEH_HIT_M = 60;               // „an der Station vorbei“-Schwelle (Trail-Punkt)
+const VEH_HIT_WIN_S = 240;          // Zeitfenster dazu (Abfahrt dort ± 4 min)
+const VEH_TRAIL_MS = 8 * 60 * 1000; // Trail-Punkte, die für die Bewertung zählen
+const VEH_SCAN_MS = 20000;          // Pause zwischen automatischen Durchläufen
+const VEH_STOPS_TTL = 60000;        // Fahrtverlauf-Cache der Erkennung
+
+// Globaler Positionsverlauf (unabhängig von offenen Fahrten), gefüllt in onPos
+const vehTrail = [];
+function vehTrailPush(pos, ts) {
+  const last = vehTrail[vehTrail.length - 1];
+  if (last && ts - last.ts < 10000 && dist(last, pos) < 8) return;
+  vehTrail.push({ lat: pos.lat, lon: pos.lon, ts });
+  const cut = ts - 12 * 60 * 1000;
+  while (vehTrail.length && (vehTrail[0].ts < cut || vehTrail.length > 90)) vehTrail.shift();
+}
+
+function vehHhmmMin(s) {
+  const [h, m] = String(s || "").split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? h * 60 + m : null;
+}
+function vehNowMin(nowMs) {
+  const d = new Date(nowMs);
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+}
+function vehMinDelta(a, b) {   // Tagesumbruch-sicher
+  let d = a - b;
+  if (d > 720) d -= 1440; else if (d < -720) d += 1440;
+  return d;
+}
+
+// Projektion auf die Luftlinie a->b: Abstand + Längsanteil (0..1, geclampt)
+function vehProj(a, b, pos) {
+  const dLat = b.lat - a.lat, dLon = b.lon - a.lon;
+  const len2 = dLat * dLat + dLon * dLon;
+  if (!len2) return { d: dist(pos, a), f: 0 };
+  let t = ((pos.lat - a.lat) * dLat + (pos.lon - a.lon) * dLon) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const pLat = a.lat + t * dLat, pLon = a.lon + t * dLon;
+  return { d: dist(pos, { lat: pLat, lon: pLon }), f: t };
+}
+
+// Bester Abschnitt auf der Luftlinien-Kette der Haltestellen (Abstands-Minimum)
+function vehSegInfo(tstops, pos) {
+  let best = null;
+  for (let i = 0; i + 1 < tstops.length; i++) {
+    const a = tstops[i], b = tstops[i + 1];
+    if (!a || !b || !isFinite(a.lat) || !isFinite(b.lat)) continue;
+    const pj = vehProj(a, b, pos);
+    if (!best || pj.d < best.dist) best = { k: i, dist: pj.d, frac: pj.f };
+  }
+  return best;
+}
+
+// Kern-Bewertung (rein): tstops [{lat, lon, name?, sn?, depMin, live?}], Trail
+// aufsteigend nach Zeit. Rueckgabe: {score 0..99, segK, next, eta, openSn} | null
+function vehScore(tstops, trail, nowMs, opts) {
+  opts = opts || {};
+  const pos = opts.pos;
+  if (!pos || !tstops || tstops.length < 2) return null;
+  const acc = opts.acc == null ? 30 : opts.acc;
+  const corridor = (opts.isDB ? VEH_CORRIDOR_DB_M : VEH_CORRIDOR_M) + Math.min(acc, 150);
+  const seg = vehSegInfo(tstops, pos);
+  if (!seg) return null;
+  if (seg.dist > corridor) return null;   // Position liegt nicht auf der Linie
+  // Bewegungsspur entlang der Kette bewerten
+  const cut = nowMs - VEH_TRAIL_MS;
+  const pts = (trail || []).filter(p => p.ts >= cut && p.ts <= nowMs + 60000);
+  const usePts = pts.length ? pts : [{ lat: pos.lat, lon: pos.lon, ts: nowMs }];
+  let cover = 0;
+  const idxSeq = [], hits = [];
+  for (const p of usePts) {
+    const near = vehSegInfo(tstops, p);
+    if (!near) continue;
+    if (near.dist <= corridor) cover++;
+    idxSeq.push(near.k);
+    const pM = vehNowMin(p.ts);
+    for (let i = 0; i < tstops.length; i++) {
+      const s = tstops[i];
+      if (!isFinite(s.lat) || s.depMin == null) continue;
+      if (dist(p, s) <= VEH_HIT_M + Math.min(acc, 150)) {
+        const dt = Math.abs(vehMinDelta(s.depMin, pM));
+        if (dt <= VEH_HIT_WIN_S / 60) hits.push({ i, dt });
+      }
+    }
+  }
+  const coverFrac = cover / usePts.length;
+  let mono = 0;
+  for (let j = 1; j < idxSeq.length; j++) if (idxSeq[j] >= idxSeq[j - 1]) mono++;
+  const progFrac = idxSeq.length > 1 ? mono / (idxSeq.length - 1) : 0.5;
+  let steps = 0, lastI = -1;
+  for (const h of hits) {   // vorwärts in der Stations-Reihenfolge = Fahr-Beweis
+    if (h.i > lastI) { if (lastI >= 0) steps++; lastI = h.i; }
+  }
+  const hitScore = hits.length ? Math.min(1, (1 + steps) * 0.5) : 0;
+  // Zeit-Fit auf dem aktuellen Abschnitt (Ist- vor Plan-Zeit)
+  const t0 = tstops[seg.k].depMin, t1 = tstops[seg.k + 1].depMin;
+  let timeScore = 0;
+  if (t0 != null && t1 != null) {
+    const segMin = Math.max(0.5, vehMinDelta(t1, t0));
+    const schedFrac = vehMinDelta(vehNowMin(nowMs), t0) / segMin;
+    if (schedFrac < -0.15 || schedFrac > 1.15) return null;   // Zeit-Fenster verfehlt: nicht diese Fahrt
+    const dev = Math.abs(seg.frac - Math.max(0, Math.min(1, schedFrac)));
+    timeScore = 1 - Math.min(1, dev * 2.2);
+  } else if (t1 != null && vehMinDelta(t1, vehNowMin(nowMs)) >= -0.5) {
+    timeScore = 0.5;   // Endstation: noch nicht abgefahren
+  }
+  const score = Math.round(100 * Math.min(0.99, 0.34 * coverFrac + 0.26 * hitScore +
+    0.25 * timeScore + 0.15 * progFrac));
+  if (score < 15) return null;   // zu schwach: nicht anzeigen
+  let openSn = null;   // erste ANTIPPBARE Station ab der nächsten (KVG/DB-Bestand)
+  for (let i = seg.k + 1; i < tstops.length && openSn == null; i++) {
+    const s = tstops[i];
+    if (s.sn && opts.openable && opts.openable(s.sn)) openSn = s.sn;
+  }
+  const next = tstops[seg.k + 1] || null;
+  const eta = next && next.depMin != null
+    ? Math.max(0, Math.round(vehMinDelta(next.depMin, vehNowMin(nowMs)))) : null;
+  return { score, segK: seg.k, next, eta, openSn };
+}
+
+// Haltestellen-Kette einer KVG-Live-Fahrt (tripPassages: old + actual)
+async function vehKvgStops(tripId) {
+  const res = await apiFetch("kvg", TRIP_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tripId=" + encodeURIComponent(tripId)
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const raw = (data.old || []).concat(data.actual || []);
+  if (!raw.length) return null;
+  const out = raw.map(p => {
+    const sn = p.stop && p.stop.shortName;
+    const st = sn != null ? (stops.find(x => x.shortName === sn) || dbStopOf(sn)) : null;
+    return { sn, name: p.stop && p.stop.name,
+      lat: st ? st.lat : NaN, lon: st ? st.lon : NaN,
+      depMin: vehHhmmMin(p.actualTime), live: true };   // Ist-Zeit (Live-Board)
+  }).filter(s => s.depMin != null);
+  if (out.length < 2) return null;
+  return { stops: out, route: data.routeName || "", dir: data.directionText || "" };
+}
+
+// Haltestellen-Kette einer DB-Zugfahrt (JourneyDetails, echte Koordinaten);
+// kvgPlanned: geplante KVG-Fahrt über NAH.SH (extId -> KVG-Station abbilden)
+async function vehDbStops(tripId, kvgPlanned) {
+  const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: tripId } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  const j = out && out.journey;
+  if (!j || !j.stopL) return null;
+  const locL = (out.common && out.common.locL) || [];
+  const kvgExt = kvgPlanned ? {} : null;
+  if (kvgPlanned) for (const ksn in nahshLocCache) {
+    const m = nahshLocCache[ksn] && nahshLocCache[ksn].lid
+      ? String(nahshLocCache[ksn].lid).match(/@L=(\d+)/) : null;
+    if (m && !kvgExt[m[1]]) kvgExt[m[1]] = ksn;
+  }
+  const out2 = j.stopL.map(p => {
+    const loc = locL[p.locX] || {};
+    const crd = loc.crd || {};
+    const plannedS = p.dTimeS ? dbHHMM(p.dTimeS) : (p.aTimeS ? dbHHMM(p.aTimeS) : null);
+    const actualS = p.dTimeR ? dbHHMM(p.dTimeR) : (p.aTimeR ? dbHHMM(p.aTimeR) : plannedS);
+    const extId = loc.extId != null ? String(loc.extId) : "";
+    const sn = kvgPlanned ? (kvgExt[extId] || null) : (extId ? "DB:" + extId : null);
+    return { sn, name: loc.name,
+      lat: crd.y ? crd.y / 1e6 : NaN, lon: crd.x ? crd.x / 1e6 : NaN,
+      depMin: vehHhmmMin(actualS), live: !!p.dTimeR };
+  }).filter(s => s.depMin != null && isFinite(s.lat));
+  if (out2.length < 2) return null;
+  return { stops: out2, route: "", dir: j.dirTxt || "" };
+}
+
+// Haltestellen-Kette mit Cache (auch negative Ergebnisse, TTL gegen Hämmern)
+async function vehTripStops(tripId, sn, dep) {
+  const c = vehStopsCache.get(tripId);
+  if (c && Date.now() - c.ts < VEH_STOPS_TTL) return c.bad ? null : c;
+  let out = null;
+  try {
+    out = isDB(sn) ? await vehDbStops(tripId, false) : await vehKvgStops(tripId);
+  } catch (e) { out = null; }
+  const rec = out ? { ts: Date.now(), stops: out.stops, route: out.route, dir: out.dir }
+                  : { ts: Date.now(), bad: true };
+  vehStopsCache.set(tripId, rec);
+  return out ? rec : null;
+}
+
+// Stationen in Reichweite: um die aktuelle Position (weit) und um den
+// zurückgelegten Weg (enger), damit auch gerade passierte Stationen zählen
+function vehNearbyStops(pos) {
+  const seen = new Set(), out = [];
+  const add = arr => { for (const s of arr) {
+    if (!s || seen.has(s.shortName) || out.length >= VEH_MAX_STOPS) continue;
+    seen.add(s.shortName); out.push({ sn: s.shortName });
+  }};
+  add(stops.map(x => x).sort((a, b) => dist(pos, a) - dist(pos, b))
+      .filter(s => dist(pos, s) <= VEH_STOP_R));
+  const cut = Date.now() - VEH_TRAIL_PT_MS;
+  for (const p of vehTrail) {
+    if (out.length >= VEH_MAX_STOPS) break;
+    if (p.ts < cut) continue;
+    add(stops.map(x => x).sort((a, b) => dist(p, a) - dist(p, b))
+        .filter(s => dist(p, s) <= VEH_STOP_TRAIL_R));
+  }
+  return out;
+}
+
+// Ein Durchlauf: Umgebung -> Abfahrtstafeln -> Kandidaten -> Verläufe -> Score
+async function vehScan(manual) {
+  if (vehScanning) return;
+  if (!manual && Date.now() - vehLastScan < VEH_SCAN_MS) return;
+  if (gpsState !== "on" || !myPos) { vehResults = []; renderVehDlg(); return; }
+  vehScanning = true;
+  vehLastScan = Date.now();
+  const scanId = ++vehScanId;
+  renderVehDlg();
+  try {
+    const near = vehNearbyStops(myPos);
+    // 1) frische Abfahrtstafeln (Cache umgehen; Alter je Tafel mitrechnen)
+    const boards = [];
+    await Promise.all(near.map(async (n) => {
+      try {
+        const t0 = Date.now();
+        depCache.delete(n.sn);
+        const deps = await getDepartures(n.sn);
+        if (deps && deps.length) boards.push({ sn: n.sn, deps, ageSec: (Date.now() - t0) / 1000 });
+      } catch (e) {}
+    }));
+    if (scanId !== vehScanId) return;
+    // 2) Kandidaten: Fahrten, die an einer Station der Umgebung in den nächsten
+    //    8 Minuten abfahren (oder eben abgefahren sind) – Zeit-Peak: 2 min ahead
+    const cands = [], seenTrip = new Set();
+    for (const b of boards) {
+      for (const d of b.deps) {
+        if (!d.tripId || seenTrip.has(d.tripId)) continue;
+        const rel = d.actualRelativeTime - b.ageSec;
+        if (rel < -VEH_DEP_BACK_S || rel > VEH_DEP_FUT_S) continue;
+        seenTrip.add(d.tripId);
+        const timePref = 1 - Math.min(1, Math.abs(rel - 120) / 420);
+        cands.push({ sn: b.sn, rel, timePref, dep: d });
+      }
+    }
+    cands.sort((a, b) => (b.timePref - a.timePref) || (a.rel - b.rel));
+    // 3) Fahrtverläufe der besten Kandidaten holen und gegen die Spur scoren
+    const scored = [];
+    await Promise.all(cands.slice(0, VEH_MAX_TRIPS).map(async (c) => {
+      const t = await vehTripStops(c.dep.tripId, c.sn, c.dep);
+      if (!t || scanId !== vehScanId) return;
+      const sc = vehScore(t.stops, vehTrail, Date.now(),
+        { pos: myPos, acc: myPos.accuracy, isDB: isDB(c.sn),
+          openable: sn => !!stops.find(s => s.shortName === sn) });
+      if (sc) scored.push({ tripId: c.dep.tripId, line: c.dep.line,
+        direction: t.dir || c.dep.direction || "", route: t.route || "",
+        score: sc.score, next: sc.next, eta: sc.eta, openSn: sc.openSn });
+    }));
+    if (scanId !== vehScanId) return;
+    // 4) gleiche Linie + Richtung: nur der beste Kandidat (Folgefahrt etc.)
+    const best = new Map();
+    for (const r of scored) {
+      const key = (r.line || "") + "|" + (r.direction || "");
+      if (!best.has(key) || best.get(key).score < r.score) best.set(key, r);
+    }
+    vehResults = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 5);
+  } catch (e) {
+    if (scanId === vehScanId) vehResults = [];
+  } finally {
+    vehScanning = false;
+    renderVehDlg();
+  }
+}
+
+function renderVehDlg() {
+  if (!vehDlg || vehDlg.hidden) return;
+  if (gpsState !== "on" || !myPos) {
+    vehDlgState.textContent = "Die Erkennung braucht die laufende GPS-Ortung (◎ oben bzw. im Ruhe-Dialog) – bitte einschalten, die Suche startet dann von selbst.";
+    vehDlgList.innerHTML = "";
+    return;
+  }
+  vehDlgState.textContent = vehScanning
+    ? "Erkennung läuft … (Abfahrten der Umgebung und Fahrtverläufe werden gegen die GPS-Spur verglichen)"
+    : "Standort ±" + Math.round(myPos.accuracy || 0) + " m · "
+      + (vehLastScan ? "letzter Blick: " + new Date(vehLastScan).toLocaleTimeString("de-DE") + " Uhr" : "")
+      + (vehScanning ? "" : " · ↻ sucht sofort neu");
+  if (!vehResults.length && !vehScanning) {
+    vehDlgList.innerHTML = '<small class="rowinfo dim">Kein Fahrzeug erkannt. Möglicherweise wartest du noch an der Haltestelle (dann passt der Zeit-Fit nicht), das GPS ist zu ungenau, oder die Fahrt liefert keine Live-Daten.</small>';
+    return;
+  }
+  let html = "";
+  vehResults.forEach((r, i) => {
+    const open = r.openSn && stops.some(s => s.shortName === r.openSn);
+    html += '<div class="vehwrap"><div class="vehrow' + (open ? "" : " dimrow") + '" data-veh="' + i + '"' +
+      (open ? ' title="Antippen: nächste Station als Reiter öffnen, Fahrtverlauf direkt darunter"'
+            : ' title="Keine in der App öffnbare Station auf dem weiteren Lauf"') + '>' +
+      '<span class="dl">' + escapeHtml(r.line || r.route || "?") + '</span>' +
+      '<span class="vdir">→ ' + escapeHtml(r.direction || "") + '</span>' +
+      '<span class="vpct">' + r.score + " %</span></div>" +
+      '<div class="subinfo">' +
+      (r.next ? "nächste Station: " + escapeHtml(r.next.name || "") +
+        (r.eta != null ? " · in ~" + r.eta + " min" : "") : "") +
+      (open ? ' · <span class="nxopen">antippen: öffnen</span>' : "") +
+      "</div></div>";
+  });
+  vehDlgList.innerHTML = html;
+}
+
+// Kandidat wählen: nächste Station als Reiter + direkt darunter der Verlauf
+function vehPick(r) {
+  vehDlg.hidden = true;
+  if (!r.openSn) return;
+  const stopEl = stops.find(s => s.shortName === r.openSn);
+  if (!stopEl) return;
+  selectBus(r.openSn, r.tripId);        // Stationsreiter + Unter-Reiter der Fahrt
+  selectTrip(r.openSn, r.tripId);       // Verlauf laden (Block direkt offen)
+  setLocNote("Fahrzeug erkannt: Linie " + (r.line || r.route || "?") + " → " + (r.direction || "") +
+    " – " + stopEl.name + " und Fahrtverlauf geöffnet.");
+}
+
+vehDlg.addEventListener("keydown", e => { if (e.key === "Escape") vehDlg.hidden = true; });
+vehDlg.addEventListener("click", e => {
+  const row = e.target.closest("[data-veh]");
+  if (row) { const r = vehResults[Number(row.dataset.veh)]; if (r) vehPick(r); return; }
+  if (e.target === vehDlg) vehDlg.hidden = true;
+});
+document.getElementById("vehDlgClose").addEventListener("click", () => { vehDlg.hidden = true; });
+document.getElementById("vehDlgRefresh").addEventListener("click", () => vehScan(true));
+
+bbVeh.addEventListener("click", () => {
+  vehDlg.hidden = false;
+  vehResults = [];
+  renderVehDlg();
+  if (gpsState === "off") gpsStart();   // GPS fehlt: einschalten; Suche startet beim ersten Fix (15-s-Takt)
+  vehScan(true);
 });
 
 // Route-Knopf (ehemaliger frei belegbarer Knopf 0) öffnet die Routenplanung
@@ -8474,6 +8874,9 @@ function helpHTML() {
   h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. In den Stationslisten und Suchtreffer-Zeilen zählt allein die <b>Abfahrtszeit</b>: alle noch nicht abgefahrenen Verbindungen stehen in der Liste; abgefahrene bleiben bis 3 Minuten grau durchgestrichen stehen und verschwinden dann. Die Zusatz-Zeile „auch in … min“ nennt Folgfahrten derselben Linie.");
   h += sec("👁 Fahrtverlauf");
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
+  h += sec("🚍 Fahrzeug-Erkennung – in welchem Fahrzeug sitze ich?");
+  h += P("Der <b>🚍-Knopf „Dabei?“</b> oben erkennt, in welchem Bus oder Zug du gerade sitzt, ohne dass du die Linie suchen musst. Er holt die Abfahrten aller Stationen rund um den aktuellen Standort (400 m) und um den zurückgelegten Weg (250 m) und nimmt jede Fahrt als Kandidatin, die dort in den nächsten <b>8 Minuten</b> abfährt oder eben abgefahren ist – dann werden die <b>Fahrtverläufe der zehn besten Kandidaten</b> gegen die eigene GPS-Spur bewertet. Da es kein Bus-Routing gibt, läuft die Spur je Fahrt entlang der <b>Luftlinien-Interpolation zwischen ihren Haltestellen</b>. Die Wahrscheinlichkeit (Prozentwert) mischt vier Beweise: <b>Korridor</b> (34 %) – wie viel deiner Spur innerhalb des Korridors um die Luftlinie liegt (Bus 120 m, Bahn 250 m, jeweils plus GPS-Ungenauigkeit); <b>Stations-Pässe</b> (26 %) – die Spur streifte tatsächlich Haltestellen der Fahrt, und zwar im richtigen Zeitfenster (bis 4 Minuten zur dortigen Ist-Abfahrt) und in der richtigen Reihenfolge vorwärts; <b>Zeit-Fit</b> (25 %) – der zurückgelegte Anteil des Abschnitts entspricht dem Zeitanteil zwischen den Abfahrtszeiten (Live bevorzugt, sonst Plan); <b>Richtung</b> (15 %) – die Spur läuft durchgehend in Fahrtrichtung. Unter 15 Punkten fällt ein Kandidat raus. Antippen einer Zeile öffnet die <b>nächste Station als Reiter, direkt darunter den aufgeklappten Fahrtverlauf</b> – die Live-Verfolgung (Punkt, „≈“-Zeiten, Durchstreichen) läuft dort sofort mit. Solange der Dialog offen ist, wiederholt sich die Suche alle 15 Sekunden; sie braucht zwingend laufendes GPS (◎).");
+  h += P("<b>Ruhe-Knopf 🔔/🔕 („beides an“ nach dem Zusammenlegen der früheren ⏰- und 🏠-Knöpfe):</b> Ein Druck schaltet Wecker und „Finde nach Hause“ gemeinsam stumm, ein weiterer Druck <i>danach nach einer Weile</i> stellt beide wieder an. Schnell hintereinander gedrückt (unter 3 Sekunden Abstand) läuft der Knopf durch den Zyklus: beides an → beides aus → nur Wecker aus → nur Hinweise aus → beides an. Die Zustände bleiben gespeichert, auch über Neustarts.");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Distanz wird <b>nur mit aktiver GPS-Ortung</b> gemessen (◎ oben): Ohne GPS bliebe der Abstand gegen eine stehenbleibende alte Position falsch, deshalb ruht der Wecker dann still (mit Warnhinweis am Eintrag und beim Stellen). Bahnhöfe der DB sind eingeschlossen, ihre Koordinaten kommen aus der Bahnhof-Liste. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
   h += sec("🗂 Reiter: Stationen und Routen nebeneinander");
@@ -9284,7 +9687,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.30 · Build: 20.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.31 · Build: 20.11.2026</div>
 </div>
 </body>
 </html>
