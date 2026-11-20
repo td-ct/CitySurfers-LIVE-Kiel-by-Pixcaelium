@@ -163,11 +163,11 @@
   #addrSug .atype { color: #64748b; font-size: 0.8rem; white-space: nowrap; }
   #addrSug hr.sugsep { margin: 0; border: none; border-top: 1px solid #334155; }
   .ddbtn.active { background: #00519e; border-color: #4d8fd6; color: #fff; }
-  .depann { border: 1px solid #334155; background: #0f172a; color: #cbd5e1; border-radius: 6px;
-    padding: 2px 8px; font-size: 0.9rem; line-height: 1.4; cursor: pointer; vertical-align: middle; }
-  .depann:hover { background: #334155; color: #e2e8f0; }
-  .depann.all { border-color: #eab308; color: #eab308; }
-  .depann.small { padding: 1px 5px; font-size: 0.78rem; opacity: 0.8; }
+  .bl.gone { color: #64748b; text-decoration: line-through; }
+  .bl.gone .dl { background: #334155; color: #64748b; }
+  .bl.gone .plat { color: #64748b; }
+  .bl.gone .btime { color: #64748b; }
+  .bl.gone:hover { text-decoration: line-through; }
   .sechead .gpsbtn { padding: 2px 8px; font-size: 0.8rem; border-radius: 8px; vertical-align: middle; }
   .ptag { color: #94a3b8; font-size: 0.68rem; border: 1px solid #334155; border-radius: 4px;
     padding: 0 4px; margin-left: 6px; white-space: nowrap; }
@@ -3366,12 +3366,8 @@ function renderPanels() {
 
 let stationPanelOpen = true;   // Haltestellen-Übersicht: zugeklappt = eingefroren
 let stationPanelCache = "";
-// 🚶/💨-Umschalter hinter dem Stationsnamen („Abfahrten: …“): 🚶 = nur erreichbare
-// Abfahrten (Fußweg berücksichtigt), 💨 = auch zu Fuß nicht mehr erreichbare,
-// quasi abgefahrene Verbindungen. Persistiert (kvg-depall, im ⇅-Zustand enthalten).
+// Abfahrten: abfahrtszeit-basiert – kein Erreichbarkeits-Filter mehr (v1.2.30).
 // GPS-Knopf daneben: Position nur für Abfahrten + Stationsübersicht (depGps).
-let depShowAll = false;
-try { depShowAll = localStorage.getItem("kvg-depall") === "1"; } catch (e) {}
 // Geerbte GPS-Position für Reiter ohne eigene (vormals globales „GPS nur für
 // Abfahrten + Stationsübersicht“; kvg-depgps, 12 h gültig, danach verworfen).
 let depGps = null;
@@ -3410,17 +3406,12 @@ function renderStationPanel() {
   // Kopfzeile des Bereichs; nur der aufgeklappte Bereich wird aktualisiert,
   // der zugeklappte zeigt den eingefrorenen Stand. Die frühere separate
   // Stationsansicht (Name, Entfernung, Route-Icon, Stern, ↻) ist weg – der
-  // Stationsname steht nur noch hier, dahinter Favoritenstern, 🚶/💨-Umschalter
+  // Stationsname steht nur noch hier, dahinter Favoritenstern
   // und GPS, Aktualisieren (↻) ganz rechts.
   const head = '<div class="sechead" data-ssec="1"><span class="sarr">' +
     (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
     escapeHtml(currentStop.name) +
     starHTML(currentStop.shortName) +
-    ' <button class="depann small' + (depShowAll ? " all" : "") + '" data-depann="1" title="' +
-      (depShowAll
-        ? "Auch zu Fuß nicht mehr erreichbare (quasi abgefahrene) Verbindungen werden angezeigt – Klick: nur erreichbare"
-        : "Nur zu Fuß erreichbare Abfahrten – Klick: auch nicht mehr erreichbare (quasi abgefahrene) anzeigen") +
-      '">' + (depShowAll ? "💨" : "🚶") + "</button>" +
     tabGpsBtnHTML(currentStop.shortName) +
     '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
       '" title="Diese Haltestelle neu abfragen">↻</button>' +
@@ -3458,7 +3449,7 @@ function renderStationPanel() {
     }
     const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null);
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
-      // alle Abfahrten wirklich abgefahren (länger als 2 Minuten weg): automatisch neu abfragen.
+      // alle Abfahrten wirklich abgefahren (länger als 3 Minuten weg): automatisch neu abfragen.
       // Vorher IMMER Kopf + Hinweis rendern: die Abfrage dauert einen Moment (und kann
       // bei hängender/schlechter Verbindung länger stocken) – der Reiter darf nie leer
       // bleiben, nur weil die alten Daten weg sind („nur der Reiter, kein Inhalt“).
@@ -3475,7 +3466,7 @@ function renderStationPanel() {
       return;
     }
     if (!lines.length && v.deps.length) {
-      body += '<small class="rowinfo dim">Keine erreichbaren Abfahrten – Fußweg bis hierher zu lang. 💨-Knopf oben zeigt alle Abfahrten.</small>';
+      body += '<small class="rowinfo dim">Alle Abfahrten sind gerade abgefahren – neue Verbindungen werden geladen …</small>';
     }
     if (!lines.length && !v.deps.length && !v.error) {
       body += '<small class="rowinfo dim">' + (v.plannedLoading
@@ -3609,7 +3600,6 @@ function stationSectionHTML() {
       const [ah, am] = (dep.actualTime || dep.plannedTime || "").split(":").map(Number);
       const delayMin = (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
         ? (ah * 60 + am) - (ph * 60 + pm) : 0;
-      const colorCls = losMin > 3 ? "" : (losMin >= 0 ? " soon" : " missed");
       const now = new Date();
       const depClock = (() => {
         const t = new Date(now.getTime() + rel * 1000);
@@ -3628,8 +3618,12 @@ function stationSectionHTML() {
             Math.ceil(metersNow / (WALK_SPEED_KMH * 1000 / 60)) + " min</b>" +
             (estAir ? " (Luftlinie)" : "") + " · "
           : "") +
-        '<span style="color:' + (losMin > 3 ? "#4ade80" : losMin >= 0 ? "#fbbf24" : "#f87171") + '">' +
-        "los in " + losMin + " min</span></div>";
+        (rel < 0
+          ? '<span style="color:#64748b">abgefahren</span></div>'
+          : losMin >= 0
+            ? '<span style="color:' + (rel > 180 ? "#4ade80" : "#fbbf24") + '">' +
+              "los in " + losMin + " min</span></div>"
+            : '<span style="color:#fbbf24">ab in ' + Math.round(rel / 60) + " min</span></div>");
     } else {
       return '<small class="rowinfo dim">Abfahrt nicht mehr in den Daten – ↻ für neue Abfrage.</small>';
     }
@@ -4035,7 +4029,7 @@ function tripSectionHTML() {
   if (pos) {
     const pr = tripProgressUpdate(currentTrip, pos, Date.now(), {
       coordsOf: i => {
-        const st = stops.find(x => x.shortName === tstops[i].shortName);
+        const st = stops.find(x => x.shortName === tstops[i].shortName) || dbStopOf(tstops[i].shortName);
         return st ? st : null;
       },
       onSuspect: () => triggerSuspectRefetch(currentTrip.sn, currentTrip.tripId)
@@ -4084,6 +4078,8 @@ function tripSectionHTML() {
         tArmed ? "Wecker gestellt – antippen zum Ändern/Löschen" : "Wecker für eine Station dieser Fahrt stellen") +
       '">' + (tArmed || tFired ? "⏰" : "🔔") + "</button></div>" +
     '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  if (gpsState !== "on")
+    html += '<small class="rowinfo dim">GPS ist aus – die Live-Verfolgung (Punkt, „≈“-Zeiten, Durchstreichen) ruht. ◎ oben einschalten.</small>';
   for (let i = theFrom; i < tstops.length; i++) {
     const s = tstops[i];
     const key = s.key || (s.shortName + "|" + currentTrip.tripId);
@@ -5302,7 +5298,7 @@ function openRouteAlarmDialog() {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-depall"];
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off"];
 // Offene Reiter in kvg-view sichern: Stationen (Kette Haltestelle -> Buslinie
 // -> Fahrtverlauf, plus eigener Reiter-Name und UID für die Reihenfolge) und
 // alle parallelen Route-Reiter (Name, Start/Ziel, Zeit). saveView läuft bei
@@ -5398,14 +5394,6 @@ stationPanel.addEventListener("click", e => {
   if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
   const dg = e.target.closest("[data-depgps]");
   if (dg) { depGpsToggle(); return; }
-  const ann = e.target.closest("[data-depann]");
-  if (ann) {   // 🚶/💨: erreichbare Abfahrten oder ALLE (auch quasi abgefahrene) anzeigen
-    depShowAll = !depShowAll;
-    try { localStorage.setItem("kvg-depall", depShowAll ? "1" : "0"); } catch (err) {}
-    renderViews();
-    renderPanels();
-    return;
-  }
   const ref = e.target.closest("[data-ref]");
   if (ref) {   // ↻ sitzt jetzt in der Kopfzeile
     if (refetchGateOk("ref:" + ref.dataset.ref)) refetchStop(ref.dataset.ref, true);
@@ -6592,7 +6580,7 @@ async function fetchEarlierDeps(sn) {
 // Abfahrten, die man zu Fuß nicht mehr schafft – die sind NICHT weg, nur unerreichbar.
 function depsReallyGone(v) {
   const ageSec = (Date.now() - v.fetchTs) / 1000;
-  return !(v.deps || []).some(d => (d.actualRelativeTime || 0) - ageSec > -120);
+  return !(v.deps || []).some(d => (d.actualRelativeTime || 0) - ageSec > -180);
 }
 
 // ---------- Buszeilen rendern ----------
@@ -6684,10 +6672,13 @@ function busLinesHTML(v, horizonSec) {
       rank++;
     }
     const losMin = Math.round((rel - walkSec) / 60);
-    if (!d.earlier && !depShowAll && losMin < -2) continue;   // unerreichbar/abgefahren: nur mit 💨
+    // Abfahrtszeit entscheidet (kein Erreichbarkeits-Filter mehr): ALLE noch
+    // nicht abgefahrenen Verbindungen stehen in der Liste; Abgefahrene bleiben
+    // bis 3 Minuten grau durchgestrichen stehen und verschwinden dann.
+    if (!d.earlier && rel < -180) continue;
     const plat = v.platforms && v.platforms[d.tripId];
     const isPlan = d.earlier ? d.status === "PLANNED" : (d.planned || d.status === "PLANNED");
-    const cls = (losMin > 3 ? "bl" : losMin >= 0 ? "bl soon" : "bl missed") + (isPlan ? " planned" : "");
+    const cls = (rel >= 0 ? (rel > 180 ? "bl" : "bl soon") : "bl gone") + (isPlan ? " planned" : "");
     const ptag = isPlan ? '<span class="ptag">geplant</span>' : "";
     const now = new Date();
     const t = new Date(now.getTime() + rel * 1000);
@@ -6702,9 +6693,8 @@ function busLinesHTML(v, horizonSec) {
       if (x === d || x.planned || x.line !== d.line || x.direction !== d.direction) continue;
       const xrel = x.actualRelativeTime - w.ageSec;
       if (xrel <= rel) continue;   // nur spätere Fahrten
-      const xl = Math.round((xrel - walkSec) / 60);
-      if (xl < 0) continue;        // bereits abgefahren: nicht mehr nennen
-      nexts.push({ min: xl, id: x.tripId });
+      if (xrel < 0) continue;      // bereits abgefahren: nicht mehr nennen
+      nexts.push({ min: Math.round(xrel / 60), id: x.tripId });
     }
     nexts.sort((a, b) => a.min - b.min);
     // jede Folgefahrt einzeln antippbar: oeffnet ihren Fahrtverlauf (die Fahrt
@@ -6720,7 +6710,11 @@ function busLinesHTML(v, horizonSec) {
       : (!d.planned && (d.status === "PREDICTED" || d.status === "STOPPING") &&
          !isDB(v.stop.shortName) && rel > 0 && rel <= CD_MAX_S)
         ? clock + " · fährt in " + cdSpan(v.fetchTs + d.actualRelativeTime * 1000) + " min"
-        : clock + " · los in " + losMin + " min";
+        : rel < 0
+          ? clock + " · abgefahren"
+          : losMin >= 0
+            ? clock + " · los in " + losMin + " min"
+            : clock + " · ab in " + Math.round(rel / 60) + " min";
     out.push({
       html: '<div class="blwrap"><div class="' + cls + '"' + (clickable ? ' data-bus="' + bLink + '"' : "") + ">" +
         '<span class="dl blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(d.line) + '</span>' +
@@ -6761,7 +6755,7 @@ function renderView(sn, el) {
           info.textContent = "alle geladenen Abfahrten sind abgefahren – lade neu …";
           if (Date.now() - v.fetchTs > 30000) refetchStop(sn, false);
         } else {
-          info.innerHTML = "keine erreichbaren Abfahrten (Fußweg zu lang) – 💨-Knopf oben zeigt alle";
+          info.innerHTML = "alle geladenen Abfahrten sind abgefahren";
         }
         return;
       }
@@ -7468,8 +7462,8 @@ function updateTripDot() {
   const i1 = currentTrip.atIdx == null && rows[i0 + 1] != null ? i0 + 1 : null;
   let f = 0;
   if (i1 != null) {
-    const a = stops.find(x => x.shortName === tstops[i0].shortName);
-    const b = stops.find(x => x.shortName === tstops[i1].shortName);
+    const a = stops.find(x => x.shortName === tstops[i0].shortName) || dbStopOf(tstops[i0].shortName);
+    const b = stops.find(x => x.shortName === tstops[i1].shortName) || dbStopOf(tstops[i1].shortName);
     if (!a || !b) { dot.style.display = "none"; return; }
     const t = segFrac(a, b, myPos);
     if (t == null) { dot.style.display = "none"; return; }
@@ -8475,9 +8469,9 @@ function helpHTML() {
   h += P("CitySurfers zeigt <b>Live-Abfahrten der Kieler Stadtbusse (KVG) und DB-Züge</b> und plant Verbindungen in ganz Schleswig-Holstein (NAH.SH). Es gibt zwei Nutzungszweige, die sich im Kopf gut getrennt halten lassen: <b>Stationen</b> („Was fährt bei mir?“) und <b>Routing</b> („Wie komme ich dahin?“).");
   h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Haltestellensuche:</b> Name ab 1 Buchstabe (Tippfehler werden verziehen). Mit GPS laufen die Treffer nach <b>Fußweg</b>, gerechnet mit 5 km/h (zügiger Normschritt; die Schätzung soll eher eine Minute zu früh als zu spät raten). Bahnhof-Züge kommen mit 6-Stunden-Horizont, „später“ blättert je 6.");
-  h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste – der 💨-Schalter zeigt auch diese.");
+  h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste.");
   h += P("<b>Sekunden-Countdown:</b> Steht eine KVG-<b>Echtzeit</b>-Fahrt unmittelbar bevor (bis 3 Minuten), tickt „fährt in 2:54 min“ im Sekundentakt. Bewusst nur bei Echtzeit: Fahrplandaten haben keine Sekunden, ein Countdown daraus wäre getürkt. Während ein Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
-  h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. Durchgestrichene = abgefahren. Die Zusatz-Zeile „auch in … min“ nennt Folgfahrten derselben Linie.");
+  h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. In den Stationslisten und Suchtreffer-Zeilen zählt allein die <b>Abfahrtszeit</b>: alle noch nicht abgefahrenen Verbindungen stehen in der Liste; abgefahrene bleiben bis 3 Minuten grau durchgestrichen stehen und verschwinden dann. Die Zusatz-Zeile „auch in … min“ nennt Folgfahrten derselben Linie.");
   h += sec("👁 Fahrtverlauf");
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
   h += sec("⏰ Wecker");
@@ -8491,7 +8485,7 @@ function helpHTML() {
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt.");
   h += sec("🔧 Die Schwellen und warum");
-  h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−2 Minuten</b> blendet Verpasstes aus (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
+  h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
   return h;
 }
@@ -9290,7 +9284,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.29 · Build: 19.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.30 · Build: 20.11.2026</div>
 </div>
 </body>
 </html>

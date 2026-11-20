@@ -11,8 +11,8 @@ android {
         applicationId 'de.timodamm.citysurfers'
         minSdk 24
         targetSdk 34
-        versionCode 75
-        versionName '1.2.29'
+        versionCode 76
+        versionName '1.2.30'
         manifestPlaceholders = [appLabel: "@string/app_name"]
     }
 
