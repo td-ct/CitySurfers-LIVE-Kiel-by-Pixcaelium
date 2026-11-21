@@ -125,6 +125,9 @@
   .vehrow.dimrow .dl { background: #334155; color: #94a3b8; }
   .vehrow .vdir { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 30px; }
   .vehrow .vpct { font-weight: 700; color: #7dd3fc; flex-shrink: 0; }
+  .vehrow .vcls { flex-shrink: 0; }
+  #vehCfgRow { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
+  #vehCfgRow .vehcfg { flex: 1 1 30%; text-align: center; padding: 8px 10px; font-size: 0.95rem; }
   #vehDlgList .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 6px 8px; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   #vehDlgList .subinfo .nxopen { color: #7dd3fc; text-decoration: underline dotted; }
@@ -626,9 +629,12 @@
   <div class="accbox" style="max-width:430px;">
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><b>🚍 Welches Fahrzeug fahre ich?</b>
       <span style="flex:1 1 auto; min-width:0;"></span>
-      <button class="achip" id="vehCfgMinBtn" style="padding:3px 9px; font-size:0.8rem;" title="Zeitfenster der Kandidaten: Abfahrten von so vielen Minuten zurück bis voraus. Antippen wechselt ±1/2/3/4/5 Minuten (Standard ±2).">±2 min</button>
-      <button class="achip" id="vehCfgMBtn" style="padding:3px 9px; font-size:0.8rem;" title="Umkreis: Stationen um den Standort und den zurückgelegten Weg. Antippen wechselt 100/250/500/1000 Meter (Standard 250 m).">250 m</button>
       <button class="rowref" id="vehDlgRefresh" title="Erneut erkennen">↻</button></div>
+    <div id="vehCfgRow">
+      <button type="button" class="achip vehcfg" data-vehcfg="min" title="Zeitfenster der Kandidaten: Abfahrten von so vielen Minuten zurück bis voraus. Antippen wechselt ±1/2/3/4/5 Minuten (Standard ±2).">⏱ ±2 min</button>
+      <button type="button" class="achip vehcfg" data-vehcfg="m" title="🚌 Bus-Ebene: Stationen um den Standort und den zurückgelegten Weg. Antippen wechselt 100/250/500/1000 Meter (Standard 250 m).">🚌 250 m</button>
+      <button type="button" class="achip vehcfg" data-vehcfg="km" title="🚆 Bahn-Ebene: nächste Bahnhöfe im weiten Umkreis. Antippen wechselt 5/10/25/100/250 Kilometer (Standard 10 km).">🚆 10 km</button>
+    </div>
     <div id="vehDlgState" class="dim"></div>
     <div id="vehDlgList"></div>
     <div class="acbtns">
@@ -7182,10 +7188,11 @@ bbBtns.forEach((b, i) => {
 });
 
 // ---------- 🚍 Fahrzeug-Erkennung: „Ich sitze gerade im Bus/Zug“ ----------
-// Kern (vehProj/vehSegInfo/vehPathDist/vehScore/muteNextState) ist DOM-frei und
-// per Grab getestet (test-v1231.cjs). Die Erkennung vergleicht die eigene GPS-
-// Spur gegen die Luftlinien-Interpolation der Haltestellen-Folge aller als
-// Kandidaten in Frage kommenden Live-Fahrten der Umgebung.
+// Kern (vehScore3D/vehSegProject/vehUserMotion/vehLiveCls/muteNextState) ist
+// DOM-frei und per Grab getestet. Modell: jede Fahrt ist eine Linie im Raum-
+// Zeit-Kontext (Breite, Laenge, Minute seit Neujahr), die eigene GPS-Spur wird
+// in denselben Massstab gezeichnet und die Fahrt mit dem kleinsten Abstand
+// gewinnt; Richtung und Tempo sind harte Vorkfilter, nicht Gewichtungs-Beiwerte.
 const vehDlg = document.getElementById("vehDlg");
 const vehDlgList = document.getElementById("vehDlgList");
 const vehDlgState = document.getElementById("vehDlgState");
@@ -7196,19 +7203,22 @@ let vehScanId = 0;            // stehende alte Durchläufe verwerfen
 const vehStopsCache = new Map();   // tripId -> { ts, stops, route, dir } | { ts, bad: true }
 const VEH_CFG_KEY = "kvg-vehcfg";
 const VEH_CFG_MINS = [1, 2, 3, 4, 5];        // Zeitfenster ± Minuten (Standard 2)
-const VEH_CFG_MS = [100, 250, 500, 1000];    // Stations-Umkreis in Metern (Standard 250)
-let vehCfg = { min: 2, m: 250 };
+const VEH_CFG_MS = [100, 250, 500, 1000];    // Bus-Stations-Umkreis in Metern (Standard 250)
+const VEH_CFG_KMS = [5, 10, 25, 100, 250];   // Bahn-Stations-Umkreis in Kilometern (Standard 10)
+let vehCfg = { min: 2, m: 250, km: 10 };
+let vehCfgDirty = false;   // Regler wurde während eines Laufs geändert: danach neu suchen
 try { const c = JSON.parse(localStorage.getItem(VEH_CFG_KEY) || "null");
-  if (c && VEH_CFG_MINS.indexOf(c.min) >= 0 && VEH_CFG_MS.indexOf(c.m) >= 0) vehCfg = c; } catch (e) {}
+  if (c && VEH_CFG_MINS.indexOf(c.min) >= 0 && VEH_CFG_MS.indexOf(c.m) >= 0) {
+    vehCfg = { min: c.min, m: c.m, km: VEH_CFG_KMS.indexOf(c.km) >= 0 ? c.km : 10 }; } } catch (e) {}
 function vehCfgSave() { try { localStorage.setItem(VEH_CFG_KEY, JSON.stringify(vehCfg)); } catch (e) {} }
 function vehCfgNext(list, cur) { return list[(list.indexOf(cur) + 1) % list.length]; }
+const VEH_CFG_SEQ = { min: VEH_CFG_MINS, m: VEH_CFG_MS, km: VEH_CFG_KMS };
 const VEH_TRAIL_PT_MS = 4 * 60 * 1000;   // wie weit der Trail für die Umkreis-Suche zählt
-const VEH_MAX_STOPS = 12;          // gleichzeitig abzufragende Stationen (Ratenlimit)
-const VEH_MAX_TRIPS = 10;          // Fahrtverläufe je Durchlauf laden
-const VEH_CORRIDOR_M = 120;         // Bus: Korridor um die Luftlinien-Interpolation
+const VEH_MAX_STOPS = 12;          // gleichzeitig abzufragende Bus-Stationen (Ratenlimit)
+const VEH_MAX_RAIL_STOPS = 6;      // ... und Bahn-Stationen der Bahn-Ebene
+const VEH_MAX_TRIPS = 12;          // Fahrtverläufe je Durchlauf laden (Bus + Bahn)
+const VEH_CORRIDOR_M = 120;         // Bus: Korridor um die Fahr-Linie im Raum-Zeit
 const VEH_CORRIDOR_DB_M = 250;      // Bahn: großzügiger
-const VEH_HIT_M = 60;               // „an der Station vorbei“-Schwelle (Trail-Punkt)
-const VEH_HIT_WIN_S = 240;          // Zeitfenster dazu (Abfahrt dort ± 4 min)
 const VEH_TRAIL_MS = 8 * 60 * 1000; // Trail-Punkte, die für die Bewertung zählen
 const VEH_SCAN_MS = 15000;          // Rhythmus der Dauersuche (15 s)
 const VEH_STOPS_TTL = 60000;        // Fahrtverlauf-Cache der Erkennung
@@ -7227,104 +7237,134 @@ function vehHhmmMin(s) {
   const [h, m] = String(s || "").split(":").map(Number);
   return (isFinite(h) && isFinite(m)) ? h * 60 + m : null;
 }
-function vehNowMin(nowMs) {
-  const d = new Date(nowMs);
-  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
-}
-function vehMinDelta(a, b) {   // Tagesumbruch-sicher
-  let d = a - b;
-  if (d > 720) d -= 1440; else if (d < -720) d += 1440;
-  return d;
+
+// ---------- Raum-Zeit-Karte: (Breite, Länge, Minute) ----------
+// Zeitachse: Minuten seit Neujahr des laufenden Jahres (pro Programmstart bzw.
+// Neujahrs-Überschreitung neu festgelegt). Tageswechsel (auch Sylvesternacht)
+// laufen damit ohne Umbruch-Logik; erst beim nächsten Neujahr verschiebt sich
+// der Nullpunkt – die Karte wird ohnehin bei jedem Lauf neu gezeichnet.
+let vehMinOfYear = null;
+function vehMoiyReset() { const n = new Date(); vehMinOfYear = new Date(n.getFullYear(), 0, 1).getTime(); }
+vehMoiyReset();
+function vehMoiy(ms) { return (ms - vehMinOfYear) / 60000; }
+// HH:MM-Minuten des Tages ins Minuten-Spektrum heben; mehr als 12 h daneben
+// heißt Nachbar-Tag (Mitternachts-Fahrten gehören zur laufenden Fahrt)
+function vehMoiyOfMin(minOfDay, nowMoiy) {
+  let m = Math.floor(nowMoiy / 1440) * 1440 + minOfDay;
+  if (m - nowMoiy > 720) m -= 1440;
+  if (nowMoiy - m > 720) m += 1440;
+  return m;
 }
 
-// Projektion auf die Luftlinie a->b: Abstand + Längsanteil (0..1, geclampt)
-function vehProj(a, b, pos) {
+// Richtungsvektor a→b in lokalen Metern, normiert (für die Richtungs-Prüfung)
+function vehDirVec(a, b) {
+  const ks = Math.cos((a.lat || 0) * Math.PI / 180) * 111320;
+  const dx = (b.lon - a.lon) * ks, dy = (b.lat - a.lat) * 111320;
+  const L = Math.hypot(dx, dy);
+  if (L < 1) return null;
+  return { x: dx / L, y: dy / L };
+}
+
+// Eigene Richtung + Geschwindigkeit aus der Spur (verlässlich ab 60 m Bewegung
+// innerhalb der letzten 4 Minuten), Geschwindigkeit in Metern pro Minute
+function vehUserMotion(trail, nowMs) {
+  const cut = nowMs - 4 * 60 * 1000;
+  const pts = (trail || []).filter(p => p.ts >= cut);
+  if (pts.length < 2) return { dir: null, spd: 0, confident: false };
+  const a = pts[0], b = pts[pts.length - 1];
+  const moved = dist(a, b);
+  const spd = moved / Math.max(0.1, (b.ts - a.ts) / 60000);
+  if (moved < 60) return { dir: null, spd, confident: false };
+  return { dir: vehDirVec(a, b), spd, confident: true };
+}
+
+// Datenqualität einer Fahr-Linie: 2 = komplett Live, 1 = teilweise Live
+// (von Live-Punkten extrapoliert oder erst auf einen Live-Punkt zu), 0 = Fahrplan
+function vehLiveCls(tstops) {
+  let liveN = 0, n = 0;
+  for (const s of tstops) { n++; if (s.live) liveN++; }
+  if (!n || liveN === 0) return 0;
+  return liveN === n ? 2 : 1;
+}
+
+// Projektion eines Punkts auf den Raum-Zeit-Abschnitt a→b: Längsanteil (0..1)
+// und querer Abstand in Metern (Luftlinie zwischen den Haltestellen)
+function vehSegProject(a, b, p) {
   const dLat = b.lat - a.lat, dLon = b.lon - a.lon;
   const len2 = dLat * dLat + dLon * dLon;
-  if (!len2) return { d: dist(pos, a), f: 0 };
-  let t = ((pos.lat - a.lat) * dLat + (pos.lon - a.lon) * dLon) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const pLat = a.lat + t * dLat, pLon = a.lon + t * dLon;
-  return { d: dist(pos, { lat: pLat, lon: pLon }), f: t };
+  if (!len2) return { f: 0, dPerp: dist(p, a) };
+  let f = ((p.lat - a.lat) * dLat + (p.lon - a.lon) * dLon) / len2;
+  f = Math.max(0, Math.min(1, f));
+  return { f, dPerp: dist(p, { lat: a.lat + f * dLat, lon: a.lon + f * dLon }) };
 }
 
-// Bester Abschnitt auf der Luftlinien-Kette der Haltestellen (Abstands-Minimum)
-function vehSegInfo(tstops, pos) {
-  let best = null;
-  for (let i = 0; i + 1 < tstops.length; i++) {
-    const a = tstops[i], b = tstops[i + 1];
-    if (!a || !b || !isFinite(a.lat) || !isFinite(b.lat)) continue;
-    const pj = vehProj(a, b, pos);
-    if (!best || pj.d < best.dist) best = { k: i, dist: pj.d, frac: pj.f };
-  }
-  return best;
-}
-
-// Kern-Bewertung (rein): tstops [{lat, lon, name?, sn?, depMin, live?}], Trail
-// aufsteigend nach Zeit. Rueckgabe: {score 0..99, segK, next, eta, openSn} | null
-function vehScore(tstops, trail, nowMs, opts) {
+// Kern-Vergleich (rein, Raum-Zeit): tstops [{lat, lon, moiy, live, name?, sn?}]
+// aufsteigend, Trail aufsteigend nach Zeit. Jeder Spur-Punkt wird auf den
+// ABSCHNITT der Fahr-Linie projiziert, der ihn in Raum UND Zeit am nächsten
+// nimmt: Abweichung = sqrt(querMetern² + (Abschnittstempo × MinutenAbstand)²).
+// Position, Geschwindigkeit und Richtung stecken damit in EINEM Abstand;
+// Richtung und Tempo werden zusätzlich HART geprüft (Gegenrichtung raus,
+// Stadtbusse über 50 km/h raus). Rückgabe:
+// { score 0..99, segK, next, eta, openSn, cls } | null
+function vehScore3D(tstops, trail, nowMs, opts) {
   opts = opts || {};
   const pos = opts.pos;
   if (!pos || !tstops || tstops.length < 2) return null;
   const acc = opts.acc == null ? 30 : opts.acc;
   const corridor = (opts.isDB ? VEH_CORRIDOR_DB_M : VEH_CORRIDOR_M) + Math.min(acc, 150);
-  const seg = vehSegInfo(tstops, pos);
-  if (!seg) return null;
-  if (seg.dist > corridor) return null;   // Position liegt nicht auf der Linie
-  // Bewegungsspur entlang der Kette bewerten
+  const win = opts.winMin || 6;                    // erlaubte Minuten-Abweichung je Punkt
+  const segs = [];
+  for (let i = 0; i + 1 < tstops.length; i++) {
+    const a = tstops[i], b = tstops[i + 1];
+    if (!isFinite(a.lat) || !isFinite(b.lat) || a.moiy == null || b.moiy == null) continue;
+    const D = b.moiy - a.moiy;
+    if (D <= 0) continue;                         // rückwärts laufende Kette: unbrauchbar
+    segs.push({ i, a, b, D, S: dist(a, b) / D }); // S: Tempo des Abschnitts in m/min
+  }
+  if (!segs.length) return null;
+  const traj = vehUserMotion(trail, nowMs);
+  // Tempo HART: über 50 km/h eigener Geschwindigkeit fährt kein Stadtbus der
+  // Bus-Ebene (nur Bahn-Ebene: Züge und Überland-/SEV-Busse bleiben drin)
+  if (traj.spd * 0.06 > 50 && !opts.isDB) return null;
   const cut = nowMs - VEH_TRAIL_MS;
   const pts = (trail || []).filter(p => p.ts >= cut && p.ts <= nowMs + 60000);
   const usePts = pts.length ? pts : [{ lat: pos.lat, lon: pos.lon, ts: nowMs }];
-  let cover = 0;
-  const idxSeq = [], hits = [];
+  let devSum = 0, cover = 0, best = null;
   for (const p of usePts) {
-    const near = vehSegInfo(tstops, p);
-    if (!near) continue;
-    if (near.dist <= corridor) cover++;
-    idxSeq.push(near.k);
-    const pM = vehNowMin(p.ts);
-    for (let i = 0; i < tstops.length; i++) {
-      const s = tstops[i];
-      if (!isFinite(s.lat) || s.depMin == null) continue;
-      if (dist(p, s) <= VEH_HIT_M + Math.min(acc, 150)) {
-        const dt = Math.abs(vehMinDelta(s.depMin, pM));
-        if (dt <= VEH_HIT_WIN_S / 60) hits.push({ i, dt });
-      }
+    const m = vehMoiy(p.ts);
+    let bp = null;
+    for (const g of segs) {
+      const pj = vehSegProject(g.a, g.b, p);
+      const dtMin = m - (g.a.moiy + pj.f * g.D);   // Minuten zur Fahr-Linie dort
+      if (Math.abs(dtMin) > win) continue;
+      const dev = Math.sqrt(pj.dPerp * pj.dPerp + (g.S * dtMin) * (g.S * dtMin));
+      if (!bp || dev < bp.dev) bp = { g, dev, dtMin, pj };
     }
+    if (!bp) continue;                              // kein Abschnitt im Zeitfenster
+    if (bp.dev <= corridor) cover++;
+    devSum += Math.min(bp.dev, corridor * 3);
+    best = bp;                                      // letzter Punkt = aktuelle Lage
   }
-  const coverFrac = cover / usePts.length;
-  let mono = 0;
-  for (let j = 1; j < idxSeq.length; j++) if (idxSeq[j] >= idxSeq[j - 1]) mono++;
-  const progFrac = idxSeq.length > 1 ? mono / (idxSeq.length - 1) : 0.5;
-  let steps = 0, lastI = -1;
-  for (const h of hits) {   // vorwärts in der Stations-Reihenfolge = Fahr-Beweis
-    if (h.i > lastI) { if (lastI >= 0) steps++; lastI = h.i; }
+  if (!best) return null;
+  // Richtung HART: steht die eigene Fahrtrichtung fest (≥ 60 m bewegt), muss der
+  // passende Abschnitt in dieselbe oder eine ähnliche Richtung laufen (≤ 60°-Winkel)
+  if (traj.confident && traj.dir) {
+    const sv = vehDirVec(best.g.a, best.g.b);
+    if (sv && traj.dir.x * sv.x + traj.dir.y * sv.y < 0.5) return null;
   }
-  const hitScore = hits.length ? Math.min(1, (1 + steps) * 0.5) : 0;
-  // Zeit-Fit auf dem aktuellen Abschnitt (Ist- vor Plan-Zeit)
-  const t0 = tstops[seg.k].depMin, t1 = tstops[seg.k + 1].depMin;
-  let timeScore = 0;
-  if (t0 != null && t1 != null) {
-    const segMin = Math.max(0.5, vehMinDelta(t1, t0));
-    const schedFrac = vehMinDelta(vehNowMin(nowMs), t0) / segMin;
-    if (schedFrac < -0.15 || schedFrac > 1.15) return null;   // Zeit-Fenster verfehlt: nicht diese Fahrt
-    const dev = Math.abs(seg.frac - Math.max(0, Math.min(1, schedFrac)));
-    timeScore = 1 - Math.min(1, dev * 2.2);
-  } else if (t1 != null && vehMinDelta(t1, vehNowMin(nowMs)) >= -0.5) {
-    timeScore = 0.5;   // Endstation: noch nicht abgefahren
-  }
-  const score = Math.round(100 * Math.min(0.99, 0.34 * coverFrac + 0.26 * hitScore +
-    0.25 * timeScore + 0.15 * progFrac));
-  if (score < 15) return null;   // zu schwach: nicht anzeigen
+  const devAvg = devSum / usePts.length;
+  const closeness = Math.max(0, 1 - devAvg / (corridor * 3));
+  const score = Math.round(100 * Math.min(0.99, 0.6 * (cover / usePts.length) + 0.4 * closeness));
+  if (score < 15) return null;
   let openSn = null;   // erste ANTIPPBARE Station ab der nächsten (KVG/DB-Bestand)
-  for (let i = seg.k + 1; i < tstops.length && openSn == null; i++) {
+  for (let i = best.g.i + 1; i < tstops.length && openSn == null; i++) {
     const s = tstops[i];
     if (s.sn && opts.openable && opts.openable(s.sn)) openSn = s.sn;
   }
-  const next = tstops[seg.k + 1] || null;
-  const eta = next && next.depMin != null
-    ? Math.max(0, Math.round(vehMinDelta(next.depMin, vehNowMin(nowMs)))) : null;
-  return { score, segK: seg.k, next, eta, openSn };
+  const next = tstops[best.g.i + 1] || null;
+  const eta = next && next.moiy != null
+    ? Math.max(0, Math.round(next.moiy - vehMoiy(nowMs))) : null;
+  return { score, segK: best.g.i, next, eta, openSn };
 }
 
 // Haltestellen-Kette einer KVG-Live-Fahrt (tripPassages: old + actual)
@@ -7378,13 +7418,16 @@ async function vehDbStops(tripId, kvgPlanned) {
   return { stops: out2, route: "", dir: j.dirTxt || "" };
 }
 
-// Haltestellen-Kette mit Cache (auch negative Ergebnisse, TTL gegen Hämmern)
+// Haltestellen-Kette mit Cache (auch negative Ergebnisse, TTL gegen Hämmern);
+// geplante KVG-Fahrten (Fahrplan über NAH.SH, jid) laufen über den DB-Pfad mit
+// KVG-Stations-Abbildung, KVG-Livefahrten über tripPassages
 async function vehTripStops(tripId, sn, dep) {
   const c = vehStopsCache.get(tripId);
   if (c && Date.now() - c.ts < VEH_STOPS_TTL) return c.bad ? null : c;
   let out = null;
   try {
-    out = isDB(sn) ? await vehDbStops(tripId, false) : await vehKvgStops(tripId);
+    out = isDB(sn) ? await vehDbStops(tripId, false)
+      : ((dep && dep.planned) ? await vehDbStops(tripId, true) : await vehKvgStops(tripId));
   } catch (e) { out = null; }
   const rec = out ? { ts: Date.now(), stops: out.stops, route: out.route, dir: out.dir }
                   : { ts: Date.now(), bad: true };
@@ -7392,12 +7435,13 @@ async function vehTripStops(tripId, sn, dep) {
   return out ? rec : null;
 }
 
-// Stationen in Reichweite: um die aktuelle Position und um den zurückgelegten
-// Weg, damit auch gerade passierte Stationen zählen (Umkreis im Dialog regelbar)
+// Bus-Ebene: Stationen in Reichweite (KVG, keine DB-Bahnhöfe), um die aktuelle
+// Position und um den zurückgelegten Weg, sortiert nach Entfernung, maximal so
+// weit wie der Bus-Umkreis im Dialog (Standard 250 m)
 function vehNearbyStops(pos) {
   const seen = new Set(), out = [];
   const add = arr => { for (const s of arr) {
-    if (!s || seen.has(s.shortName) || out.length >= VEH_MAX_STOPS) continue;
+    if (!s || isDB(s.shortName) || seen.has(s.shortName) || out.length >= VEH_MAX_STOPS) continue;
     seen.add(s.shortName); out.push({ sn: s.shortName });
   }};
   add(stops.map(x => x).sort((a, b) => dist(pos, a) - dist(pos, b))
@@ -7412,29 +7456,68 @@ function vehNearbyStops(pos) {
   return out;
 }
 
-// Ein Durchlauf: Umgebung -> Abfahrtstafeln -> Kandidaten -> Verläufe -> Score
+// Bahn-Ebene: DB-Bahnhöfe im großen Radius (Standard 10 km), nach Entfernung
+function vehNearbyRail(pos) {
+  return DB_STOPS.map(d => ({ sn: d.sn, m: dist(pos, d) }))
+    .filter(d => d.m <= vehCfg.km * 1000)
+    .sort((a, b) => a.m - b.m)
+    .slice(0, VEH_MAX_RAIL_STOPS)
+    .map(d => ({ sn: d.sn }));
+}
+
+// Fahrplan-Brett: KVG-Station ohne Live-Tafel (Nacht, Linie ohne Live-Daten) –
+// geplante Fahrten über NAH.SH; füllt nebenbei den sn-Karten-Cache (nahshLocFor)
+async function vehPlannedDeps(sn) {
+  const stop = stops.find(x => x.shortName === sn);
+  if (!stop) return null;
+  let lid = null;
+  try { lid = await nahshLocFor(stop); } catch (e) { lid = null; }
+  if (!lid) return null;
+  try {
+    const now = Date.now();
+    const list = [];
+    for (const e of await nahshBoardEntries(lid, new Date(), "32")) {
+      const rel = (e.absMs - now) / 1000;
+      if (rel < -120 || rel > 30 * 60) continue;   // nur nahe Fahrten zeichnen
+      list.push({ tripId: e.tripId, line: e.line, direction: e.direction,
+        plannedTime: e.plannedTime, actualTime: e.actualTime,
+        actualRelativeTime: rel, status: e.hasRT ? "PREDICTED" : "PLANNED",
+        alerts: [], planned: true });
+    }
+    return list;
+  } catch (e) { return null; }
+}
+
+// Ein Durchlauf: Ebenen (Bus + Bahn) -> Tafeln -> Kandidaten -> Raum-Zeit-Vergleich
 async function vehScan(manual) {
-  if (vehScanning) return;
+  if (vehScanning) { if (manual) vehCfgDirty = true; return; }
   if (!manual && Date.now() - vehLastScan < VEH_SCAN_MS) return;
   if (gpsState !== "on" || !myPos) { vehResults = []; renderVehDlg(); renderVehBadge(); return; }
   vehScanning = true;
   vehLastScan = Date.now();
   const scanId = ++vehScanId;
+  vehMoiyReset();   // Neujahr ueberschritten? Zeitachse der Karte neu festlegen
   renderVehDlg();
   try {
-    const near = vehNearbyStops(myPos);
-    // 1) frische Abfahrtstafeln (Cache umgehen; Alter je Tafel mitrechnen)
+    // zwei Ebenen: Stadtbusse im kleinen Radius, Bahn-Halte im grossen Radius
+    const layerStops = [], seenSn = new Set();
+    for (const n of vehNearbyStops(myPos).concat(vehNearbyRail(myPos))) {
+      if (!seenSn.has(n.sn)) { seenSn.add(n.sn); layerStops.push(n); }
+    }
+    // 1) frische Tafeln beider Ebenen (Cache umgehen, Alter je Tafel mitrechnen);
+    //    leere Live-Tafel an einer KVG-Station: Fahrplan-Brett statt gar nichts
     const boards = [];
-    await Promise.all(near.map(async (n) => {
+    await Promise.all(layerStops.map(async (n) => {
       try {
         const t0 = Date.now();
         depCache.delete(n.sn);
-        const deps = await getDepartures(n.sn);
+        let deps = await getDepartures(n.sn);
+        if ((!deps || !deps.length) && !isDB(n.sn)) deps = await vehPlannedDeps(n.sn);
         if (deps && deps.length) boards.push({ sn: n.sn, deps, ageSec: (Date.now() - t0) / 1000 });
       } catch (e) {}
     }));
     if (scanId !== vehScanId) return;
-    // 2) Kandidaten: Fahrten, die an einer Station der Umgebung im eingestellten
+    // 2) Kandidaten: Fahrten, die an einer Station der Ebenen im eingestellten
     //    Zeitfenster (±X Minuten, Standard ±2) abfahren oder eben abgefahren sind
     const cands = [], seenTrip = new Set();
     const vehWin = vehCfg.min * 60;
@@ -7444,22 +7527,28 @@ async function vehScan(manual) {
         const rel = d.actualRelativeTime - b.ageSec;
         if (rel < -vehWin || rel > vehWin) continue;
         seenTrip.add(d.tripId);
-        const timePref = 1 - Math.min(1, Math.abs(rel - 120) / 420);
-        cands.push({ sn: b.sn, rel, timePref, dep: d });
+        cands.push({ sn: b.sn, rel, dep: d });
       }
     }
-    cands.sort((a, b) => (b.timePref - a.timePref) || (a.rel - b.rel));
-    // 3) Fahrtverläufe der besten Kandidaten holen und gegen die Spur scoren
+    cands.sort((a, b) => Math.abs(a.rel) - Math.abs(b.rel));   // "laeuft gerade" zuerst
+    // 3) Fahr-Linien der besten Kandidaten holen und im Raum-Zeit vergleichen
     const scored = [];
     await Promise.all(cands.slice(0, VEH_MAX_TRIPS).map(async (c) => {
       const t = await vehTripStops(c.dep.tripId, c.sn, c.dep);
       if (!t || scanId !== vehScanId) return;
-      const sc = vehScore(t.stops, vehTrail, Date.now(),
-        { pos: myPos, acc: myPos.accuracy, isDB: isDB(c.sn),
+      const cls = vehLiveCls(t.stops);   // 2 = Live, 1 = teilweise, 0 = Fahrplan
+      const nowMoiy = vehMoiy(Date.now());
+      const t3 = t.stops.map(s => ({ sn: s.sn, name: s.name, lat: s.lat, lon: s.lon,
+        moiy: vehMoiyOfMin(s.depMin, nowMoiy), live: !!s.live }));
+      if (t3.length < 2) return;
+      // Toleranz je Datenqualitaet: Fahrplan-Linien duerfen weiter abweichen
+      const winMin = vehCfg.min * (cls === 0 ? 2.5 : cls === 1 ? 1.5 : 1);
+      const sc = vehScore3D(t3, vehTrail, Date.now(),
+        { pos: myPos, acc: myPos.accuracy, isDB: isDB(c.sn), winMin,
           openable: sn => !!stops.find(s => s.shortName === sn) });
       if (sc) scored.push({ tripId: c.dep.tripId, line: c.dep.line,
         direction: t.dir || c.dep.direction || "", route: t.route || "",
-        score: sc.score, next: sc.next, eta: sc.eta, openSn: sc.openSn });
+        score: sc.score, next: sc.next, eta: sc.eta, openSn: sc.openSn, cls });
     }));
     if (scanId !== vehScanId) return;
     // 4) gleiche Linie + Richtung: nur der beste Kandidat (Folgefahrt etc.)
@@ -7476,6 +7565,10 @@ async function vehScan(manual) {
     vehScanning = false;
     renderVehDlg();
     renderVehBadge();
+    if (vehCfgDirty) {   // Regler wurde waehrend des Laufs gedrueckt: jetzt neu suchen
+      vehCfgDirty = false;
+      setTimeout(() => vehScan(true), 50);
+    }
   }
 }
 
@@ -7487,23 +7580,27 @@ function renderVehDlg() {
     return;
   }
   vehDlgState.textContent = vehScanning
-    ? "Erkennung läuft … (Abfahrten der Umgebung und Fahrtverläufe werden gegen die GPS-Spur verglichen)"
-    : "Standort ±" + Math.round(myPos.accuracy || 0) + " m · Fenster ±" + vehCfg.min + " min · " + vehCfg.m + " m Umkreis · "
+    ? "Erkennung läuft … (Abfahrten beider Ebenen werden gegen die GPS-Spur im Raum-Zeit verglichen)"
+    : "Standort ±" + Math.round(myPos.accuracy || 0) + " m · Fenster ±" + vehCfg.min + " min · 🚌 " + vehCfg.m + " m · 🚆 " + vehCfg.km + " km · "
       + (vehLastScan ? "letzter Blick: " + new Date(vehLastScan).toLocaleTimeString("de-DE") + " Uhr" : "")
       + (vehScanning ? "" : " · ↻ sucht sofort neu");
   if (!vehResults.length && !vehScanning) {
-    vehDlgList.innerHTML = '<small class="rowinfo dim">Kein Fahrzeug erkannt. Möglicherweise wartest du noch an der Haltestelle (dann passt der Zeit-Fit nicht), das GPS ist zu ungenau, oder die Fahrt liefert keine Live-Daten.</small>';
+    vehDlgList.innerHTML = '<small class="rowinfo dim">Kein Fahrzeug erkannt. Gegenrichtung und (bei zügigem Tempo) Stadtbusse sind hart ausgefiltert; möglicherweise wartest du noch, das GPS ist zu ungenau, oder im Fenster ±' + vehCfg.min + " min fährt gerade nichts.</small>";
     return;
   }
+  const vehCls = { 2: "🟢", 1: "🟡", 0: "⚪" };
+  const vehClsTxt = { 2: "Live-Daten der Fahrt", 1: "teilweise Live (Fahrt zwischen Live- und Fahrplan-Abschnitten)", 0: "reine Fahrplan-Daten (keine Live verfügbar)" };
   let html = "";
   vehResults.forEach((r, i) => {
     const open = r.openSn && stops.some(s => s.shortName === r.openSn);
+    const cl = vehCls[r.cls] || "⚪";   // 🟢 Live · 🟡 teilweise Live · ⚪ Fahrplan
     html += '<div class="vehwrap"><div class="vehrow' + (open ? "" : " dimrow") + '" data-veh="' + i + '"' +
       (open ? ' title="Antippen: nächste Station als Reiter öffnen, Fahrtverlauf direkt darunter"'
             : ' title="Keine in der App öffnbare Station auf dem weiteren Lauf"') + '>' +
       '<span class="dl">' + escapeHtml(r.line || r.route || "?") + '</span>' +
       '<span class="vdir">→ ' + escapeHtml(r.direction || "") + '</span>' +
-      '<span class="vpct">' + r.score + " %</span></div>" +
+      '<span class="vpct">' + r.score + " %</span>" +
+      '<span class="vcls" title="' + (vehClsTxt[r.cls] || vehClsTxt[0]) + '">' + cl + '</span></div>' +
       '<div class="subinfo">' +
       (r.next ? "nächste Station: " + escapeHtml(r.next.name || "") +
         (r.eta != null ? " · in ~" + r.eta + " min" : "") : "") +
@@ -7545,23 +7642,27 @@ setInterval(() => {
 }, 1000);   // Top-5-Nummern sequentiell im Abstand von 1 s
 
 // Regler im Dialogkopf (oben rechts): Zeitfenster und Umkreis der Kandidaten
-const vehCfgMinBtn = document.getElementById("vehCfgMinBtn");
-const vehCfgMBtn = document.getElementById("vehCfgMBtn");
 function renderVehCfg() {
-  vehCfgMinBtn.textContent = "±" + vehCfg.min + " min";
-  vehCfgMBtn.textContent = vehCfg.m + " m";
+  vehDlg.querySelectorAll('[data-vehcfg="min"]').forEach(b => { b.textContent = "⏱ ±" + vehCfg.min + " min"; });
+  vehDlg.querySelectorAll('[data-vehcfg="m"]').forEach(b => { b.textContent = "🚌 " + vehCfg.m + " m"; });
+  vehDlg.querySelectorAll('[data-vehcfg="km"]').forEach(b => { b.textContent = "🚆 " + vehCfg.km + " km"; });
 }
-vehCfgMinBtn.addEventListener("click", () => {
-  vehCfg.min = vehCfgNext(VEH_CFG_MINS, vehCfg.min);
-  vehCfgSave(); renderVehCfg(); vehScan(true);
-});
-vehCfgMBtn.addEventListener("click", () => {
-  vehCfg.m = vehCfgNext(VEH_CFG_MS, vehCfg.m);
-  vehCfgSave(); renderVehCfg(); vehScan(true);
-});
+function vehCfgStep(key) {
+  try {
+    if (!VEH_CFG_SEQ[key]) return;
+    vehCfg[key] = vehCfgNext(VEH_CFG_SEQ[key], vehCfg[key]);
+    vehCfgSave();
+    renderVehCfg();
+    if (vehScanning) vehCfgDirty = true; else vehScan(true);
+  } catch (e) {
+    setLocNote("Fahrzeug-Erkennung: Einstellung fehlgeschlagen (" + (e && e.message ? e.message : e) + ")");
+  }
+}
 renderVehCfg();
 
 vehDlg.addEventListener("click", e => {
+  const cfgBtn = e.target.closest("[data-vehcfg]");
+  if (cfgBtn) { vehCfgStep(cfgBtn.dataset.vehcfg); return; }
   const row = e.target.closest("[data-veh]");
   if (row) { const r = vehResults[Number(row.dataset.veh)]; if (r) vehPick(r); return; }
   if (e.target === vehDlg) vehDlg.hidden = true;
@@ -8926,7 +9027,7 @@ function helpHTML() {
   h += sec("👁 Fahrtverlauf");
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert).");
   h += sec("🚍 Fahrzeug-Erkennung – in welchem Fahrzeug sitze ich?");
-  h += P("Der <b>Fahrzeug-Knopf</b> oben trägt ein blaues Linienschild mit <b>„???“</b> als Liniennummer und erkennt, in welchem Bus oder Zug du gerade sitzt, ohne dass du die Linie suchen musst: Sobald die GPS-Ortung (◎) läuft, arbeitet die Suche <b>dauerhaft im Hintergrund</b>, holt alle 15 Sekunden neue Abfahrten und rankt die Kandidaten neu – das Linienschild am Knopf zeigt dabei <b>live die Liniennummer der wahrscheinlichsten Fahrt</b> und blättert im Sekundentakt durch die bis zu fünf besten Treffer. Geholt werden die Abfahrten aller Stationen im einstellbaren <b>Umkreis</b> (100/250/500/1000 m, Standard 250 m) um den aktuellen Standort und den zurückgelegten Weg; jede Fahrt ist Kandidatin, die dort im einstellbaren <b>Zeitfenster</b> (±1/2/3/4/5 Minuten, Standard ±2 Minuten) abfährt oder eben abgefahren ist – beide Regler sitzen <b>im Dialog oben rechts</b>. Von den Kandidaten werden die <b>Fahrtverläufe der zehn besten</b> gegen die eigene GPS-Spur bewertet. Da es kein Bus-Routing gibt, läuft die Spur je Fahrt entlang der <b>Luftlinien-Interpolation zwischen ihren Haltestellen</b>. Die Wahrscheinlichkeit (Prozentwert) mischt vier Beweise: <b>Korridor</b> (34 %) – wie viel deiner Spur innerhalb des Korridors um die Luftlinie liegt (Bus 120 m, Bahn 250 m, jeweils plus GPS-Ungenauigkeit); <b>Stations-Pässe</b> (26 %) – die Spur streifte tatsächlich Haltestellen der Fahrt, und zwar im richtigen Zeitfenster (bis 4 Minuten zur dortigen Ist-Abfahrt) und in der richtigen Reihenfolge vorwärts; <b>Zeit-Fit</b> (25 %) – der zurückgelegte Anteil des Abschnitts entspricht dem Zeitanteil zwischen den Abfahrtszeiten (Live bevorzugt, sonst Plan); <b>Richtung</b> (15 %) – die Spur läuft durchgehend in Fahrtrichtung. Unter 15 Punkten fällt ein Kandidat raus. Antippen einer Zeile im Dialog öffnet die <b>nächste Station als Reiter, direkt darunter den aufgeklappten Fahrtverlauf</b> – die Live-Verfolgung (Punkt, „≈“-Zeiten, Durchstreichen) läuft dort sofort mit.");
+  h += P("Der <b>Fahrzeug-Knopf</b> oben trägt ein blaues Linienschild mit <b>„???“</b> als Liniennummer und erkennt, in welchem Bus oder Zug du gerade sitzt, ohne dass du die Linie suchen musst: Sobald die GPS-Ortung (◎) läuft, arbeitet die Suche <b>dauerhaft im Hintergrund</b>, holt alle 15 Sekunden neue Abfahrten und rankt neu – das Linienschild am Knopf zeigt <b>live die Liniennummer der wahrscheinlichsten Fahrt</b> und blättert im Sekundentakt durch die bis zu fünf besten Treffer. Das Modell: Jede mögliche Fahrt wird als <b>Linie in einem Raum-Zeit-Diagramm</b> gezeichnet, x und y sind die Stationkoordinaten, die dritte Achse ist die Zeit als reine <b>Minute seit Neujahr</b> (bei Jahreswechsel spannt die App die Achse neu auf) – jede Station ist ein Abfahrts-<b>Punkt</b>, aufeinanderfolgende Halte werden zu <b>Verbindungslinien</b> verbunden. Die eigene GPS-Spur wird in dasselbe Diagramm gezeichnet, und die wahrscheinlichste Fahrt ist die mit dem kleinsten Abstand zur Spur: <b>Position, Tempo und Richtung stecken gemeinsam in diesem einen Abstand</b>. Zwei Ebenen: <b>🚌 Stadtverkehr</b> (Stationen nach Entfernung sortiert) im einstellbaren Umkreis 100/250/500/1000 m (Standard 250 m) und <b>🚆 Bahn</b> mit den nächsten Bahnhöfen im eigenen weiten Umkreis 5/10/25/100/250 km (Standard 10 km) – die drei Regler dazu sitzen <b>im Dialogkopf oben</b>. Kandidaten sind Fahrten, die an einer Station der Ebenen im einstellbaren <b>Zeitfenster</b> (±1/2/3/4/5 Minuten, Standard ±2 Minuten) abfahren oder eben abgefahren sind. Zwei <b>harte Filter</b> greifen vor der Bewertung: Steht die eigene Fahrtrichtung fest (die Spur zeigt mindestens 60 Meter Bewegung), werden Fahrten <b>in Gegenrichtung nie angezeigt</b>; und über 50 km/h eigenes Tempo scheidet der Stadtbus aus, übrig bleiben Überlandbus und die Bahn-Ebene. Die Datenqualität je Fahrt zeigt ein Symbol: <b>🟢</b> komplett aus Live-Daten, <b>🟡</b> teilweise Live (als Fahrt von einer Live-Station planmäßig losgefahren oder planmäßig unterwegs zu einer Live-Station), <b>⚪</b> reine Fahrplan-Daten – fehlt einer Station jede Live-Tafel, wird die Fahrt komplett aus dem Fahrplan gezeichnet, und reinen Fahrplan-Linien reicht ein weitereres Zeitfenster (2,5-fach) als Abweichungs-Toleranz. Im Dialog zeigt jede Zeile die Wahrscheinlichkeit, die nächste Station samt „in ~X min“ und das Qualitätssymbol. Antippen einer Zeile öffnet die <b>nächste Station als Reiter, direkt darunter den aufgeklappten Fahrtverlauf</b> – die Live-Verfolgung läuft dort sofort mit.");
   h += P("<b>Ruhe-Knopf 🔔/🔕 („beides an“ nach dem Zusammenlegen der früheren ⏰- und 🏠-Knöpfe):</b> Ein Druck schaltet Wecker und „Finde nach Hause“ gemeinsam stumm, ein weiterer Druck <i>danach nach einer Weile</i> stellt beide wieder an. Schnell hintereinander gedrückt (unter 3 Sekunden Abstand) läuft der Knopf durch den Zyklus: beides an → beides aus → nur Wecker aus → nur Hinweise aus → beides an. Die Zustände bleiben gespeichert, auch über Neustarts.");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Distanz wird <b>nur mit aktiver GPS-Ortung</b> gemessen (◎ oben): Ohne GPS bliebe der Abstand gegen eine stehenbleibende alte Position falsch, deshalb ruht der Wecker dann still (mit Warnhinweis am Eintrag und beim Stellen). Bahnhöfe der DB sind eingeschlossen, ihre Koordinaten kommen aus der Bahnhof-Liste. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
@@ -9730,7 +9831,8 @@ renderFhInd();      // 🏠 der Statusleiste initial füllen
 setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffrischen
 
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
-updateGpsBtns(true);</script>
+updateGpsBtns(true);
+</script>
 
 <div class="apkdl pagefoot">
   📱 <strong>Android-App nachinstallieren bzw. aktualisieren:</strong>
@@ -9738,7 +9840,7 @@ updateGpsBtns(true);</script>
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.32 · Build: 20.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.33 · Build: 21.11.2026</div>
 </div>
 </body>
 </html>
