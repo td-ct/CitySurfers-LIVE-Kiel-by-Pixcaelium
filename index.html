@@ -131,6 +131,16 @@
   .followhint { font-size: 0.85rem; color: #94a3b8; padding: 1px 6px 3px; line-height: 1.45; }
   .trip .followhint { padding: 0 2px 3px 30px; }
   .followhint div { white-space: normal; }
+  .szt { font-style: italic; }   /* KONVENTION: kursiv = Wert aus dem Raum-Zeit-Diagramm (eigene Auswertung) */
+  .sztwrap { display: inline-grid; vertical-align: bottom; }   /* Live- und Raum-Zeit-Wert im Stapel */
+  .sztwrap > span { grid-area: 1 / 1; }
+  .sztwrap .sztl { animation: sztAltA 4s steps(1, end) infinite; }
+  .sztwrap .sztt { animation: sztAltB 4s steps(1, end) infinite; }
+  @keyframes sztAltA { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 0; } }
+  @keyframes sztAltB { 0% { opacity: 0; } 50.01% { opacity: 1; } 100% { opacity: 1; } }
+  .sztline.sztwarn div { color: #eab308; }   /* Anschluss-Sicherung: Vouchers-Farben wie Live (gelb) */
+  .sztline.sztkrit div { color: #ef4444; }   /* verpasst = rot */
+  .sztline.sztok div { color: #22c55e; }     /* Puffer ok = gruen
   #vehDlgList .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 6px 8px; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   #vehDlgList .subinfo .nxopen { color: #7dd3fc; text-decoration: underline dotted; }
@@ -4119,6 +4129,7 @@ function tripSectionHTML() {
         tArmed ? "Wecker gestellt – antippen zum Ändern/Löschen" : "Wecker für eine Station dieser Fahrt stellen") +
       '">' + (tArmed || tFired ? "⏰" : "🔔") + "</button></div>" +
     tripFollowHTML(currentTrip, tstops) +
+    sztTripHeadHTML(currentTrip) +
     '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   if (gpsState !== "on")
     html += '<small class="rowinfo dim">GPS ist aus – die Live-Verfolgung (Punkt, „≈“-Zeiten, Durchstreichen) ruht. ◎ oben einschalten.</small>';
@@ -4170,13 +4181,31 @@ function tripSectionHTML() {
         }
       }
     }
+    // Raum-Zeit-Wert (KURSIV, dritte Datenquelle): ersetzt/blendet die Live-Angabe,
+    // wenn die eigene Auswertung signifikant abweicht (>= 3 min) oder Live fehlt;
+    // gleiche Farben, kursiv ist das Kennzeichen der Raum-Zeit-Daten. Die eigene
+    // 50-m-Station laeuft weiter live (dort ist die eigene Uhr naeher dran).
+    let sztRowAktuell = escapeHtml(actual || "–");
+    const sztRv = sztRowEta(s.shortName, planned, s.name);
+    if (sztRv != null && !(gpsKey && key === gpsKey)) {
+      const stxt = "≈" + sztClockOf(sztRv.eta);
+      const liveMin = actual ? hhmmToMin(actual) : null;
+      if (!actual) {
+        sztRowAktuell = '<span class="szt">' + stxt + "</span>";
+        if (sztRv.d != null) delayHtml = sztChip(sztRv.d);
+      } else if (sztIsSig(liveMin, sztRv.eta)) {
+        sztRowAktuell = sztBlend(actual, stxt);
+        if (dl && dl.delayMin != null && sztIsSig(dl.delayMin, sztRv.d))
+          delayHtml = sztChipBlend(dl.delayMin, sztRv.d);
+      }
+    }
     const hereIdx = currentTrip.atIdx != null ? currentTrip.atIdx : done;
     const rowCls = (i <= done && i !== currentTrip.atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === theFrom ? " frow" : "") + (i === last ? " lrow" : "");
     const canOpen = stops.some(x => x.shortName === s.shortName);   // klickbar -> neuer Reiter
     html += '<div class="trow' + rowCls + '" data-tri="' + i + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
-      '<span class="takt' + (i === currentTrip.atIdx && !(mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
+      '<span class="takt' + (i === currentTrip.atIdx && !(mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) ? " blinkclock" : "") + '">' + sztRowAktuell + "</span>" +
       delayHtml +
       '<span class="tname' + (canOpen ? " tnameclick" : "") + '"' +
         (canOpen ? ' data-stopopen="' + escapeHtml(s.shortName) +
@@ -6987,7 +7016,8 @@ function renderView(sn, el) {
     const walkMin = Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60));
     const pre = isEst(sn) ? "~" : "";
     const newText = pre + formatDist(v.meters) + " · " + pre + walkMin + " min";
-    if (meta.textContent !== newText) meta.textContent = newText;
+    const sztText = escapeHtml(newText) + sztWalkHTML(v.meters);
+    if (meta.innerHTML !== sztText) meta.innerHTML = sztText;
   }
   const info = el.querySelector(".rowinfo");
   if (info) {
@@ -7578,7 +7608,8 @@ function vehScore3D(tstops, trail, nowMs, opts) {
   const next = tstops[best.g.i + 1] || null;
   const eta = next && next.moiy != null
     ? Math.max(0, Math.round(next.moiy - vehMoiy(nowMs))) : null;
-  return { score, segK: best.g.i, next, eta, openSn };
+  return { score, segK: best.g.i, next, eta, openSn,
+    dtMin: best.dtMin, frac: best.pj.f, spdK: Math.round(best.g.S * 0.06) };
 }
 
 // Haltestellen-Kette einer KVG-Live-Fahrt (tripPassages: old + actual)
@@ -7710,6 +7741,7 @@ async function vehScan(manual) {
   vehScanning = true;
   vehLastScan = Date.now();
   const scanId = ++vehScanId;
+  sztRejected = [];
   vehMoiyReset();   // Neujahr ueberschritten? Zeitachse der Karte neu festlegen
   renderVehDlg();
   try {
@@ -7731,6 +7763,7 @@ async function vehScan(manual) {
       } catch (e) {}
     }));
     if (scanId !== vehScanId) return;
+    sztReachDigest(boards, myPos, vehUserMotion(vehTrail, Date.now()), Date.now());
     // 2) Kandidaten: Fahrten, die an einer Station der Ebenen im eingestellten
     //    Zeitfenster (±X Minuten, Standard ±2) abfahren oder eben abgefahren sind
     const cands = [], seenTrip = new Set();
@@ -7753,16 +7786,22 @@ async function vehScan(manual) {
       const cls = vehLiveCls(t.stops);   // 2 = Live, 1 = teilweise, 0 = Fahrplan
       const nowMoiy = vehMoiy(Date.now());
       const t3 = t.stops.map(s => ({ sn: s.sn, name: s.name, lat: s.lat, lon: s.lon,
-        moiy: vehMoiyOfMin(s.depMin, nowMoiy), live: !!s.live }));
+        moiy: vehMoiyOfMin(s.depMin, nowMoiy), depMin: s.depMin, live: !!s.live }));
       if (t3.length < 2) return;
       // Toleranz je Datenqualitaet: Fahrplan-Linien duerfen weiter abweichen
       const winMin = vehCfg.min * (cls === 0 ? 2.5 : cls === 1 ? 1.5 : 1);
+      const dbLayer = isDB(c.sn);
       const sc = vehScore3D(t3, vehTrail, Date.now(),
-        { pos: myPos, acc: myPos.accuracy, isDB: isDB(c.sn), winMin,
+        { pos: myPos, acc: myPos.accuracy, isDB: dbLayer, winMin,
           openable: sn => !!stops.find(s => s.shortName === sn) });
-      if (sc) scored.push({ tripId: c.dep.tripId, line: c.dep.line,
+      if (sc) scored.push({ tripId: c.dep.tripId, line: c.dep.line, sn: c.sn, isDB: dbLayer,
         direction: t.dir || c.dep.direction || "", route: t.route || "",
-        score: sc.score, next: sc.next, eta: sc.eta, openSn: sc.openSn, cls });
+        score: sc.score, next: sc.next, eta: sc.eta, openSn: sc.openSn, cls,
+        dtMin: sc.dtMin, segI: sc.segK, spdK: sc.spdK, t3 });
+      else if (sztRejected.length < 8) {
+        sztRejected.push({ line: c.dep.line, dir: t.dir || c.dep.direction || "",
+          reason: sztRejectReason(t3, vehTrail, Date.now(), { pos: myPos, isDB: dbLayer, winMin }) });
+      }
     }));
     if (scanId !== vehScanId) return;
     // 4) gleiche Linie + Richtung: nur der beste Kandidat (Folgefahrt etc.)
@@ -7773,10 +7812,13 @@ async function vehScan(manual) {
     }
     vehResults = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 5);
     vehBadgeIdx = 0;   // Rotation beginnt wieder beim besten Treffer
+    sztDigest(vehResults[0] || null);
+    sztWalkDigest();
   } catch (e) {
     if (scanId === vehScanId) vehResults = [];
   } finally {
     vehScanning = false;
+    if (!sztMotion || Date.now() - sztMotion.ts > 20 * 1000) sztWalkDigest();
     renderVehDlg();
     renderVehBadge();
     if (vehCfgDirty) {   // Regler wurde waehrend des Laufs gedrueckt: jetzt neu suchen
@@ -7799,7 +7841,7 @@ function renderVehDlg() {
       + (vehLastScan ? "letzter Blick: " + new Date(vehLastScan).toLocaleTimeString("de-DE") + " Uhr" : "")
       + (vehScanning ? "" : " · ↻ sucht sofort neu");
   if (!vehResults.length && !vehScanning) {
-    vehDlgList.innerHTML = '<small class="rowinfo dim">Kein Fahrzeug erkannt. Gegenrichtung und (bei zügigem Tempo) Stadtbusse sind hart ausgefiltert; möglicherweise wartest du noch, das GPS ist zu ungenau, oder im Fenster ±' + vehCfg.min + " min fährt gerade nichts.</small>";
+    vehDlgList.innerHTML = '<small class="rowinfo dim">Kein Fahrzeug erkannt. Gegenrichtung und (bei zügigem Tempo) Stadtbusse sind hart ausgefiltert; möglicherweise wartest du noch, das GPS ist zu ungenau, oder im Fenster ±' + vehCfg.min + " min fährt gerade nichts.</small>" + sztDlgFooter();
     return;
   }
   const vehCls = { 2: "🟢", 1: "🟡", 0: "⚪" };
@@ -7821,7 +7863,7 @@ function renderVehDlg() {
       (open ? ' · <span class="nxopen">antippen: öffnen</span>' : "") +
       "</div></div>";
   });
-  vehDlgList.innerHTML = html;
+  vehDlgList.innerHTML = html + sztDlgFooter();
 }
 
 // Kandidat wählen: nächste Station als Reiter + direkt darunter der Verlauf
@@ -7854,6 +7896,231 @@ setInterval(() => {
   if (vehResults.length > 1) vehBadgeIdx = (vehBadgeIdx + 1) % Math.min(5, vehResults.length);
   renderVehBadge();
 }, 1000);   // Top-5-Nummern sequentiell im Abstand von 1 s
+
+// ---------- Raum-Zeit-Daten (SZT): dritte Datenquelle neben Gep. und Aktuell ----------
+// KONVENTION (App, Hilfe, README, Wissensbasis): Werte aus der EIGENEN Raum-Zeit-
+// Auswertung (GPS-Spur gegen die Fahr-Linie der erkannten Fahrt) sind IMMER
+// KURSIV und nutzen dieselben Farben wie die Live-Daten. Weichen sie von der
+// Live-Angabe signifikant ab (>= 3 Minuten) oder fehlt Live ganz, laufen sie
+// mit der Live-Angabe im Wechsel (blinkende Abfolge, beide lesbar) bzw.
+// ersetzen sie. Die drei Quellen: Gep. = Fahrplan, Aktuell = Live-Tafel,
+// kursiv = Raum-Zeit.
+const SZT_DELTA_MIN = 3;          // Abweichung, ab der der Raum-Zeit-Wert uebernimmt
+const SZT_TTL_MS = 45 * 1000;    // Auswertung gilt 45 s (Suchrhythmus der Erkennung: 15 s)
+const SZT_HIST = 8;              // Messungen im Verspaetungs-Verlauf
+let sztState = null;             // { ts, tripId, line, dir, delay, bySn, byName, etaEnd, endName }
+let sztDelayHist = [];           // { ts, d }: Verspaetungs-Verlauf der erkannten Fahrt
+let sztRejected = [];            // verworfene Kandidaten (Debug-Ansicht im Dialog)
+let sztReach = [];               // Lauf-Reichweite: erreichbare Abfahrten der Umgebung
+let sztMotion = null;            // { ts, kmh }: eigenes Tempo aus der Spur
+let sztWalk = null;              // wie sztMotion, nur wenn es klar ein Lauf-Tempo ist
+
+function sztFresh() { return sztState && Date.now() - sztState.ts <= SZT_TTL_MS ? sztState : null; }
+function sztNowMin() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+function sztClockOf(min) {
+  if (min == null || !isFinite(min)) return "";
+  const m = ((Math.round(min) % 1440) + 1440) % 1440;
+  return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+}
+function sztIsSig(a, b) { return a == null || b == null || Math.abs(a - b) >= SZT_DELTA_MIN; }
+// Verspaetungs-Verlauf (Idee 1): Tendenz aus den letzten Messungen der Fahrt
+function sztTrendText(hist, nowMs, deltaMin) {
+  const t = (deltaMin > 0 ? "+" : "") + deltaMin + " min";
+  const pts = (hist || []).filter(h => nowMs - h.ts <= 6 * 60 * 1000);
+  if (pts.length < 2) return t;
+  const d = pts[pts.length - 1].d - pts[0].d;
+  return t + (d >= 2 ? ", Tendenz steigend" : d <= -2 ? ", Tendenz fallend" : ", Tendenz stabil");
+}
+// Wechsel-Blend: Live-Wert und kursiver Raum-Zeit-Wert in einem Stapel (CSS)
+function sztBlend(liveTxt, sztTxt) {
+  return '<span class="sztwrap"><span class="sztl">' + escapeHtml(String(liveTxt)) + "</span>" +
+    '<span class="sztt szt">' + escapeHtml(String(sztTxt)) + "</span></span>";
+}
+function sztChip(delay, italic) {
+  const c = delay > 0 ? "up" : delay < 0 ? "down" : "ok";
+  const t = delay > 0 ? "+" + delay + "m" : delay < 0 ? delay + "m" : "0m";
+  return '<span class="tdelay ' + c + (italic ? " szt" : "") + '">' + t + "</span>";
+}
+function sztChipBlend(liveD, sztD) {
+  return '<span class="sztwrap"><span class="sztl">' + sztChip(liveD, false) + "</span>" +
+    '<span class="sztt">' + sztChip(sztD, true) + "</span></span>";
+}
+// ETA einer Verlaufs-Zeile aus der Raum-Zeit-Auswertung (nur kommende Stationen)
+function sztRowEta(sn, planned, name) {
+  const s = sztFresh();
+  if (!s) return null;
+  const pmin = hhmmToMin(planned);
+  if (pmin == null) return null;
+  let eta = null;
+  if (sn && s.bySn[sn] != null) eta = s.bySn[sn];
+  else if (name && s.byName[name] != null) eta = s.byName[name];
+  if (eta == null || eta < sztNowMin() - 1) return null;
+  return { eta, d: eta - pmin };
+}
+// Auswertung des besten Treffers: Verspaetung (dtMin am letzten Spur-Punkt)
+// + ETAs an allen kommenden Stationen (konstante Verspaetung auf der Kette)
+function sztDigest(r) {
+  if (!r || !r.t3 || r.dtMin == null) return;
+  const nowMs = Date.now();
+  const delay = Math.max(-30, Math.min(60, Math.round(r.dtMin)));
+  if (!sztState || sztState.tripId !== r.tripId) sztDelayHist = [];
+  sztDelayHist.push({ ts: nowMs, d: delay });
+  while (sztDelayHist.length > SZT_HIST) sztDelayHist.shift();
+  const bySn = {}, byName = {};
+  let etaEnd = null, endName = "";
+  for (let i = (r.segI || 0) + 1; i < r.t3.length; i++) {
+    const st = r.t3[i];
+    if (st.depMin == null) continue;
+    const eta = st.depMin + delay;
+    if (st.sn && bySn[st.sn] == null) bySn[st.sn] = eta;
+    if (st.name && byName[st.name] == null) byName[st.name] = eta;
+    etaEnd = eta; endName = st.name || endName;
+  }
+  sztState = { ts: nowMs, tripId: r.tripId, line: r.line, dir: r.direction,
+    delay, segI: r.segI, spdK: r.spdK, bySn, byName, etaEnd, endName };
+}
+// Debug (Idee 5): warum eine Fahr-Linie verworfen wurde - vereinfachte
+// Nachrechnung in der Filter-Reihenfolge von vehScore3D
+function sztRejectReason(t3, trail, nowMs, opts) {
+  opts = opts || {};
+  const traj = vehUserMotion(trail, nowMs);
+  if (traj.spd * 0.06 > 50 && !opts.isDB) return "Tempo: kein Stadtbus bei deinem Tempo";
+  const win = opts.winMin || 6;
+  const m = vehMoiy(nowMs);
+  let segs = 0, inWin = false, dirOk = false;
+  for (let i = 0; i + 1 < (t3 || []).length; i++) {
+    const a = t3[i], b = t3[i + 1];
+    if (a.moiy == null || b.moiy == null || b.moiy - a.moiy <= 0) continue;
+    segs++;
+    const pj = vehSegProject(a, b, opts.pos || a);
+    const dtMin = m - (a.moiy + pj.f * (b.moiy - a.moiy));
+    if (Math.abs(dtMin) > win) continue;
+    inWin = true;
+    const sv = vehDirVec(a, b);
+    if (traj.confident && traj.dir && sv && traj.dir.x * sv.x + traj.dir.y * sv.y < 0.5) continue;
+    dirOk = true;
+  }
+  if (!segs) return "keine nutzbare Linie";
+  if (!inWin) return "Zeitfenster";
+  if (traj.confident && !dirOk) return "Gegenrichtung";
+  return "Abstand/Score zu klein";
+}
+// Stationssuche nach Raum-Zeit-Reichweite (Idee 7): welche Abfahrten der
+// Stationen um dich sind mit DEM EIGENEN Tempo noch erreichbar? (in Lauf-
+// Richtung bevorzugt, fruehe zuerst; je Station die frueheste)
+function sztReachDigest(boards, pos, traj, nowMs) {
+  const out = [];
+  const spd = traj && traj.confident && traj.spd > 35 ? traj.spd : WALK_SPEED_KMH * 1000 / 60;
+  const baseMin = sztNowMin();
+  for (const b of boards || []) {
+    const st = stops.find(x => x.shortName === b.sn) || dbStopOf(b.sn);
+    if (!st) continue;
+    const m = dist(pos, st);
+    const walkMin = Math.ceil(m / spd);
+    let dirOk = false;
+    if (traj && traj.confident && traj.dir) {
+      const dv = vehDirVec(pos, st);
+      dirOk = !!dv && traj.dir.x * dv.x + traj.dir.y * dv.y > 0.4;
+    }
+    for (const d of b.deps || []) {
+      const rel = (d.actualRelativeTime || 0) - (b.ageSec || 0);
+      if (rel < 0 || rel > 30 * 60 || rel < walkMin * 60) continue;
+      out.push({ sn: b.sn, m, walkMin, dirOk, line: d.line || "?",
+        clock: sztClockOf(baseMin + Math.round(rel / 60)) });
+    }
+  }
+  out.sort((a, b) => (b.dirOk - a.dirOk) || (a.clock < b.clock ? -1 : a.clock > b.clock ? 1 : 0));
+  const seen = new Set();
+  sztReach = [];
+  for (const o of out) {
+    if (seen.has(o.sn)) continue;
+    seen.add(o.sn);
+    sztReach.push(o);
+    if (sztReach.length >= 4) break;
+  }
+}
+function sztWalkDigest() {
+  const traj = vehUserMotion(vehTrail, Date.now());
+  sztMotion = traj && traj.confident && traj.spd > 25
+    ? { ts: Date.now(), kmh: Math.round(traj.spd * 0.06) } : null;
+  sztWalk = sztMotion && sztMotion.kmh >= 3 && sztMotion.kmh <= 15 ? sztMotion : null;
+}
+// Bahn-Disambiguierung (Idee 6): eigenes Tempo gegen die Abschnitts-Tempi
+function sztRailHTML() {
+  const rail = vehResults.filter(r => r.isDB && r.spdK != null).slice(0, 3);
+  if (!sztMotion || rail.length < 2) return "";
+  const own = sztMotion.kmh;
+  rail.sort((a, b) => Math.abs(own - a.spdK) - Math.abs(own - b.spdK));
+  const txt = rail.map((r, i) => escapeHtml(r.line) + " " + r.spdK + " km/h (" +
+    Math.abs(own - r.spdK) + " Differenz)" + (i === 0 ? " - passt besser" : "")).join(" - ");
+  return '<div class="followhint"><div class="szt" title="Raum-Zeit: eigenes Tempo gegen das Abschnitts-Tempo der Bahn-Kandidaten">🚆 Tempo-Profil (eigenes Tempo ~' + own + " km/h): " + txt + "</div></div>";
+}
+// Fußweg im Raum-Zeit (Idee 4): Ankunft mit dem eigenen Tempo statt Standard
+function sztWalkHTML(meters) {
+  if (!sztWalk || Date.now() - sztWalk.ts > 3 * 60 * 1000 || meters == null) return "";
+  const ownMin = meters / (sztWalk.kmh * 1000 / 60);
+  const defMin = meters / (WALK_SPEED_KMH * 1000 / 60);
+  if (Math.abs(ownMin - defMin) < 2) return "";
+  return ' <span class="szt" title="Raum-Zeit: Ankunft mit deinem eigenen Tempo statt Standard-Tempo (5 km/h)">↝ ~' +
+    sztClockOf(sztNowMin() + Math.max(0, Math.round(ownMin))) + "</span>";
+}
+// Kopfzeile im Fahrtverlauf der erkannten Fahrt: Verspaetungs-Verlauf + Ziel (Idee 1+2)
+function sztTripHeadHTML(trip) {
+  const s = sztFresh();
+  if (!s || !trip || trip.tripId !== s.tripId) return "";
+  return '<div class="followhint sztline"><div class="szt" title="eigene Raum-Zeit-Auswertung: GPS-Spur gegen die Fahr-Linie">🗺 Raum-Zeit: Verspaetung ' +
+    escapeHtml(sztTrendText(sztDelayHist, Date.now(), s.delay)) +
+    (s.etaEnd != null ? " - Ziel " + escapeHtml(s.endName || "") + " ~" + sztClockOf(s.etaEnd) + " Uhr" : "") +
+    "</div></div>";
+}
+// Anschluss-Sicherung (Idee 3) in der gewaehlten Route: Raum-Zeit-Ankunft am
+// Umstieg gegen die Abfahrt des Folge-Abschnitts
+function sztConnHTML(c) {
+  const s = sztFresh();
+  if (!s || !c || !c.secs) return "";
+  let hit = -1;
+  for (let i = 0; i < c.secs.length; i++) {
+    const sec = c.secs[i];
+    if (sec.kind !== "jny") continue;
+    const dep = hhmmToMin(sec.depP || sec.dep);
+    const jidHit = !!(sec.jid && sec.jid === s.tripId);
+    const lineHit = followNormLine(sec.line) === followNormLine(s.line) &&
+      dep != null && Math.abs(dep + (s.delay || 0) - sztNowMin()) <= 25;
+    if (jidHit || lineHit) { hit = i; break; }
+  }
+  if (hit < 0) return "";
+  const destName = c.secs[hit].to;
+  const arrEta = destName && s.byName[destName] != null ? s.byName[destName] : null;
+  let nxtDep = null;
+  for (let i = hit + 1; i < c.secs.length; i++) {
+    if (c.secs[i].kind === "jny") { nxtDep = hhmmToMin(c.secs[i].depP || c.secs[i].dep); break; }
+  }
+  if (arrEta == null || nxtDep == null) return "";
+  const buf = nxtDep - arrEta;
+  if (buf >= 9) return "";
+  const cls = buf < 0 ? " sztkrit" : buf <= 3 ? " sztwarn" : " sztok";
+  const txt = buf < 0
+    ? "⚠ Anschluss verpasst: Raum-Zeit-Ankunft ~" + sztClockOf(arrEta) + " Uhr in " + escapeHtml(destName || "") + ", Abfahrt " + sztClockOf(nxtDep) + " Uhr"
+    : "⚠ Anschluss knapp: Raum-Zeit-Ankunft ~" + sztClockOf(arrEta) + " Uhr in " + escapeHtml(destName || "") + ", Abfahrt " + sztClockOf(nxtDep) + " Uhr (" + buf + " min Puffer)";
+  return '<div class="followhint sztline' + cls + '"><div class="szt">' + txt + "</div></div>";
+}
+// Dialog-Fuß der Fahrzeug-Erkennung: Verspaetung, Tempo-Profil, Reichweite, Debug
+function sztDlgFooter() {
+  let html = "";
+  const s = sztFresh();
+  if (s)
+    html += '<div class="followhint"><div class="szt" title="eigene Raum-Zeit-Auswertung der erkannten Fahrt">🗺 Raum-Zeit: Verspaetung ' +
+      escapeHtml(sztTrendText(sztDelayHist, Date.now(), s.delay)) +
+      (s.etaEnd != null ? " - Ziel " + escapeHtml(s.endName || "") + " ~" + sztClockOf(s.etaEnd) + " Uhr" : "") + "</div></div>";
+  html += sztRailHTML();
+  if (sztReach.length)
+    html += '<div class="followhint"><div class="szt" title="mit deinem eigenen Tempo erreichbare Abfahrten der Stationen um dich (Raum-Zeit-Reichweite) - ↗ = in Lauf-Richtung">🚶 Lauf-Reichweite (eigenes Tempo): ' +
+      sztReach.slice(0, 3).map(o => escapeHtml(o.line) + " " + o.clock + (o.dirOk ? " ↗" : "")).join(" - ") + "</div></div>";
+  if (sztRejected.length)
+    html += '<div class="followhint"><div title="vom Raum-Zeit-Vergleich verworfene Kandidaten samt Grund (Debug)">Raum-Zeit verworfen: ' +
+      sztRejected.slice(0, 4).map(x => escapeHtml(x.line || "?") + (x.dir ? " → " + escapeHtml(x.dir) : "") + " – " + escapeHtml(x.reason)).join(" - ") + "</div></div>";
+  return html;
+}
 
 // Regler im Dialogkopf (oben rechts): Zeitfenster und Umkreis der Kandidaten
 function renderVehCfg() {
@@ -9238,10 +9505,11 @@ function helpHTML() {
   h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste.");
   h += P("<b>Sekunden-Countdown:</b> Steht eine KVG-<b>Echtzeit</b>-Fahrt unmittelbar bevor (bis 3 Minuten), tickt „fährt in 2:54 min“ im Sekundentakt. Bewusst nur bei Echtzeit: Fahrplandaten haben keine Sekunden, ein Countdown daraus wäre getürkt. Während ein Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
   h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. In den Stationslisten und Suchtreffer-Zeilen zählt allein die <b>Abfahrtszeit</b>: alle noch nicht abgefahrenen Verbindungen stehen in der Liste; abgefahrene bleiben bis 3 Minuten grau durchgestrichen stehen und verschwinden dann. Unter jeder Zeile der Abfahrtsliste im Stationsreiter steht die Folgefahrten-Zeile derselben Linie („auch geplant: HH:MM Uhr“); in Suchtreffer-Zeilen bleibt die Liste ohne sie. In den Verläufen (Fahrtverlauf und Routen-Abschnitte) steht sie direkt über der Kopfzeile „Gep./Aktuell“.");
+  h += P("<b>Drei Datenquellen – planmäßig, aktuell, Raum-Zeit:</b> Neben „Gep.“ (Fahrplan) und „Aktuell“ (Live-Tafel) gewinnt die App an dritter Stelle eigene Werte aus der <b>Raum-Zeit-Auswertung</b>: deine GPS-Spur gegen die Fahr-Linie der erkannten Fahrt, solange die Fahrzeug-Erkennung läuft. Diese Werte erkennst du <b>immer an kursiver Schrift</b> – kursiv ist das durchgehende Kennzeichen für Raum-Zeit-Daten, auch in der Web-App, der Hilfe und diesem README. Sie nutzen <b>dieselben Farben</b> wie die Live-Daten (grün pünktlich, gelb knapp, rot kritisch). Stimmt die Raum-Zeit-Rechnung mit der Live-Angabe überein (unter 3 Minuten Abweichung), bleibt einfach die Live-Angabe stehen. Weicht sie <b>signifikant ab (ab 3 Minuten) oder fehlt Live ganz</b>, erscheint der kursive Raum-Zeit-Wert <b>im Wechsel mit der Live-Angabe</b> – beide Werte blinken abwechselnd auf, im Sekundenrhythmus, so bleibst du nie auf einer Zahl sitzen, ohne die andere zu kennen. Die Verspätung der erkannten Fahrt zeigt der Dialogfuß als kursives „🗺 Raum-Zeit: Verspätung +X min, Tendenz steigend/fallend/stabil“ samt Zielankunft; im Fahrtverlauf derselben Fahrt steht dieselbe Zeile direkt über „Gep./Aktuell“, und jede kommende Stationszeile trägt zusätzlich kursiv ihre Raum-Zeit-Ankunft. In der gewählten Route warnt eine kursive Anschluss-Zeile unter dem Abschnitt („Anschluss knapp”, „Anschluss verpasst“), wenn die Raum-Zeit-Ankunft am Umstieg den Folge-Abschnitt gefährdet; im Suchergebnis ergänzt „↝ ~HH:MM“ kursiv die Fußweg-Ankunft mit deinem eigenen Tempo statt des Standard-Tempos.");
   h += sec("👁 Fahrtverlauf");
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert). Direkt über der Kopfzeile „Gep./Aktuell“ des Verlaufs steht außerdem, wann dieselbe Linie an dieser Haltestelle wieder fährt: „auch geplant: HH:MM Uhr“ (und weitere), Grundlage ist der Fahrplan mit 3-Stunden-Fenster; bei dichtem Takt heißt es verkürzt „auch geplant: HH:MM Uhr, alle X min.“, bei unruhigem Takt „im Schnitt alle X min.“. Eine zweite Zeile warnt heuristisch vor möglichem Betriebsschluss der Linie: wenn die letzte Fahrt ins 2,5-Stunden-Fenster fällt und danach Stille bleibt, oder wenn in den Nachtstunden (etwa 20 bis 5 Uhr) mehr als eine Stunde zwischen zwei Fahrten der Linie liegt.");
   h += sec("🚍 Fahrzeug-Erkennung – in welchem Fahrzeug sitze ich?");
-  h += P("Der <b>Fahrzeug-Knopf</b> oben trägt ein blaues Linienschild mit <b>„???“</b> als Liniennummer und erkennt, in welchem Bus oder Zug du gerade sitzt, ohne dass du die Linie suchen musst: Sobald die GPS-Ortung (◎) läuft, arbeitet die Suche <b>dauerhaft im Hintergrund</b>, holt alle 15 Sekunden neue Abfahrten und rankt neu – das Linienschild am Knopf zeigt <b>live die Liniennummer der wahrscheinlichsten Fahrt</b> und blättert im Sekundentakt durch die bis zu fünf besten Treffer. Das Modell: Jede mögliche Fahrt wird als <b>Linie in einem Raum-Zeit-Diagramm</b> gezeichnet, x und y sind die Stationkoordinaten, die dritte Achse ist die Zeit als reine <b>Minute seit Neujahr</b> (bei Jahreswechsel spannt die App die Achse neu auf) – jede Station ist ein Abfahrts-<b>Punkt</b>, aufeinanderfolgende Halte werden zu <b>Verbindungslinien</b> verbunden. Die eigene GPS-Spur wird in dasselbe Diagramm gezeichnet, und die wahrscheinlichste Fahrt ist die mit dem kleinsten Abstand zur Spur: <b>Position, Tempo und Richtung stecken gemeinsam in diesem einen Abstand</b>. Zwei Ebenen: <b>🚌 Stadtverkehr</b> (Stationen nach Entfernung sortiert) im einstellbaren Umkreis 100/250/500/1000 m (Standard 250 m) und <b>🚆 Bahn</b> mit den nächsten Bahnhöfen im eigenen weiten Umkreis 5/10/25/100/250 km (Standard 10 km) – die drei Regler dazu sitzen <b>im Dialogkopf oben</b>. Kandidaten sind Fahrten, die an einer Station der Ebenen im einstellbaren <b>Zeitfenster</b> (±1/2/3/4/5 Minuten, Standard ±2 Minuten) abfahren oder eben abgefahren sind. Zwei <b>harte Filter</b> greifen vor der Bewertung: Steht die eigene Fahrtrichtung fest (die Spur zeigt mindestens 60 Meter Bewegung), werden Fahrten <b>in Gegenrichtung nie angezeigt</b>; und über 50 km/h eigenes Tempo scheidet der Stadtbus aus, übrig bleiben Überlandbus und die Bahn-Ebene. Die Datenqualität je Fahrt zeigt ein Symbol: <b>🟢</b> komplett aus Live-Daten, <b>🟡</b> teilweise Live (als Fahrt von einer Live-Station planmäßig losgefahren oder planmäßig unterwegs zu einer Live-Station), <b>⚪</b> reine Fahrplan-Daten – fehlt einer Station jede Live-Tafel, wird die Fahrt komplett aus dem Fahrplan gezeichnet, und reinen Fahrplan-Linien reicht ein weitereres Zeitfenster (2,5-fach) als Abweichungs-Toleranz. Im Dialog zeigt jede Zeile die Wahrscheinlichkeit, die nächste Station samt „in ~X min“ und das Qualitätssymbol. Antippen einer Zeile öffnet die <b>nächste Station als Reiter, direkt darunter den aufgeklappten Fahrtverlauf</b> – die Live-Verfolgung läuft dort sofort mit.");
+  h += P("Der <b>Fahrzeug-Knopf</b> oben trägt ein blaues Linienschild mit <b>„???“</b> als Liniennummer und erkennt, in welchem Bus oder Zug du gerade sitzt, ohne dass du die Linie suchen musst: Sobald die GPS-Ortung (◎) läuft, arbeitet die Suche <b>dauerhaft im Hintergrund</b>, holt alle 15 Sekunden neue Abfahrten und rankt neu – das Linienschild am Knopf zeigt <b>live die Liniennummer der wahrscheinlichsten Fahrt</b> und blättert im Sekundentakt durch die bis zu fünf besten Treffer. Das Modell: Jede mögliche Fahrt wird als <b>Linie in einem Raum-Zeit-Diagramm</b> gezeichnet, x und y sind die Stationkoordinaten, die dritte Achse ist die Zeit als reine <b>Minute seit Neujahr</b> (bei Jahreswechsel spannt die App die Achse neu auf) – jede Station ist ein Abfahrts-<b>Punkt</b>, aufeinanderfolgende Halte werden zu <b>Verbindungslinien</b> verbunden. Die eigene GPS-Spur wird in dasselbe Diagramm gezeichnet, und die wahrscheinlichste Fahrt ist die mit dem kleinsten Abstand zur Spur: <b>Position, Tempo und Richtung stecken gemeinsam in diesem einen Abstand</b>. Zwei Ebenen: <b>🚌 Stadtverkehr</b> (Stationen nach Entfernung sortiert) im einstellbaren Umkreis 100/250/500/1000 m (Standard 250 m) und <b>🚆 Bahn</b> mit den nächsten Bahnhöfen im eigenen weiten Umkreis 5/10/25/100/250 km (Standard 10 km) – die drei Regler dazu sitzen <b>im Dialogkopf oben</b>. Kandidaten sind Fahrten, die an einer Station der Ebenen im einstellbaren <b>Zeitfenster</b> (±1/2/3/4/5 Minuten, Standard ±2 Minuten) abfahren oder eben abgefahren sind. Zwei <b>harte Filter</b> greifen vor der Bewertung: Steht die eigene Fahrtrichtung fest (die Spur zeigt mindestens 60 Meter Bewegung), werden Fahrten <b>in Gegenrichtung nie angezeigt</b>; und über 50 km/h eigenes Tempo scheidet der Stadtbus aus, übrig bleiben Überlandbus und die Bahn-Ebene. Die Datenqualität je Fahrt zeigt ein Symbol: <b>🟢</b> komplett aus Live-Daten, <b>🟡</b> teilweise Live (als Fahrt von einer Live-Station planmäßig losgefahren oder planmäßig unterwegs zu einer Live-Station), <b>⚪</b> reine Fahrplan-Daten – fehlt einer Station jede Live-Tafel, wird die Fahrt komplett aus dem Fahrplan gezeichnet, und reinen Fahrplan-Linien reicht ein weitereres Zeitfenster (2,5-fach) als Abweichungs-Toleranz. Im Dialog zeigt jede Zeile die Wahrscheinlichkeit, die nächste Station samt „in ~X min“ und das Qualitätssymbol. Antippen einer Zeile öffnet die <b>nächste Station als Reiter, direkt darunter den aufgeklappten Fahrtverlauf</b> – die Live-Verfolgung läuft dort sofort mit. Unter den Kandidaten zeigt der Dialogfuß die <b>Raum-Zeit-Auswertung der erkannten Fahrt</b> (kursiv): Verspätung mit Tendenz und Zielankunft, das 🚆 Tempo-Profil gegen alle Bahn-Kandidaten (wer „passt besser“), die 🚶 Lauf-Reichweite (mit deinem eigenen Tempo erreichbare Abfahrten, ↗ = in Lauf-Richtung) und die Debug-Zeile „Raum-Zeit verworfen: …“ mit den abgelehnten Linien samt Grund (Tempo, Zeitfenster, Gegenrichtung, Score).");
   h += P("<b>Ruhe-Knopf 🔔/🔕 („beides an“ nach dem Zusammenlegen der früheren ⏰- und 🏠-Knöpfe):</b> Ein Druck schaltet Wecker und „Finde nach Hause“ gemeinsam stumm, ein weiterer Druck <i>danach nach einer Weile</i> stellt beide wieder an. Schnell hintereinander gedrückt (unter 3 Sekunden Abstand) läuft der Knopf durch den Zyklus: beides an → beides aus → nur Wecker aus → nur Hinweise aus → beides an. Die Zustände bleiben gespeichert, auch über Neustarts.");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Distanz wird <b>nur mit aktiver GPS-Ortung</b> gemessen (◎ oben): Ohne GPS bliebe der Abstand gegen eine stehenbleibende alte Position falsch, deshalb ruht der Wecker dann still (mit Warnhinweis am Eintrag und beim Stellen). Bahnhöfe der DB sind eingeschlossen, ihre Koordinaten kommen aus der Bahnhof-Liste. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
@@ -9411,7 +9679,7 @@ function renderRoutePanel() {
             subHTML += '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + "</div>";
           }
         });
-        subHTML += "</div></div>";
+        subHTML += sztConnHTML(c) + "</div></div>";
       }
       rt.cachedSub = subHTML;
       h += subHTML;
@@ -10055,7 +10323,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.35 · Build: 21.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.2.36 · Build: 21.11.2026</div>
 </div>
 </body>
 </html>
