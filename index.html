@@ -371,6 +371,12 @@
   .dbtns .aok { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
   .dbtns .aok:disabled { opacity: .35; cursor: not-allowed; }
   .dbtns .adel { border-color: #b45309; color: #f59e0b; margin-right: auto; }
+  .supwarn { color: #f87171; font-weight: 700; font-size: .8rem; margin: 2px 0 4px; }
+  .supnote { font-size: .74rem; margin-bottom: 8px; }
+  .supchk { display: flex; align-items: baseline; gap: 6px; font-size: .78rem;
+    margin: 3px 0; cursor: pointer; }
+  .supsub { display: flex; align-items: baseline; gap: 6px; font-size: .74rem;
+    margin: 2px 0 2px 24px; cursor: pointer; color: #94a3b8; }
   .apkdl { margin-top: 10px; padding: 8px; font-size: .72rem; line-height: 1.4;
     background: rgba(245,158,11,.08); border: 1px dashed rgba(245,158,11,.5);
     border-radius: 8px; color: #cbd5e1; }
@@ -770,6 +776,19 @@
       <label class="dlabel" for="stateImp">Importieren: Code hier einfügen</label>
       <textarea class="stata" id="stateImp" placeholder="Zustand-Code einfügen …"></textarea>
       <button class="chip" id="stateGo">Übernehmen</button>
+    </details>
+
+    <details class="legal" id="supportSec">
+      <summary>🐞 Support / Bugreport</summary>
+      <p class="dim">Problem an support@pixcaelium.de melden: Der Knopf öffnet einen Bestätigungs-
+        Dialog. Darin beschreibst du dein Problem in einem Textfeld, bestätigst ausdrücklich, dass
+        App-Daten in die E-Mail übernommen werden, und wählst per Checkbox, welche Inhalte als Text
+        mitgesendet werden: Adresssuche, Stationssuche, die geöffneten Route- und Stations-Reiter
+        (inklusive ihrer Unter-Reiter mit Fahrplänen und Zeiten), Adress- und Stations-Favoriten –
+        einzeln oder alles gemeinsam. Die E-Mail öffnet sich ungesendet in deinem E-Mail-Programm
+        (Betreff „Bugreport CitySurfer v…“), dort ist vor dem Absenden noch jede Zeile
+        bearbeitbar.</p>
+      <p><button class="chip ok" id="supportBtn" title="Support-Dialog öffnen: E-Mail an support@pixcaelium.de mit Problembeschreibung und ausgewähltem App-Zustand vorbereiten">🐞 Support-Mail schreiben</button></p>
     </details>
 
     <details class="legal">
@@ -5511,6 +5530,281 @@ window.kvgImportState = function (code) {
   });
 })();
 
+// ---------- 🐞 Support / Bugreport: Zustand als Text in einer E-Mail ----------
+// Der Support-Knopf im Fuß (zwischen „⇅ Export/Import“ und „Impressum“) öffnet
+// einen Bestätigungs-Dialog: Problembeschreibung eintragen, ausdrücklich
+// bestätigen, dass App-Daten mitgesendet werden, und per Checkbox auswählen,
+// welche Inhalte als Text in die E-Mail wandern (Suchfelder, offene Reiter samt
+// Unter-Reitern mit Fahrplänen und Zeiten, Favoriten). Die E-Mail selbst geht
+// als mailto:-Link an das installierte E-Mail-Programm (support@pixcaelium.de,
+// Betreff „Bugreport CitySurfer v…“): Sie öffnet sich UNGESENDET – im
+// E-Mail-Programm lässt sich vor dem Absenden noch jede Zeile ansehen,
+// kürzen oder löschen.
+function supportDelayTxt(d) {
+  return d == null ? "" : " (" + (d > 0 ? "+" + d + "m" : d < 0 ? d + "m" : "0m") + ")";
+}
+// Abfahrtsliste einer Station als Klartext-Zeilen (früher, Live, geplant):
+// dasselbe Sichtbarkeits-Fenster wie in der Anzeige (depWindow), nur flach.
+function supportDepsText(v) {
+  if (!v) return "";
+  const w = depWindow(v, 0);
+  const rows = [];
+  const one = (d, ts, tag) => {
+    if (d == null) return;
+    rows.push("    " + followClock((ts || v.fetchTs || 0) + (d.actualRelativeTime || 0) * 1000) +
+      "  Linie " + (d.line || "?") + " nach " + (d.direction || "?") +
+      (tag ? "  [" + tag + "]" : ""));
+  };
+  (v.earlier || []).forEach(d => one(d, v.earlierTs, "früher geladen"));
+  (v.deps || []).forEach(d => one(d, v.fetchTs,
+    d.planned || d.status === "PLANNED" ? "geplant" : "Echtzeit"));
+  w.plannedVisible.forEach(d => one(d, v.plannedTs, "geplant"));
+  return rows.join("\n");
+}
+// Ein Route-Reiter als Text: Suche, Verbindungsvorschläge und die geöffneten
+// Verbindungs-Unter-Reiter je Abschnitt inklusive aufgekauften Verläufen.
+function supportRouteTabText(idx) {
+  const rt = routeTabs[idx];
+  if (!rt) return "";
+  const sel = rt.sel || {};
+  let h = "Route-Reiter " + (idx + 1) + ": „" + defTabName("r", rt) + "“" +
+    (sel.time ? " · Suche ab " + sel.time.replace("T", " ") : "");
+  const cons = rt.cons || [];
+  h += "\n  Verbindungsvorschläge: " + (cons.length ? String(cons.length) :
+    "keine (noch nicht gesucht oder nichts gefunden)");
+  cons.forEach(c => {
+    h += "\n    " + c.dep + "–" + c.arr + " (" + c.dur + " min, " + (c.chg || 0) + "× umsteigen)";
+  });
+  if (rt.err) h += "\n  Suchfehler: " + rt.err;
+  const chosen = rt.chosen || [];
+  h += "\n  Unter-Reiter (geöffnete Verbindungen): " + chosen.length;
+  chosen.forEach((rc, i) => {
+    const c = rc.con || {};
+    h += "\n    [" + (i + 1) + "] " + c.dep + "–" + c.arr + " (" + c.dur + " min, " +
+      (c.chg || 0) + "× umsteigen)";
+    (c.secs || []).forEach((sec, si) => {
+      if (sec.kind === "jny") {
+        h += "\n      Linie " + (sec.line || "?") + " nach " + (sec.dir || "?") +
+          ": ab " + (sec.from || "?") + " " + (sec.dep || "?") + supportDelayTxt(sec.depDelay) +
+          " an " + (sec.to || "?") + " " + (sec.arr || "?") + supportDelayTxt(sec.arrDelay);
+        if (rc.secOpen && rc.secOpen[si] && (sec.stops || []).length)
+          h += "\n        Verlauf (Station gep./aktuell): " +
+            sec.stops.map(st => st.name + " " + (st.dS || st.aS || "–") + "/" +
+              (st.dR || st.aR || "–")).join("; ");
+      } else {
+        h += "\n      " + (sec.kind === "walk" ? "Fußweg" : sec.kind) + " " +
+          (sec.from || "?") + " → " + (sec.to || "?") + ": " +
+          (sec.mins != null ? sec.mins : "?") + " min" +
+          (sec.distM != null ? " (" + sec.distM + " m)" : "") +
+          (sec.sfx ? " · " + sec.sfx : "");
+      }
+    });
+  });
+  return h;
+}
+// Ein Stations-Reiter als Text: Abfahrtsliste plus die geöffneten Fahrt-
+// Verläufe (Unter-Reiter) mit allen Halten und Ist-/Planzeiten.
+function supportStopTabText(idx) {
+  const t = tabs[idx];
+  if (!t) return "";
+  let h = "Stations-Reiter " + (idx + 1) + ": „" + defTabName("s", t) + "“";
+  const depTxt = supportDepsText(stopViews.get(t.sn));
+  h += "\n  Abfahrtsliste: " + (depTxt ? "\n" + depTxt : "(keine Daten geladen)");
+  const trips = t.trips || [];
+  h += "\n  Unter-Reiter (geöffnete Fahrten): " + trips.length;
+  trips.forEach((ab, i) => {
+    const trip = ab.trip;
+    h += "\n    [" + (i + 1) + "] Fahrt " + (ab.tripId || "?") +
+      (trip && trip.route ? " – Linie " + trip.route + " nach " + (trip.direction || "?") : "") +
+      (trip && (trip.stops || []).length ?
+        " (Verlauf geladen" + (ab.tripOpen ? "" : ", zugeklappt") + ")" :
+        " (Fahrtverlauf nicht geladen)");
+    if (trip && (trip.stops || []).length) {
+      h += "\n      Halte (Station gep./aktuell): " + trip.stops.map(s => {
+        const key = s.key || (s.shortName + "|" + (trip.tripId || ab.tripId || ""));
+        const dl = (trip.delay || {})[key] || null;
+        return s.name + " " + ((dl && dl.plannedTime) || s.plannedTime || "–") + "/" +
+          (s.time || (dl && dl.actualTime) || "–");
+      }).join("; ");
+    }
+  });
+  return h;
+}
+function supportAddrFavText() {
+  if (!addrFavs.length) return "Adress-Favoriten: keine";
+  return "Adress-Favoriten (" + addrFavs.length + "):\n" +
+    addrFavs.map((f, i) => "    " + (i + 1) + ". " + (f.label || "?") +
+      (f.lat != null && f.lon != null ? " (" + f.lat + ", " + f.lon + ")" : "") +
+      (f.name ? " [" + f.name + "]" : "")).join("\n");
+}
+function supportStopFavText() {
+  if (!favs.length) return "Stations-Favoriten: keine";
+  return "Stations-Favoriten (" + favs.length + "):\n" +
+    favs.map((sn, i) => {
+      const s = stops.find(x => x.shortName === sn);
+      return "    " + (i + 1) + ". „" + (s ? s.name : sn) + "“ (" + sn + ")";
+    }).join("\n");
+}
+// Assembliert den Gesamt-Zustand: cfg = { stamp, ver, appVer, gps,
+// problem, addr, addrQ, pos, addrSug, stopS, stopQ, stopSug,
+// rtabIdx, stabIdx, addrFav, stopFav }.
+function supportStateText(cfg) {
+  let h = "CitySurfers-Zustand vom " + cfg.stamp + "\n" +
+    "Service-Version: " + (cfg.ver || "?") +
+    (cfg.appVer ? " · " + cfg.appVer : "") +
+    (cfg.gps ? " · GPS " + cfg.gps : "");
+  if (cfg.problem) h += "\n\n== Problembeschreibung ==\n" + cfg.problem;
+  if (cfg.addr)
+    h += "\n\n== Adresssuche ==\n" +
+      "  Suchtext: " + (cfg.addrQ ? "„" + cfg.addrQ + "“" : "(leer)") + "\n" +
+      "  Aktive Startadresse: " + (cfg.pos && cfg.pos.label ?
+        "„" + cfg.pos.label + "“" + (cfg.pos.lat != null && cfg.pos.lon != null ?
+          " (" + cfg.pos.lat + ", " + cfg.pos.lon + ")" : "") : "keine (GPS)") +
+      (cfg.addrSug ? "\n  Offene Vorschläge: " + cfg.addrSug : "");
+  if (cfg.stopS)
+    h += "\n\n== Stationssuche ==\n" +
+      "  Suchtext: " + (cfg.stopQ ? "„" + cfg.stopQ + "“" : "(leer)") +
+      (cfg.stopSug ? "\n  Offene Vorschläge: " + cfg.stopSug : "");
+  if (cfg.rtabIdx && cfg.rtabIdx.length) {
+    h += "\n\n== Route-Reiter ==";
+    cfg.rtabIdx.forEach(i => { h += "\n" + supportRouteTabText(i); });
+  }
+  if (cfg.stabIdx && cfg.stabIdx.length) {
+    h += "\n\n== Stations-Reiter ==";
+    cfg.stabIdx.forEach(i => { h += "\n" + supportStopTabText(i); });
+  }
+  if (cfg.addrFav) h += "\n\n== " + supportAddrFavText();
+  if (cfg.stopFav) h += "\n\n== " + supportStopFavText();
+  return h;
+}
+// App-Version aus der Android-Brücke, falls vorhanden (leerer String im Browser)
+function supportAppVer() {
+  try {
+    if (window.KvgNative && typeof window.KvgNative.appVersion === "function")
+      return String(window.KvgNative.appVersion() || "");
+  } catch (e) {}
+  return "";
+}
+function openSupportDlg() {
+  const old = document.getElementById("supportDlg");
+  if (old) { old.remove(); return; }
+  saveActiveTab();     // aktuellen Stations-Reiter (Bus/Fahrt) in sein Objekt sichern
+  saveActiveRouteTab();   // gewählte Verbindungen des aktiven Route-Reiters sichern
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  wrap.id = "supportDlg";
+  const rtRows = routeTabs.map((rt, i) =>
+    '<label class="supsub"><input type="checkbox" data-suprt="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml(defTabName("r", rt)) + "“</label>").join("");
+  const stRows = tabs.map((t, i) =>
+    '<label class="supsub"><input type="checkbox" data-supst="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml(defTabName("s", t)) + "“</label>").join("");
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">🐞 Support / Bugreport</div>' +
+    '<div class="supwarn">⚠ Deine Daten verlassen das Gerät!</div>' +
+    '<div class="dim supnote">Mit „📧 E-Mail öffnen“ übernimmst du die unten ausgewählten Inhalte ' +
+    'dieser App – inklusive Fahrplänen und Zeiten, Suchtexten und Favoriten – als Text in eine ' +
+    'E-Mail an support@pixcaelium.de. Das ist ein spürbarer datenschutzrechtlicher Eingriff: ' +
+    'Wähle bewusst aus, was mitgesendet wird, und lass weg, was privat bleiben soll. Die E-Mail ' +
+    'öffnet sich ungesendet in deinem E-Mail-Programm – dort kannst du vor dem Absenden noch ' +
+    'jede Zeile ansehen, kürzen oder löschen.</div>' +
+    '<label class="supchk supconfirm"><input type="checkbox" id="supConfirm"> ' +
+    'Ich habe den Hinweis gelesen und bestätige: Die ausgewählten Daten dürfen in die E-Mail ' +
+    'übernommen werden.</label>' +
+    '<label class="dlabel" for="supProblem">Was ist das Problem?</label>' +
+    '<textarea class="stata" id="supProblem" style="height:84px" ' +
+    'placeholder="Kurz beschreiben: Was tust du, was passiert, was sollte stattdessen passieren?"></textarea>' +
+    '<label class="dlabel">Mitgesendete Inhalte</label>' +
+    '<label class="supchk"><input type="checkbox" data-sup="all" checked> <b>Alle</b> (alles unten)</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="addr"> Inhalt der Adresssuche</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="stopS"> Inhalt der Stationssuche</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="rtab"> Inhalt der Route-Reiter</label>' +
+    (rtRows ? '<div class="supsubs">' + rtRows + '</div>' :
+      '<div class="dim supnone">(gerade kein Route-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="stab"> Inhalt der Stations-Reiter</label>' +
+    (stRows ? '<div class="supsubs">' + stRows + '</div>' :
+      '<div class="dim supnone">(gerade kein Stations-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="afav"> Adress-Favoriten</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="sfav"> Stations-Favoriten</label>' +
+    '<div class="dim supnote">Betreff der E-Mail: „Bugreport CitySurfer v' + escapeHtml(pageVersion() || "?") +
+    '“. Ohne Auswahl wird nur die Versionszeile und deine Beschreibung gesendet.</div>' +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
+    '<button class="aok" id="supGo" disabled>📧 E-Mail öffnen</button></div>' +
+    '</div>';
+  const goBtn = wrap.querySelector("#supGo");
+  const allChk = wrap.querySelector('[data-sup="all"]');
+  const syncAll = () => {
+    const ins = [...wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst]')];
+    allChk.checked = ins.length > 0 && ins.every(x => x.checked);
+  };
+  wrap.addEventListener("change", e => {
+    const t = e.target;
+    if (t.id === "supConfirm") { goBtn.disabled = !t.checked; return; }
+    if (t === allChk) {
+      wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst]').forEach(x => x.checked = allChk.checked);
+      return;
+    }
+    if (t.getAttribute("data-supgroup") === "rtab")
+      wrap.querySelectorAll("[data-suprt]").forEach(x => x.checked = t.checked);
+    if (t.getAttribute("data-supgroup") === "stab")
+      wrap.querySelectorAll("[data-supst]").forEach(x => x.checked = t.checked);
+    syncAll();
+  });
+  wrap.addEventListener("click", e => {
+    if (e.target === wrap || e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (!e.target.closest("#supGo")) return;
+    const grp = k => {
+      const el = wrap.querySelector('[data-supgroup="' + k + '"]');
+      return !!(el && el.checked);
+    };
+    const rtIdx = [...wrap.querySelectorAll("[data-suprt]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-suprt")));
+    const stIdx = [...wrap.querySelectorAll("[data-supst]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-supst")));
+    // Offene Vorschlagslisten der Suchfelder als Klartext (max. 20 Einträge)
+    const sugTxt = el => (!el || el.hidden) ? "" :
+      [...el.querySelectorAll("div, button, li")]
+        .map(x => (x.textContent || "").trim().replace(/\s+/g, " "))
+        .filter(Boolean).slice(0, 20).join(" | ");
+    const av = supportAppVer();
+    const cfg = {
+      stamp: new Date().toLocaleString("de-DE"),
+      ver: pageVersion() || "?",
+      appVer: av ? "App " + av : "",
+      gps: gpsState === "on" ? "an" : gpsState === "searching" ? "wird gesucht" : "aus",
+      problem: document.getElementById("supProblem").value.trim(),
+      addr: grp("addr"),
+      addrQ: addrSearch.value.trim(),
+      pos: addrPos,
+      addrSug: sugTxt(document.getElementById("addrSug")),
+      stopS: grp("stopS"),
+      stopQ: search.value.trim(),
+      stopSug: sugTxt(sugBox),
+      rtabIdx: rtIdx,
+      stabIdx: stIdx,
+      addrFav: grp("afav"),
+      stopFav: grp("sfav")
+    };
+    const body = supportStateText(cfg);
+    const mail = "mailto:support@pixcaelium.de?subject=" +
+      encodeURIComponent("Bugreport CitySurfer v" + (cfg.ver || "?")) +
+      "&body=" + encodeURIComponent(body);
+    const a = document.createElement("a");
+    a.href = mail;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    wrap.remove();
+    setLocNote("Support-E-Mail vorbereitet – bitte im E-Mail-Programm prüfen und absenden.");
+  });
+  document.body.appendChild(wrap);
+}
+(function initSupportSec() {
+  const btn = document.getElementById("supportBtn");
+  if (btn) btn.addEventListener("click", openSupportDlg);
+})();
+
+
 // Panels-Klicks (↻ und Buslinien)
 stationPanel.addEventListener("click", e => {
   if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
@@ -10151,6 +10445,7 @@ function helpHTML() {
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
+  h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route- und Stations-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten), Adress- und Stations-Favoriten – oder alles gemeinsam. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen – dann die App über cslk.apk aktualisieren.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
   return h;
 }
@@ -11006,7 +11301,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.10 · Build: 21.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.11 · Build: 21.11.2026</div>
 </div>
 </body>
 </html>
