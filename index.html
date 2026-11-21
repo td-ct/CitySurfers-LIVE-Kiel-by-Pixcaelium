@@ -9584,6 +9584,94 @@ function parseRoutePage(res, date) {   // eine NAH.SH-TripSearch-Antwort in Verb
   }
   return out;
 }
+const CHAIN_WALK_MAX_M = 600;   // selbst gebaute Umstiegsketten: Uebergang zwischen zwei Haltestellen hoechstens so weit
+const CHAIN_WAIT_MAX_MIN = 45;   // und nach dem Uebergang hoechstens so lange warten
+const CHAIN_TIE_MIN = 5;     // Kette erscheint nur, wenn sie hoechstens so viele Minuten nach der besten angezeigten Verbindung ankommt
+const CHAIN_MAX = 3;     // hoechstens so viele selbst gebaute Ketten zusaetzlich
+function routeChainSynth(pool, out) {   // Ketten-Synthese: mit Fahrt A bis Haltestelle X, zu Fuss zu Y, dort mit Fahrt B weiter
+  if (!pool.length || !out.length) return out;
+  let bestArr = null;
+  for (const c of out) {
+    const t = hhmmToMin(c.arr);
+    if (t != null && (bestArr == null || t < bestArr)) bestArr = t;
+  }
+  if (bestArr == null) return out;
+  const orgSigs = new Set(out.map(routeSig));
+  const res = [];
+  for (const A of pool) {
+    // A: Praefix vom Anfang bis zum LETZTEN Fahrt-Bein, nur Fusswege dazwischen; danach folgt der Ausstieg
+    let aIdx = -1;
+    for (let i = 0; i < A.secs.length; i++) if (A.secs[i].kind === "jny") aIdx = i;
+    if (aIdx < 0) continue;
+    let ok = true;
+    for (let i = 0; i <= aIdx; i++)
+      if (A.secs[i].kind !== "jny" && A.secs[i].kind !== "walk") ok = false;   // Taxi/Rufbus/Rad im Praefix: keine Kette
+    if (!ok) continue;
+    const aJny = A.secs[aIdx], aStops = aJny.stops || [];
+    const aStop = aStops[aStops.length - 1];
+    if (!aStop || aStop.lat == null || aStop.lon == null) continue;
+    const tA = hhmmToMin(aJny.arr);   // Echtzeit vor Plan
+    if (tA == null) continue;
+    for (const B of pool) {
+      // B: erstes Fahrt-Bein = Einstieg, Zubringer davor faellt weg, danach nur Fuss-/Fahrten-Beine
+      if (B === A) continue;
+      let bIdx = -1;
+      for (let i = 0; i < B.secs.length; i++) if (B.secs[i].kind === "jny") { bIdx = i; break; }
+      if (bIdx < 0) continue;
+      let bad = false;
+      for (let i = bIdx; i < B.secs.length; i++) {
+        const k = B.secs[i].kind;
+        if (k !== "jny" && k !== "walk") bad = true;   // Taxi/Rufbus/Rad im Rest: keine Kette
+      }
+      if (bad) continue;
+      const bJny = B.secs[bIdx], bStops = bJny.stops || [];
+      const bStop = bStops[0];
+      if (!bStop || bStop.lat == null || bStop.lon == null) continue;
+      let same = false;
+      for (let i = 0; i <= aIdx; i++) if (A.secs[i].jid && A.secs[i].jid === bJny.jid) same = true;
+      if (same) continue;   // Einstieg waere dieselbe Fahrt wie im Praefix
+      const tB = hhmmToMin(bJny.dep);
+      if (tB == null) continue;
+      let gap = tB - tA;
+      if (gap < 0) gap += 1440;   // Mitternacht-Umbruch des Uebergangs
+      const walkM = Math.round(dist({ lat: aStop.lat, lon: aStop.lon }, { lat: bStop.lat, lon: bStop.lon }) * FLAT_AIR_FACTOR);
+      const wMin = footMin(walkM);
+      if (!walkM || wMin == null) continue;
+      if (walkM < 30 || walkM > CHAIN_WALK_MAX_M) continue;   // Uebergangs-Budget: laenger als 600 m ist kein sinnvoller Uebergang mehr
+      if (gap < wMin + 2) continue;   // Uebergang nicht sicher erreichbar
+      if (gap - wMin > CHAIN_WAIT_MAX_MIN) continue;
+      const tArr = hhmmToMin(B.arr);
+      if (tArr == null) continue;
+      if (tArr - bestArr > CHAIN_TIE_MIN) continue;   // deutlich spaeter als alles Angezeigte: keine eigene Karte
+      const walkSec = { kind: "walk", from: aStop.name, to: bStop.name,
+        fromLat: aStop.lat, fromLon: aStop.lon, toLat: bStop.lat, toLon: bStop.lon,
+        distM: walkM, mins: wMin,
+        sfx: "\u00dcbergang von der App gebaut (NAH.SH bietet diese Kette nicht an): " + walkM + " m Fu\u00dfweg, " + (gap - wMin) + " min Wartezeit an der Anschluss-Haltestelle" };
+      const clone = s => s.kind === "jny" ? { ...s, stops: (s.stops || []).slice() } : { ...s };
+      // Klonen! routeRideTrim arbeitet direkt auf den Abschnitts-Objekten weiter;
+      // geteilte Objekte wuerden die Original-Verbindungen (Pool) mitveraendern.
+      const secs = A.secs.slice(0, aIdx + 1).map(clone)
+        .concat([walkSec], B.secs.slice(bIdx).map(clone));
+      let line = null, dir = "", hasBus = false, nj = 0;
+      for (const s of secs) if (s.kind === "jny") { nj++; line = s.line; dir = s.dir || ""; if (!s.rail) hasBus = true; }
+      let dur = hhmmToMin(B.arr) - hhmmToMin(A.dep);
+      if (dur < 0) dur += 1440;
+      const m = { dep: A.dep, depP: A.depP, arr: B.arr, arrP: B.arrP,
+        depAbsMs: A.depAbsMs, depAbsMsP: A.depAbsMsP,
+        dur: dur, chg: nj - 1, line: line, dir: dir, hasBus: hasBus,
+        vWalk: true, vScoot: true, secs: secs };
+      const sig = routeSig(m);
+      if (orgSigs.has(sig)) continue;
+      let dup = false;
+      for (const r of res) if (routeSig(r) === sig) dup = true;
+      if (dup) continue;
+      res.push(m);
+    }
+  }
+  if (!res.length) return out;
+  res.sort((a, b) => hhmmToMin(a.arr) - hhmmToMin(b.arr));
+  return out.concat(res.slice(0, CHAIN_MAX));
+}
 function routeWalkAdoptOk(c) {   // Fuss-Modus: Nur Walk/Bike-Zubringer uebernehmbar?
   let bike = false, firstJny = -1, lastJny = -1;
   for (let i = 0; i < c.secs.length; i++) {
@@ -9639,7 +9727,7 @@ async function routeTripSearch() {
   const dep = await routeResolve(routeSel.start);
   const arr = await routeResolve(routeSel.dest);
   let when = routeWhen();
-  let out = []; const seen = new Set();
+  let out = []; const seen = new Set(); const pool = [];
   let prevMs = 0;
   // NAH.SH liefert max. 6 Verbindungen pro Anfrage, Zubringer-Varianten (KISS/BIKE)
   // belegen davon Plaetze. Solange weniger als 5 gueltige (gefilterte) Verbindungen
@@ -9660,6 +9748,7 @@ async function routeTripSearch() {
       const sig = routeSig(c);
       if (seen.has(sig)) continue;
       seen.add(sig);
+      pool.push(c);   // Rohbestand: auch gefilterte Verbindungen liefern Fahrten fuer die Ketten-Synthese
       if (routeMob === "walk" ? (c.vWalk || routeWalkAdoptOk(c)) : c.vScoot) out.push(c);   // Zubringer-Filter (Fuss-Modus: Rad-Beine umrechnen statt verwerfen)
     }
     if (routeArr) break;   // Ankunftssuche: nicht blaettern
@@ -9678,6 +9767,9 @@ async function routeTripSearch() {
   // lehnt Fusswege ab etwa 1,5 km ab, etwa zum RB-Haltepunkt Suchsdorf), werden
   // als Fussweg nachgerechnet (5 km/h) statt die ganze Verbindung zu verwerfen.
   if (routeMob === "walk") out = routeWalkAdopt(out);
+  // Ketten-Synthese (Fuss-Modus, nur Abfahrtssuche): quasi-gleichzeitig ankommende
+  // Alternativen mit anderem Umstieg/Komfort selbst bauen und MIT anzeigen.
+  if (routeMob === "walk" && !routeArr) out = routeChainSynth(pool, out);
   out = await routeRideTrim(out);
   if (routeMob !== "walk") {   // Fahrrad-/Roller-Modus: Leihfahrrad-Abschnitte umrechnen
     // Die Dauer jeder Rad-Strecke wird aus der Strecke neu gerechnet: Fahrrad mit
@@ -9894,7 +9986,7 @@ function helpHTML() {
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart wieder da; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route.");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
@@ -10756,7 +10848,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.6 · Build: 21.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.7 · Build: 21.11.2026</div>
 </div>
 </body>
 </html>
