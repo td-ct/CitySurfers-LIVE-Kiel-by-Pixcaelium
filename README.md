@@ -32,6 +32,8 @@ Andere Reisenden-Apps zeigen, was ihnen die zentrale Auskunft vorgibt, und dort 
 
 ## Version
 
+**v1.3.15**: Korrektur und Vervollständigung der Publikationsliste: Die eigene Publikation zu modernem Geodatenmanagement ist bereits 2009 erschienen (Damm, Timo; Götze, Hans-Jürgen: „Modern Geodata Management: Application of Interdisciplinary Interpretation and Visualization in Central America“, International Journal of Geophysics, Article ID 878324, S. 1-13, DOI: 10.1155/2009/878324) und steht jetzt namentlich mit Autoren, Jahreszahl und DOI in der Liste. Die Liste ist neu nach Erscheinungsjahr geordnet (die jeweils aktuellste Publikation ganz oben). Der Hinweis auf die Anwendung von Konzepten daraus bleibt bewusst offen formuliert. Keine Logik-Änderung. versionCode 98.
+
 **v1.3.14**: Publikationsliste im README: Neben dem wissenschaftlichen Bezugsrahmen der Raum-Zeit-Engine (Hägerstrand 1970, „What about people in regional science?“, Papers of the Regional Science Association 24; Carlstein/Parkes/Thrift (Hrsg.) 1978, „Timing Space and Spacing Time“, 2 Bände, Edward Arnold) listet die neue Sektion „Publikationsliste“ zwischen Credits und Rechtliches auch die eigene Publikation „Modern Geo Data Management“ auf: Fachartikel, in Vorbereitung, Erscheinungstermin bewusst offen (die Arbeit ist derzeit noch eine Prognose). Mit bewusst gewagtem Hinweis steht dazu, dass Konzepte daraus bereits in das lokale Datenmanagement und die Raum-Zeit-Engine dieser App einfließen (der Beleg wird mit dem Erscheinen ergänzt). Der Kern-Absatz der App-Anleitung verweist auf die Liste. Keine Logik-Änderung. versionCode 97.
 
 **v1.3.13**: Der Kern der App bekommt seinen wissenschaftlichen Namen (Text-Release, keine Logik-Änderung): Die lokale Raum-Zeit-Engine ist ab jetzt in allen Texten als Herzstück und Entwicklungsschwerpunkt verankert, wissenschaftlich in der Zeitgeografie: Raum-Zeit-Würfel (space-time cube) nach Torsten Hägerstrand (1970, „What about people in regional science?“, Papers of the Regional Science Association 24) und dem zweibändigen Standardwerk „Timing Space and Spacing Time“ (Carlstein/Parkes/Thrift, London: Edward Arnold 1978). Neue Hilfe-Sektion „Der Kern: lokale Raum-Zeit-Engine (Zeitgeografie)“ steht ganz vorne in der Anleitung und erklärt, was die Engine lokal rechnet (Fahrzeug-Erkennung als Pfad-Abstand im Würfel, Verspätungs-Fortschreibung entlang der Zeitachse, Lauf-Reichweite als Raum-Zeit-Prisma, Ketten-Synthese); direkt dahinter begründet der Absatz „Warum mit dieser App für Bus und Bahn planen“, wofür man diese App statt jeder anderen ÖPNV-Karte benutzt (ehrliche drei Datenquellen, Verbindungen die HAFAS gar nicht anbietet, Verspätungen vor der Live-Auskunft, alles lokal auf dem Gerät, Kiel und Schleswig-Holstein). Der Drei-Datenquellen- und der Fahrzeug-Erkennungs-Absatz verankern den Raum-Zeit-Würfel ebenso; im README stehen die Kern- und die Warum-Sektion jetzt vor dem Changelog. versionCode 96.
@@ -328,13 +330,13 @@ Ein ausführlicher Dank an alle Anbieter steht im Fußbereich der App unter
 
 ## Publikationsliste
 
-Wissenschaftlicher Bezugsrahmen dieser App (Zeitgeografie als Modell der Raum-Zeit-Engine, modernes Geodatenmanagement als Modell des lokalen Datenhaushalts), alphabetisch:
+Wissenschaftlicher Bezugsrahmen dieser App (Zeitgeografie als Modell der Raum-Zeit-Engine, modernes Geodatenmanagement als Modell des lokalen Datenhaushalts), geordnet nach Erscheinungsjahr, die jeweils aktuellste Publikation ganz oben:
 
+- Damm, Timo; Götze, Hans-Jürgen: „Modern Geodata Management: Application of Interdisciplinary Interpretation and Visualization in Central America“. In: International Journal of Geophysics (2009), Article ID 878324, S. 1-13. DOI: 10.1155/2009/878324.
 - Carlstein, Tommy; Parkes, Don; Thrift, Nigel (Hrsg.): „Timing Space and Spacing Time“. 2 Bände. London: Edward Arnold, 1978.
-- Damm, Timo: „Modern Geo Data Management“. Fachartikel, in Vorbereitung (Erscheinungstermin bleibt bis zur Veröffentlichung bewusst offen; die Arbeit ist derzeit noch eine Prognose).
 - Hägerstrand, Torsten: „What about people in regional science?“. In: Papers of the Regional Science Association 24 (1970), S. 7-21.
 
-Bewusst gewagter Hinweis: Konzepte aus der noch unveröffentlichten Publikation zu modernem Geodatenmanagement (Damm, in Vorbereitung) fließen bereits in das lokale Datenmanagement und die Raum-Zeit-Engine dieser App ein; der Beleg wird mit dem Erscheinen des Artikels ergänzt, das Datum bleibt bis dahin absichtlich offen.
+Mit dem etwas wagen Hinweis, dass auch Konzepte daraus zur Anwendung kommen.
 
 ## Rechtliches
 Impressum und Datenschutzerklärung sind in der App (Fußbereich) enthalten.
