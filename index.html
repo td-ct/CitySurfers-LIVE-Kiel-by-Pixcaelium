@@ -141,6 +141,10 @@
   .sztline.sztwarn div { color: #eab308; }   /* Anschluss-Sicherung: Vouchers-Farben wie Live (gelb) */
   .sztline.sztkrit div { color: #ef4444; }   /* verpasst = rot */
   .sztline.sztok div { color: #22c55e; }     /* Puffer ok = gruen
+  .sztw-ok { color: #22c55e; }       /* Raum-Zeit-Fahrtbeobachtung: voraussichtlich puenktlich (gruen) */
+  .sztw-warn { color: #eab308; }     /* leichte Verspaetung (gelb) */
+  .sztw-late { color: #ef4444; }     /* starke Verspaetung ab 5 min (rot) */
+  .sztw-early { color: #7dd3fc; }    /* voraussichtlich zu frueh (blau) */
   #vehDlgList .subinfo { color: #94a3b8; font-size: 0.85rem; padding: 0 0 6px 8px; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   #vehDlgList .subinfo .nxopen { color: #7dd3fc; text-decoration: underline dotted; }
@@ -4073,6 +4077,11 @@ function tripSectionHTML() {
   }
   const pos = livePos();
   const tstops = currentTrip.stops;
+  // Raum-Zeit-Fahrtbeobachtung: DER angesehene Verlauf (gesamte Fahrt) füttert
+  // die Raum-Zeit-Karte; die Fahrzeug-Erkennung behält Vorrang, wenn sie
+  // gerade auf genau dieser Fahrt läuft.
+  const sztW = sztTripWatch(currentTrip, tstops);
+  const sztWVeh = sztFresh();
   // Fortschritt (GPS, NUR Live-Ortung): Station wird ab 50 m Annäherung als erreicht markiert;
   // Richtung (vorherige/nächste Station) und Geschwindigkeit bestimmen, ob der
   // Stand beim Verlassen committen oder temporär zurückgenommen wird. Details:
@@ -4131,6 +4140,7 @@ function tripSectionHTML() {
       '">' + (tArmed || tFired ? "⏰" : "🔔") + "</button></div>" +
     tripFollowHTML(currentTrip, tstops) +
     sztTripHeadHTML(currentTrip) +
+    (sztWVeh && sztWVeh.tripId === currentTrip.tripId ? "" : sztWatchHeadHTML(sztW)) +
     '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   if (gpsState !== "on")
     html += '<small class="rowinfo dim">GPS ist aus – die Live-Verfolgung (Punkt, „≈“-Zeiten, Durchstreichen) ruht. ◎ oben einschalten.</small>';
@@ -4200,6 +4210,26 @@ function tripSectionHTML() {
           delayHtml = sztChipBlend(dl.delayMin, sztRv.d);
       }
     }
+    // Raum-Zeit-Fahrtbeobachtung: Zeilen ohne Live-Angabe tragen die kursiv
+    // blinkende Voraussage (kein Drinbleiben der Live-Zeile: sie fehlt ja
+    // gerade) samt Chip in der Watch-Farbskala, sobald fahrplanmaessig
+    // unterwegs und die Station vor uns liegt; bei Voraussage "puenktlich"
+    // bleibt die normale Plan-Voraussage stehen (gruener Chip daneben). Die
+    // eigene GPS-Station und Live-Zeilen bleiben unberuehrt, die
+    // Fahrzeug-Erkennung hat Vorrang.
+    let sztRowChip = "";
+    if (sztRv == null && !delayHtml && sztW && sztW.delay != null && !actual && !(gpsKey && key === gpsKey)) {
+      const pmin = hhmmToMin(planned);
+      const pet = pmin == null ? null : pmin + sztW.delay;
+      const rMin = pet == null ? null : sztWrapDiff(pet, sztNowMin());
+      if (rMin != null && rMin >= -1) {
+        sztRowChip = sztWatchChipHTML(sztW.delay);
+        const stxt = "≈" + sztClockOf(pet);
+        if (sztW.delay !== 0)
+          sztRowAktuell = sztBlend(actual || planned || "–", stxt);   // kursiv blinkend im Wechsel mit der normalen Voraussage
+        else sztRowAktuell = escapeHtml(planned || "–");              // puenktlich: normale Plan-Voraussage bleibt stehen
+      }
+    }
     const hereIdx = currentTrip.atIdx != null ? currentTrip.atIdx : done;
     const rowCls = (i <= done && i !== currentTrip.atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === theFrom ? " frow" : "") + (i === last ? " lrow" : "");
@@ -4207,7 +4237,7 @@ function tripSectionHTML() {
     html += '<div class="trow' + rowCls + '" data-tri="' + i + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
       '<span class="takt' + (i === currentTrip.atIdx && !(mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) ? " blinkclock" : "") + '">' + sztRowAktuell + "</span>" +
-      delayHtml +
+      delayHtml + sztRowChip +
       '<span class="tname' + (canOpen ? " tnameclick" : "") + '"' +
         (canOpen ? ' data-stopopen="' + escapeHtml(s.shortName) +
           '" title="Antippen: Station "' + escapeHtml(s.name) + '" als eigenen Reiter öffnen"' : "") +
@@ -8105,6 +8135,119 @@ function sztConnHTML(c) {
     : "⚠ Anschluss knapp: Raum-Zeit-Ankunft ~" + sztClockOf(arrEta) + " Uhr in " + escapeHtml(destName || "") + ", Abfahrt " + sztClockOf(nxtDep) + " Uhr (" + buf + " min Puffer)";
   return '<div class="followhint sztline' + cls + '"><div class="szt">' + txt + "</div></div>";
 }
+// ---------- Raum-Zeit-Fahrtbeobachtung: jeder ANGESEHENE Fahrtverlauf ----------
+// (Fahrtverlauf im Stationsreiter UND jeder Fahr-Abschnitt der gewaehlten Route)
+// fuettert ab dem Moment, in dem fahrplanmaessig die ersten Stationen durchfahren
+// werden, seine beobachteten Ist-/Plan-Zeiten in die Raum-Zeit-Karte: Die Fahr-
+// Linie wird um die zuletzt beobachtete Verspaetung entlang der Zeitachse
+// verschoben und auf alle kommenden Stationen fortgeschrieben, die
+// voraussichtliche Verspaetung steht damit sofort, bevor die Live-Auskunft dort
+// Ist-Zeiten liefern wuerde (ohne Beobachtung gilt: voraussichtlich puenktlich).
+// Anzeige: kursiver Raum-Zeit-Hinweis, blinkend im Wechsel mit der normalen
+// (nicht kursiven) Voraussage. Farben je nach Urteil: gruen = voraussichtlich
+// puenktlich, gelb = leichte Verspaetung, rot = starke Verspaetung (ab
+// SZT_WATCH_LATE_MIN Minuten), blau = voraussichtlich zu frueh.
+const SZT_WATCH_LATE_MIN = 5;      // ab hier gilt die Verspaetung als "stark" (rot)
+let sztWatch = new Map();          // key -> { ts, delay, hist: [{ ts, d }] }: Fuetterung je angesehener Fahrt
+function sztWrapDiff(aMin, bMin) { // Tages-Wrap-sichere Minuten-Differenz (Ist gegen Plan)
+  if (aMin == null || bMin == null) return null;
+  let d = aMin - bMin;
+  if (d > 720) d -= 1440; else if (d < -720) d += 1440;
+  return d;
+}
+// kursiver Vorhersage-Chip in der Watch-Farbskala (gruen/gelb/rot/blau)
+function sztWatchChipHTML(d) {
+  const cls = d > 0 ? (d >= SZT_WATCH_LATE_MIN ? "sztw-late" : "sztw-warn") : d < 0 ? "sztw-early" : "sztw-ok";
+  const t = d > 0 ? "+" + d + "m" : d < 0 ? d + "m" : "0m";
+  return '<span class="tdelay szt ' + cls + '" title="Raum-Zeit-Voraussage aus dem beobachteten Fahrtverlauf">' + t + "</span>";
+}
+// Kern: beobachtete Verspaetung einer (ggf. ganzen) Fahrt plus Fortschreibung
+// auf alle kommenden Stationen (konstante Verspaetung auf der Kette, wie
+// sztDigest). norm: [{ p: Plan-Minute, a: Ist-Minute oder null, name }] in
+// Lauf-Reihenfolge. Rueckgabe null, solange die Fahrt fahrplanmaessig noch
+// nicht unterwegs ist; als Beobachtung zaehlen nur Stationen, die planmaessig
+// bereits zurueckgelegt sind (vorausliegende Live-Schaetzungen bleiben draußen).
+function sztWatchDigest(key, norm) {
+  if (!key || !norm || !norm.length) return null;
+  const nowMin = sztNowMin();
+  let begin = null;
+  for (const e of norm) if (e.p != null) { begin = e.p; break; }   // erste Station der Fahrt
+  if (begin == null || sztWrapDiff(nowMin, begin) < 0) return null;   // noch nicht fahrplanmaessig unterwegs
+  let obsD = null, obsP = null;
+  for (let i = 0; i < norm.length; i++) {
+    const e = norm[i];
+    if (e.a == null || e.p == null) continue;
+    if (sztWrapDiff(e.p, nowMin) > 0) continue;   // Station liegt planmaessig noch vor uns: keine Beobachtung
+    const d = sztWrapDiff(e.a, e.p);
+    if (d == null) continue;
+    obsD = Math.max(-30, Math.min(60, Math.round(d)));
+    obsP = e.p;
+  }
+  const delay = obsD == null ? 0 : obsD;          // ohne Ist-Beobachtung: Lauf wie geplant (gruen)
+  let etaEnd = null, endName = "";
+  for (let i = norm.length - 1; i >= 0; i--) {
+    if (norm[i].p != null) { etaEnd = norm[i].p + delay; endName = norm[i].name || ""; break; }
+  }
+  const nowMs = Date.now();
+  const we = sztWatch.get(key) || { ts: 0, delay: 0, hist: [] };
+  we.ts = nowMs; we.delay = delay;
+  we.hist.push({ ts: nowMs, d: delay });
+  while (we.hist.length > SZT_HIST) we.hist.shift();
+  sztWatch.set(key, we);
+  if (sztWatch.size > 24) {                      // Karte begrenzen: aelteste Eintraege entsorgen
+    const ks = [...sztWatch.keys()].sort((a, b) => sztWatch.get(a).ts - sztWatch.get(b).ts);
+    for (let i = 0; i < ks.length - 24; i++) sztWatch.delete(ks[i]);
+  }
+  return { key, delay, obsD, obsP, etaEnd, endName, hist: we.hist };
+}
+// Adapter Fahrtverlauf (Stationsreiter): Ist aus der Live-Zeile (s.time) oder
+// der gespeicherten GPS-/Tafel-Messung in trip.delay; beobachtet die GESAMTE
+// Fahrt (tstops), damit die Karte ab der ersten fahrplanmaessigen Station frisst
+function sztTripWatch(trip, tstops) {
+  if (!trip || !trip.tripId || !tstops || !tstops.length) return null;
+  const norm = tstops.map(s => {
+    const dl = trip.delay[s.key || (s.shortName + "|" + trip.tripId)];
+    const a = s.time ? hhmmToMin(s.time) : (dl && dl.actualTime ? hhmmToMin(dl.actualTime) : null);
+    return { p: hhmmToMin(s.plannedTime), a, name: s.name };
+  });
+  return sztWatchDigest("t|" + trip.tripId, norm);
+}
+// Adapter Route-Abschnitt: Ist aus dR/aR; bei aufgeklapptem ganzer Lauf (ext)
+// beobachtet die Karte den kompletten Lauf, sonst diesen Abschnitt. gpsLiveMin:
+// eigene GPS-Uhr bzw. ETA am eigenen Halt (nur ohne ext, Index gilt in sts).
+function sztSecWatch(sec, sts, extOn, gpsLiveMin, atIdx) {
+  const src = extOn && sec.extStops && sec.extStops.length ? sec.extStops : (sts || []);
+  if (!src.length) return null;
+  const norm = src.map((st, i) => ({
+    p: hhmmToMin(st.dS || st.aS),
+    a: st.dR ? hhmmToMin(st.dR) : (st.aR ? hhmmToMin(st.aR) :
+      (!extOn && gpsLiveMin != null && atIdx === i ? gpsLiveMin : null)),
+    name: st.name
+  }));
+  return sztWatchDigest("s|" + (sec.jid || (sec.line + "|" + sec.from + "|" + (sec.dep || ""))), norm);
+}
+// Kopf-Hinweis je angesehenem Verlauf: die normale (nicht kursive) Voraussage
+// blinkt im Wechsel mit dem kursiven Raum-Zeit-Urteil in der Watch-Farbe
+function sztWatchHeadHTML(w) {
+  if (!w || w.delay == null) return "";
+  const d = w.delay;
+  const cls = d > 0 ? (d >= SZT_WATCH_LATE_MIN ? "sztw-late" : "sztw-warn") : d < 0 ? "sztw-early" : "sztw-ok";
+  let txt;
+  if (d === 0) txt = "voraussichtlich pünktlich";
+  else if (d < 0) txt = "voraussichtlich " + (-d) + " min zu früh";
+  else txt = "voraussichtliche Verspätung " + sztTrendText(w.hist || [], Date.now(), d);
+  const ziel = w.etaEnd != null
+    ? " · Ziel " + (w.endName ? escapeHtml(w.endName) + " " : "") + "~" + sztClockOf(w.etaEnd) + " Uhr"
+    : "";
+  const planEnd = w.etaEnd != null ? w.etaEnd - d : null;
+  const normal = planEnd != null
+    ? "🗺 Fahrplan-Voraussage: Ziel ~" + sztClockOf(planEnd) + " Uhr"
+    : "🗺 Fahrplan-Voraussage";
+  return '<div class="followhint sztwatchline" title="Raum-Zeit-Fahrtbeobachtung: dieser angesehene Verlauf füttert die Raum-Zeit-Karte; kursiv = Voraussage, blinkt im Wechsel mit der normalen Voraussage">' +
+    '<span class="sztwrap"><span class="sztl">' + normal + '</span>' +
+    '<span class="sztt szt ' + cls + '">🗺 Raum-Zeit: ' + txt + ziel + "</span></span></div>";
+}
+
 // Dialog-Fuß der Fahrzeug-Erkennung: Verspaetung, Tempo-Profil, Reichweite, Debug
 function sztDlgFooter() {
   let html = "";
@@ -8734,6 +8877,19 @@ function routeSecStopsHTML(rc, si) {
       rc.mark[si] = null;
     }
   }
+  // Raum-Zeit-Fahrtbeobachtung: dieser angesehene Abschnitt (bei
+  // aufgeklapptem ganzer Lauf: der komplette Lauf) füttert die Raum-Zeit-Karte.
+  // Die eigene GPS-Uhr am eigenen Halt zählt als Beobachtung (nur solange die
+  // Basis-Liste dieses Abschnitts angezeigt wird, der ETA-Index gilt in sts).
+  let sztWGps = null;
+  if (atIdx != null && sts[atIdx] && rc.mark && rc.mark[si] && rc.mark[si].idx === atIdx) {
+    const mk0 = rc.mark[si];
+    if (mk0.etaTs && mk0.etaTs > Date.now() + 1500) {
+      const eD0 = new Date(mk0.etaTs);
+      sztWGps = eD0.getHours() * 60 + eD0.getMinutes();
+    } else sztWGps = sztNowMin();
+  }
+  const sztW = sztSecWatch(sec, sts, extOn, sztWGps, atIdx);
   const done = rc.prog[si] == null ? -1 : rc.prog[si];
   const extRow = (st, cls) => {   // Erweiterungs-Zeile: nur Planzeit, gedimmt, klickbare Station
     const kvg = routeStopMatch(st.name);
@@ -8756,7 +8912,7 @@ function routeSecStopsHTML(rc, si) {
       '">' + (extOn ? "⤡" : "⤢") + "</button></div>" +
     (sec.ext && sec.extLoading && !extOn ? '<small class="rowinfo dim">Ganzer Lauf wird geladen …</small>' : "");
   }
-  html += secFollowHTML(sec) + '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
+  html += secFollowHTML(sec) + sztWatchHeadHTML(sztW) + '<div class="tlegend"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   extUp.forEach((st, i) => { html += extRow(st, i === 0 ? "frow" : ""); });   // Lauf-Anfang bis Zustieg
   const last = sts.length - 1;
   for (let i = 0; i < sts.length; i++) {
@@ -8797,13 +8953,31 @@ function routeSecStopsHTML(rc, si) {
           (dMin > 0 ? "+" + dMin + "m" : dMin < 0 ? dMin + "m" : "0m") + "</span>";
       }
     }
+    // Raum-Zeit-Fahrtbeobachtung: Zeilen ohne echte Live-Angabe erhalten die
+    // kursiv blinkende Voraussage samt ehrlichem Voraussage-Chip in der
+    // Watch-Farbskala, sobald der Lauf fahrplanmaessig unterwegs ist und die
+    // Station vor uns liegt; der alte Plan-Fallback-Chip ("0m" ohne jede
+    // Live-Info) weicht dem Voraussage-Chip. Live-Zeilen und der eigene GPS-Halt
+    // bleiben unberuehrt.
+    let sztRowAktuell = escapeHtml(actual || "–");
+    const sztWLive = !!(st.dR || st.aR) || atIdx === i;
+    if (sztW && sztW.delay != null && !sztWLive) {
+      const pmin = hhmmToMin(planned);
+      const pet = pmin == null ? null : pmin + sztW.delay;
+      const rMin = pet == null ? null : sztWrapDiff(pet, sztNowMin());
+      if (rMin != null && rMin >= -1) {
+        delayHtml = sztWatchChipHTML(sztW.delay);
+        if (sztW.delay !== 0)
+          sztRowAktuell = sztBlend(actual || planned || "–", "≈" + sztClockOf(pet));
+      }
+    }
     const hereIdx = atIdx != null ? atIdx : done;
     const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === 0 && !extUp.length ? " frow" : "") + (i === last && !extDn.length ? " lrow" : "");
     const kvg = routeStopMatch(st.name);
     html += '<div class="trow' + rowCls + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
-      '<span class="takt' + (i === atIdx && !etaActive ? " blinkclock" : "") + '">' + escapeHtml(actual || "–") + "</span>" +
+      '<span class="takt' + (i === atIdx && !etaActive ? " blinkclock" : "") + '">' + sztRowAktuell + "</span>" +
       delayHtml +
       '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
         (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
@@ -9654,7 +9828,7 @@ function helpHTML() {
   h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste.");
   h += P("<b>Sekunden-Countdown:</b> Steht eine KVG-<b>Echtzeit</b>-Fahrt unmittelbar bevor (bis 3 Minuten), tickt „fährt in 2:54 min“ im Sekundentakt. Bewusst nur bei Echtzeit: Fahrplandaten haben keine Sekunden, ein Countdown daraus wäre getürkt. Während ein Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
   h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. In den Stationslisten und Suchtreffer-Zeilen zählt allein die <b>Abfahrtszeit</b>: alle noch nicht abgefahrenen Verbindungen stehen in der Liste; abgefahrene bleiben bis 3 Minuten grau durchgestrichen stehen und verschwinden dann. Unter jeder Zeile der Abfahrtsliste im Stationsreiter steht die Folgefahrten-Zeile derselben Linie („auch geplant: HH:MM Uhr“); in Suchtreffer-Zeilen bleibt die Liste ohne sie. In den Verläufen (Fahrtverlauf und Routen-Abschnitte) steht sie direkt über der Kopfzeile „Gep./Aktuell“.");
-  h += P("<b>Drei Datenquellen – planmäßig, aktuell, Raum-Zeit:</b> Neben „Gep.“ (Fahrplan) und „Aktuell“ (Live-Tafel) gewinnt die App an dritter Stelle eigene Werte aus der <b>Raum-Zeit-Auswertung</b>: deine GPS-Spur gegen die Fahr-Linie der erkannten Fahrt, solange die Fahrzeug-Erkennung läuft. Diese Werte erkennst du <b>immer an kursiver Schrift</b> – kursiv ist das durchgehende Kennzeichen für Raum-Zeit-Daten, auch in der Web-App, der Hilfe und diesem README. Sie nutzen <b>dieselben Farben</b> wie die Live-Daten (grün pünktlich, gelb knapp, rot kritisch). Stimmt die Raum-Zeit-Rechnung mit der Live-Angabe überein (unter 3 Minuten Abweichung), bleibt einfach die Live-Angabe stehen. Weicht sie <b>signifikant ab (ab 3 Minuten) oder fehlt Live ganz</b>, erscheint der kursive Raum-Zeit-Wert <b>im Wechsel mit der Live-Angabe</b> – beide Werte blinken abwechselnd auf, im Sekundenrhythmus, so bleibst du nie auf einer Zahl sitzen, ohne die andere zu kennen. Die Verspätung der erkannten Fahrt zeigt der Dialogfuß als kursives „🗺 Raum-Zeit: Verspätung +X min, Tendenz steigend/fallend/stabil“ samt Zielankunft; im Fahrtverlauf derselben Fahrt steht dieselbe Zeile direkt über „Gep./Aktuell“, und jede kommende Stationszeile trägt zusätzlich kursiv ihre Raum-Zeit-Ankunft. In der gewählten Route warnt eine kursive Anschluss-Zeile unter dem Abschnitt („Anschluss knapp”, „Anschluss verpasst“), wenn die Raum-Zeit-Ankunft am Umstieg den Folge-Abschnitt gefährdet; im Suchergebnis ergänzt „↝ ~HH:MM“ kursiv die Fußweg-Ankunft mit deinem eigenen Tempo statt des Standard-Tempos.");
+  h += P("<b>Drei Datenquellen – planmäßig, aktuell, Raum-Zeit:</b> Neben „Gep.“ (Fahrplan) und „Aktuell“ (Live-Tafel) gewinnt die App an dritter Stelle eigene Werte aus der <b>Raum-Zeit-Auswertung</b>: deine GPS-Spur gegen die Fahr-Linie der erkannten Fahrt, solange die Fahrzeug-Erkennung läuft. Diese Werte erkennst du <b>immer an kursiver Schrift</b> – kursiv ist das durchgehende Kennzeichen für Raum-Zeit-Daten, auch in der Web-App, der Hilfe und diesem README. Sie nutzen <b>dieselben Farben</b> wie die Live-Daten (grün pünktlich, gelb knapp, rot kritisch). Stimmt die Raum-Zeit-Rechnung mit der Live-Angabe überein (unter 3 Minuten Abweichung), bleibt einfach die Live-Angabe stehen. Weicht sie <b>signifikant ab (ab 3 Minuten) oder fehlt Live ganz</b>, erscheint der kursive Raum-Zeit-Wert <b>im Wechsel mit der Live-Angabe</b> – beide Werte blinken abwechselnd auf, im Sekundenrhythmus, so bleibst du nie auf einer Zahl sitzen, ohne die andere zu kennen. Die Verspätung der erkannten Fahrt zeigt der Dialogfuß als kursives „🗺 Raum-Zeit: Verspätung +X min, Tendenz steigend/fallend/stabil“ samt Zielankunft; im Fahrtverlauf derselben Fahrt steht dieselbe Zeile direkt über „Gep./Aktuell“, und jede kommende Stationszeile trägt zusätzlich kursiv ihre Raum-Zeit-Ankunft. In der gewählten Route warnt eine kursive Anschluss-Zeile unter dem Abschnitt („Anschluss knapp”, „Anschluss verpasst“), wenn die Raum-Zeit-Ankunft am Umstieg den Folge-Abschnitt gefährdet; im Suchergebnis ergänzt „↝ ~HH:MM“ kursiv die Fußweg-Ankunft mit deinem eigenen Tempo statt des Standard-Tempos. <b>Außerdem funktioniert die Karte längst nicht nur bei laufender Fahrzeug-Erkennung:</b> Sobald du einen konkreten Fahrtverlauf beobachtest, also als Fahrtverlauf im Stationsreiter oder als Fahr-Abschnitt innerhalb deiner Route, und die Fahrt fahrplanmäßig ihre ersten Stationen durchfährt, füttert genau dieser angesehene Verlauf die Raum-Zeit-Karte mit seinen beobachteten Ist- und Plan-Zeiten. Die Fahr-Linie wird um die zuletzt beobachtete Verspätung entlang der Zeitachse verschoben und auf alle kommenden Stationen fortgeschrieben, die voraussichtliche Verspätung steht damit sofort, bevor die Live-Auskunft dort Ist-Zeiten liefern würde (ohne jede Beobachtung lautet das Urteil „voraussichtlich pünktlich“ und schaltet mit der ersten Ist-Meldung um). Der kursive Hinweis über „Gep./Aktuell“ blinkt dabei im Wechsel mit der normalen (nicht kursiven) Voraussage, und seine Farbe nennt das Urteil sofort: <b>grün</b> = voraussichtlich pünktlich, <b>gelb</b> = leichte Verspätung, <b>rot</b> = starke Verspätung (ab 5 Minuten), <b>blau</b> = voraussichtlich zu früh; jede kommende Stationszeile ohne Live-Angabe trägt zusätzlich ihren kursiven Voraussage-Chip in derselben Farbskala, bei pünktlicher Voraussage mit der Planzeit in der Aktuell-Spalte.");
   h += sec("👁 Fahrtverlauf");
   h += P("Antippen einer Abfahrt öffnet den Verlauf. Kommst du einer Station auf <b>50 m</b> heran, wird sie als erreicht markiert (durchgestrichen) und eine Prognose „≈HH:MM“ eingeblendet – aus deiner Bewegung gerechnet, maximal 3 Minuten voraus. Markieren passiert nur im Plausibilitätsfenster (bis 3 Minuten vor bis 5 Minuten nach der Fahrplan-Zeit dort), damit GPS-Sprünge sie nicht fälschen. Bewegst du dich zurück Richtung vorherige Station (typische GPS-Ungenauigkeit), wird die Markierung vorübergehend zurückgenommen, bis du dich wieder näherst. Das ⤢-Symbol zeigt den kompletten Lauf, ⤡ nur ab deiner Haltestelle; die Anfahrts-Erkennung rechnet ausschließlich mit deiner Live-GPS-Position, solange das GPS läuft – gespeicherte Positionen (Adressfeld, Reiter) pinnen die Reiter nicht. Ein blau leuchtender Punkt in Ringgröße wandert kontinuierlich auf der Linie zwischen der erreichten und der nächsten Station mit und gleitet unter den Stations-Kreisen hindurch bis in ihre Mitte, solange das GPS läuft. Entfällt die exakte Trip-ID im Board, wird die Planzeit über Linie + Richtung mit 25 Minuten Toleranz zugeordnet (entsprechend markiert). Direkt über der Kopfzeile „Gep./Aktuell“ des Verlaufs steht außerdem, wann dieselbe Linie an dieser Haltestelle wieder fährt: „auch geplant: HH:MM Uhr“ (und weitere), Grundlage ist der Fahrplan mit 3-Stunden-Fenster; bei dichtem Takt heißt es verkürzt „auch geplant: HH:MM Uhr, alle X min.“, bei unruhigem Takt „im Schnitt alle X min.“. Eine zweite Zeile warnt heuristisch vor möglichem Betriebsschluss der Linie: wenn die letzte Fahrt ins 2,5-Stunden-Fenster fällt und danach Stille bleibt, oder wenn in den Nachtstunden (etwa 20 bis 5 Uhr) mehr als eine Stunde zwischen zwei Fahrten der Linie liegt.");
   h += sec("🚍 Fahrzeug-Erkennung – in welchem Fahrzeug sitze ich?");
@@ -10528,7 +10702,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.4 · Build: 21.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.5 · Build: 21.11.2026</div>
 </div>
 </body>
 </html>
