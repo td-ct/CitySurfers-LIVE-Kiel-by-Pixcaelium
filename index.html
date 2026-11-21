@@ -736,8 +736,8 @@
       erkannt. Offizielle Alternative: <a href="https://www.nah.sh" rel="noopener">NAH.SH</a>.</p>
       <div class="dim" id="aboutApp"></div>
       <div class="aboutbtns">
-        <button class="chip ok" id="aboutUpdate" hidden>🔃 Content Update prüfen</button>
-        <button class="chip" id="aboutAppUpd" hidden>⚠️ App Update nötig</button>
+        <button class="chip ok" id="aboutUpdate" hidden>🔃 Service Update suchen</button>
+        <button class="chip ok" id="aboutAppUpd" hidden>⬇ App Update suchen</button>
         <button class="chip" id="aboutMenu" hidden>⋮ App-Menü</button>
       </div>
     </details>
@@ -9524,7 +9524,7 @@ function helpHTML() {
   h += P("<b>Fahrabschnitte:</b> Jeden Abschnitt antippen, um seine Haltestellen zu sehen — mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung). Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fußwegen zählt er die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge – ein Drittel Fußweg = ein Drittel Punkt. Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
-  h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Content-Version direkt nebeneinander („App v1.2.32 (78) / Content v1.3.2“) mit dem ausdrücklichen Test, ob die App zum geladenen Content passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Content Update prüfen“ (der grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⚠️ App Update nötig“ erscheint nur, wenn der geladene Content eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
+  h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
   return h;
 }
@@ -10279,35 +10279,35 @@ function fillAbout() {
       try { av = window.KvgNative.appVersion(); } catch (e) {}
     }
     const cm = appCompatMiss();
-    // App- UND Content-Version direkt nebeneinander, Inkompatibilitaeten sofort sichtbar:
-    const acLine = "App v" + (av || "?") + " / Content v" + ver;
+    // App- UND Service-Version (HTML-Seite = geladener Service) direkt nebeneinander,
+    const acLine = "App v" + (av || "?") + " / Service v" + ver;
     if (cm.miss.length) {
-      app.textContent = acLine + " – ⚠️ App älter, als dieser Content benötigt: " +
+      app.textContent = acLine + " – ⚠️ App älter, als dieser Service benötigt: " +
         cm.miss.map(m => m[1] + " (seit App v" + m[3] + ")").join(", ") +
         " fehlen. Bitte cslk.apk aktualisieren (nötig: App v" + APP_MIN_VER_NEEDED +
         " / versionCode " + APP_MIN_NEEDED + ", empfohlen: v" + APP_RECOMM_VER + ").";
     } else {
-      app.textContent = acLine + " · App passt zu diesem Content (nötig mindestens App v" +
+      app.textContent = acLine + " · App passt zu diesem Service (nötig mindestens App v" +
         APP_MIN_VER_NEEDED + " / versionCode " + APP_MIN_NEEDED +
         ", empfohlen v" + APP_RECOMM_VER + " wegen Hintergrund-Weckern; an der App-Brücke hat sich seit v1.2.17 nichts geändert).";
     }
-    // "App Update nötig"-Knopf: erscheint NUR, wenn der geladene Content eine
-    // neuere App-Datei verlangt (fehlende Brücken-Funktionen/versionCode zu niedrig);
+    // "App Update suchen"-Knopf (grün, unterhalb des Service-Update-Knopfs): erscheint NUR,
+    // wenn der geladene Service eine neuere App-Datei verlangt;
     // Klick = cslk.apk herunterladen (Installation danach auf dem Geraet).
     appUpd.hidden = !cm.miss.length;
     if (cm.miss.length) {
-      appUpd.title = "Der geladene Content v" + ver + " benötigt eine neuere App als installiert: cslk.apk herunterladen, installieren und die App danach neu starten.";
+      appUpd.title = "Der geladene Service v" + ver + " benötigt eine neuere App als installiert: cslk.apk herunterladen, installieren und die App danach neu starten.";
       appUpd.onclick = () => { try { window.location.href = "cslk.apk"; } catch (e) {} };
     }
     if (typeof window.KvgNative.checkWebUpdate === "function") {
       upd.hidden = false;
       upd.disabled = false;
-      upd.textContent = "🔃 Content Update prüfen";
+      upd.textContent = "🔃 Service Update suchen";
       upd.onclick = () => {
         upd.disabled = true;
         upd.textContent = "⏳ Suche läuft …";
         nativeCall("checkWebUpdate", "https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.html", pageVersion());
-        setTimeout(() => { upd.disabled = false; upd.textContent = "🔃 Content Update prüfen"; }, 5000);
+        setTimeout(() => { upd.disabled = false; upd.textContent = "🔃 Service Update suchen"; }, 5000);
       };
     } else {
       upd.hidden = true;
