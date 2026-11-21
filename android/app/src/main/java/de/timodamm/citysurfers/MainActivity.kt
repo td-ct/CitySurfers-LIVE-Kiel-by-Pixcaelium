@@ -83,6 +83,10 @@ class MainActivity : Activity() {
                     } else {
                         try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
                     }
+                } else if (u.scheme == "mailto") {
+                    // mailto:-Links (Support/Bugreport, Impressum) an das installierte
+                    // E-Mail-Programm weiterreichen; ohne Mail-App bleibt alles wie vorher.
+                    try { startActivity(Intent(Intent.ACTION_SENDTO, u)); true } catch (e: Exception) { false }
                 } else false
             }
             // Laesst sich die uebernommene Seite nicht laden (unlesbar, entfernt,
