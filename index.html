@@ -682,6 +682,7 @@
   #apiInd [data-ind=nom]  { --c: #7EBC6F; }  /* Photon/Nominatim (OSM): Gruen */
   #apiInd [data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
   #apiInd [data-ind=don]  { --c: #22d3ee; }  /* Donkey/SprottenFlotte: Cyan */
+  #apiInd [data-ind=gtf]  { --c: #14b8a6; }  /* gtfs.de (DELFI-Verspaetungen): Tuerkis */
   #apiInd .led.ping { opacity: 1; animation: indPing 0.9s ease-out; }
   #apiInd .ind.ping { opacity: 1; }  /* alte Regel fuer Wecker-/Finde-nach-Hause-Knoepfe */
   /* v1.5.0: Kurzzeichen-Chip des Live-Dienstes (Fern-Stationen, Stationskopf) */
@@ -692,6 +693,9 @@
   .regsvc.dvvs  { color: #c9b5fd; }
   .regsvc.dmvv  { color: #86efb0; }
   .regsvc.ddvb  { color: #ffb0d4; }
+  .regsvc.dgtfs { color: #5eead4; }
+  /* v1.5.2: Verspaetungs-Overlay-Chip gtfs.de neben dem geplant-Tag */
+  .ptag.gtag { color: #2dd4bf; border-color: #2dd4bf66; }
   /* v1.5.0: Statistik-Legende: Kurzbezeichnung fett, danach die Spezifikation */
   #apiStats .asname b { color: #e2e8f0; }
   #apiStats .asdesc { color: #94a3b8; }  @keyframes indPing {
@@ -707,7 +711,7 @@
   <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
   <button class="ind" id="alarmInd" title="Gestellte Wecker: Zahl = Anzahl, Klick zeigt die Weckerliste (anzeigen, deaktivieren, löschen)">⏰</button>
   <button class="ind" id="fhInd" title="Finde nach Hause: Zahl = aktive Hinweise, Klick zeigt die Hinweisliste; ausgegraut = gerade keine">🏠</button>
-  <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (nah.sh, KVG, VBB, VVS, DVB, OSM, OSRM, Donkey) und blinkt, wenn er Daten liefert. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
+  <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (nah.sh, KVG, VBB, VVS, MVV, DVB, gtfs.de, OSM, OSRM, Donkey) und blinkt, wenn er Daten liefert. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
 </div>
 <div id="alarmList" hidden></div>
 <div id="fhList" hidden></div>
@@ -831,7 +835,7 @@
 
   <footer>
     Datenquellen: KVG (inoffizielle Schnittstelle wie kvg-kiel.de) · nah.sh/HAFAS · regionale Live-Dienste
-    VBB/VVS/DVB · Leihräder: Donkey/SprottenFlotte · Fußwege: OSRM/OpenStreetMap · Adressen: Photon ·
+    VBB/VVS/MVV/DVB · Verspätungen bundesweit: gtfs.de/DELFI (Overlay) · Leihräder: Donkey/SprottenFlotte · Fußwege: OSRM/OpenStreetMap · Adressen: Photon ·
     Details unter „Über diese App“. Offizielle Alternative:
     <a href="https://www.nah.sh">NAH.SH</a>.
 
@@ -845,7 +849,9 @@
       Facelift-System: Für jede Anfrage versucht die App zunächst den regionalen Live-Dienst der
       Region (KVG in Kiel, VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, DVB in
       Dresden) und greift sonst auf den deutschlandweiten Fallback zurück, die NAH.SH-Auskunft mit
-      Fahrplan bundesweit und Echtzeit, soweit vorhanden; zusätzlich stehen die Leihfahrräder von
+      Fahrplan bundesweit und Echtzeit, soweit vorhanden; und bundesweit legt das gtfs.de-Overlay
+      (freier DELFI-Verspätungsstrom, serverseitig aufbereitet) echte Verspätungen über die Planzeiten
+      der Regionen ohne eigenen Live-Dienst; zusätzlich stehen die Leihfahrräder von
       Donkey Republic (SprottenFlotte) direkt in der Verbindungssuche.</p>
       <div class="theses">
         <p><b>Live statt Papierfahrplan:</b> Echtzeit-Abfahrten der Kieler Verkehrsgesellschaft direkt aus derselben Quelle wie kvg-kiel.de – inklusive Ist-Zeiten und Prognosen.</p>
@@ -878,6 +884,18 @@
       <p><b>DVB</b> <span class="regsvc ddvb">DVB</span> (pinke LED): Live-Abfahrten in Dresden über die offene
       Web-API webapi.vvo-online.de (Haltestellen-Suche und Abfahrten mit RealTime/ScheduledTime). Auflösung
       namentlich (die API nutzt Gauss-Krüger-Koordinaten), sonst nah.sh-Fallback.</p>
+      <p><b>gtfs.de</b> <span class="regsvc dgtfs">gtfs.de</span> (türkise LED): Bundesweite Verspätungen aus dem freien
+      Sammelstream von gtfs.de (realtime.gtfs.de, Datenbasis DELFI e.V., Creative Commons BY 4.0, Aktualisierung
+      alle 10 Sekunden): Der Strom ist ein rund 10 MB großer Protokollpuffer, den keine reine Browser-App sinnvoll
+      laden kann, deshalb bereitet das eigene serverseitige gtfsproxy.php ihn vor und antwortet je Station nur mit
+      den dort aktiven Fahrten samt Linie und Verspätung (die Plan-Daten der Tagesfeeds lädt der Proxy als Zip-Member
+      per HTTP-Range statt als ganze Archive). Die App legt die Werte als Overlay über die geplanten Zeilen ihrer
+      Fern-Stationen, deren regionale Quelle keine Echtzeit liefert (Frankfurt, Hamburg, Köln, Leipzig und alle
+      übrigen Regionen ohne eigenen Live-Dienst): Schienenfahrten exakt an die Planzeit gebunden (Linie und Zeit
+      passen), Busse nur, wenn alle teilsverspäteten Fahrten einer Linie dieselbe Verspätung tragen (Spannweite bis
+      90 Sekunden, Median). Erst ab 60 Sekunden Verspätung erscheint der türkise gtfs.de-Chip, und die Zeile zahlt
+      die Verspätung in Uhrzeit und Countdown ein. Beim ersten Aufruf einer neuen Region baut der Proxy seine
+      Tagesdaten auf, dann antwortet er in Echtzeit.</p>
       <p><b>Donkey / SprottenFlotte</b> <span class="regsvc" style="color:#22d3ee">Donkey</span> (cyanfarbene LED):
       GBFS-Feeds von Donkey Republic (Kiel und Umgebung, Feeds donkey_kiel und donkey_kielsmile) über
       donkeyproxy.php, das serverseitige Skript dieser App; es lädt zusätzlich die Rad-Namen aus der
@@ -889,10 +907,10 @@
       <p><b>Karten-Links</b> (ohne LED): Karten- und uMap-Links öffnen externe Dienste nur mit den Koordinaten
       in der URL (OpenStreetMap, uMap, OpenRailwayMap, Google Maps), die App fragt dabei keine Karten-Server ab.
       Koordinaten und Locator-Texte werden lokal erkannt.</p>
-      <p class="dim">Bekannt, aber (noch) nicht integriert: der gtfs.de-Sammelstream (GTFS-Realtime als
-      Protokollpuffer, zu schwer für die reine Browser-App), DELFI-Realtime über die Mobilithek (Anmeldung
-      erforderlich), HVV Geofox GTI (Zugangsdaten), VAG Nürnberg (Token) sowie die GTFS-RT-Angebote von
-      VRS und VRR (Nutzungsvereinbarung); deren Regionen laufen vorerst über den nah.sh-Fallback.</p>
+      <p class="dim">Bekannt, aber (noch) nicht integriert: DELFI-Realtime im vollen Umfang über die Mobilithek
+      (Anmeldung erforderlich, wäre die lückenlose Bezahl-Variante des freien gtfs.de-Stroms), HVV Geofox GTI
+      (Zugangsdaten), VAG Nürnberg (Token) sowie die GTFS-RT-Angebote von VRS und VRR (Nutzungsvereinbarung);
+      deren Regionen laufen über den nah.sh-Fallback, die Verspätungen dazu aus dem freien gtfs.de-Overlay.</p>
       <div class="dim" id="aboutApp"></div>
       <div class="aboutbtns">
         <button class="chip ok" id="aboutUpdate" hidden>🔃 Service Update suchen</button>
@@ -7000,7 +7018,8 @@ const API_KINDS = {
   dvb:  { label: "DVB",  desc: "Dresdner Verkehrsbetriebe: Live-Abfahrten der Fern-Stationen in Dresden über die offene Web-API webapi.vvo-online.de (haltestellen-suche und Abfahrten mit RealTime)", color: "#FF5CA8" },
   nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
   osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
-  don:  { label: "Donkey", desc: "Donkey Republic / SprottenFlotte: GBFS-Leihräder in Kiel und Umgebung über donkeyproxy.php (eigenes serverseitiges Skript mit Rad-Namen-Cache)", color: "#22d3ee" }
+  don:  { label: "Donkey", desc: "Donkey Republic / SprottenFlotte: GBFS-Leihräder in Kiel und Umgebung über donkeyproxy.php (eigenes serverseitiges Skript mit Rad-Namen-Cache)", color: "#22d3ee" },
+  gtf:  { label: "gtfs.de", desc: "Bundesweite Verspätungen aus dem freien DELFI-Sammelstream von gtfs.de (GTFS-Realtime, alle 10 Sekunden, CC BY 4.0), aufbereitet über das serverseitige gtfsproxy.php als kleine Antwort je Station und als Overlay über die geplanten Zeilen der Fern-Stationen gelegt (Schiene exakt an die Planzeit gebunden, Busse nur bei konsistenter Verspätung der Linie)", color: "#14b8a6" }
 };
 // v1.5.0: LED-Kette aufbauen: je Dienst eine kleine LED in der Leiste oben rechts
 function renderLedStrip() {
@@ -7474,6 +7493,84 @@ async function rsDepsDVB(m) {   // Dresden: offene Web-API (RealTime/ScheduledTi
   out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
   return out.length ? out : null;
 }
+/* v1.5.2 REMDEP-GTFS-START: DELFI-Verspaetungs-Overlay (gtfs.de) ueber gtfsproxy.php.
+   Der Proxy (gtfsproxy.php neben dieser Seite bzw. DONKEY_BASE im file-Kontext) hoert den
+   freien Sammelstream realtime.gtfs.de ab (GTFS-Realtime als Protokollpuffer, ca. 10 MB,
+   alle 10 Sekunden neu; Datenbasis DELFI, gtfs.de free, CC BY 4.0) und antwortet JE Station
+   mit einer kleinen Liste der dort aktiven Fahrten: l = Linie, d = Verspaetung in Sekunden
+   (negativ = frueher), p = planmaessige Abfahrtszeit HH:MM (nur Schienenfahrten aus den
+   stop_times der Regional- und Fernverkehrsfeeds, sonst null), s = stop_sequence,
+   t = Trip-ID. Fehler-Philosophie: antwortet der Proxy nicht oder mit ok:false, bleibt
+   alles einfach beim Anzeigestand, die Zeilen bleiben Plan-Sollzeiten. */
+const GTFS_MIN_DELAY_S = 60;    // Overlay earliest ab 60 s Verspaetung
+const GTFS_SPREAD_S = 90;       // Bus-Konsistenz: Spannweite der Delays einer Linie
+const GTFS_MATCH_MIN = 2;       // Schiene: Planzeit-Ausgleichsfenster in Minuten
+const rsGtfsCache = { key: "", ts: 0, at: null };
+function rsGtfsProxyURL() {   // Web: relativ, Android file://: feste Produktiv-URL (wie DONKEY_BASE)
+  return (location && location.protocol === "file:")
+    ? "https://pixcaelium.timo-damm.de/apps/citysurfers/gtfsproxy.php" : "gtfsproxy.php";
+}
+function rsGtfsWrap(a, b) {   // Minuten-Differenz mit Mitternacht-Umbruch (kuerzester Weg)
+  let d = (a - b) % 1440;
+  if (d > 720) d -= 1440;
+  if (d < -720) d += 1440;
+  return d;
+}
+async function rsGtfsFetch(m) {   // je Station 45 s Cache; Proxy-Fehler = still kein Overlay
+  const now = Date.now();
+  if (rsGtfsCache.key !== m.shortName || now - rsGtfsCache.ts > 45000 || !rsGtfsCache.at) {
+    const res = await apiFetch("gtf", rsGtfsProxyURL() + "?lat=" + m.lat.toFixed(4) + "&lon=" + m.lon.toFixed(4));
+    const j = res.ok ? await res.json().catch(() => null) : null;
+    if (!j || !j.ok || !Array.isArray(j.at)) return null;
+    rsGtfsCache.key = m.shortName;
+    rsGtfsCache.ts = now;
+    rsGtfsCache.at = j.at;
+  }
+  return rsGtfsCache.key === m.shortName ? rsGtfsCache.at : null;
+}
+async function rsOverlayGtfs(m, rows) {   // nur geplante Zeilen, vvPREDICTED bleibt unberuehrt
+  try {
+    if (!m || m.lat == null || m.lon == null || !Array.isArray(rows)) return rows;
+    const planRows = rows.filter(r => r && r.status === "PLANNED");
+    if (!planRows.length) return rows;
+    const at = await rsGtfsFetch(m);
+    if (!at || !at.length) return rows;
+    const rail = [];
+    const busBy = new Map();
+    for (const e of at) {
+      if (!e || !e.l || typeof e.d !== "number") continue;
+      if (e.p) rail.push(e);
+      else {
+        const k = rsFold(e.l);
+        if (!busBy.has(k)) busBy.set(k, []);
+        busBy.get(k).push(e.d);
+      }
+    }
+    for (const r of planRows) {
+      const lf = rsFold(r.line);
+      let d = null;
+      for (const e of rail) {   // Schiene: Linie passt und Planzeit im ±2-Minuten-Fenster
+        if (rsFold(e.l) !== lf) continue;
+        if (Math.abs(rsGtfsWrap(hhmmToMin(r.plannedTime), hhmmToMin(e.p))) <= GTFS_MATCH_MIN) { d = e.d; break; }
+      }
+      if (d == null) {   // Bus/abhaengige Planbindung: konsistente Delays der ganzen Linie
+        const ds = busBy.get(lf);
+        if (ds && ds.length) {
+          const mx = Math.max.apply(null, ds), mn = Math.min.apply(null, ds);
+          if (mx - mn <= GTFS_SPREAD_S) {
+            const s = ds.slice().sort((a, b) => a - b);
+            d = s[Math.floor((s.length - 1) / 2)];
+          }
+        }
+      }
+      if (d == null || Math.abs(d) < GTFS_MIN_DELAY_S) continue;
+      r.gDelay = d;   // Sekunden, negativ = frueher; Uhrzeit und Countdown rechnen es ein
+      r.actualRelativeTime = (r.actualRelativeTime || 0) + d;
+    }
+    rows.sort((a, b) => (a.actualRelativeTime || 0) - (b.actualRelativeTime || 0));
+    return rows;
+  } catch (e) { return rows; }
+}
 async function rsGetDepartures(sn) {   // Facelift-System: regional zuerst, sonst nah.sh-Fallback
   const m = remoteStops.get(sn);
   if (!m || !m.lid) return null;
@@ -7484,9 +7581,12 @@ async function rsGetDepartures(sn) {   // Facelift-System: regional zuerst, sons
     else if (m.svc === "mvv") rows = await rsDepsMVV(m);
     else if (m.svc === "dvb") rows = await rsDepsDVB(m);
   } catch (e) { rows = null; }
-  if (rows) return rows;
-  try { return await rsDepsNahsh(m); } catch (e) { return null; }
+  if (!rows) { try { rows = await rsDepsNahsh(m); } catch (e) { rows = null; } }
+  if (rows && rows.some(r => r && r.status === "PLANNED"))
+    try { rows = await rsOverlayGtfs(m, rows); } catch (e) { /* Overlay ist zusaetzlich, nie kritisch */ }
+  return rows;
 }
+/* v1.5.2 REMDEP-GTFS-END */
 /* REMDEP-END */
 // Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
 async function dbTrip(tripId, depTime, kvgPlanned) {
@@ -8074,6 +8174,8 @@ function busLinesHTML(v, horizonSec, withFollow) {
     const isPlan = d.earlier ? d.status === "PLANNED" : (d.planned || d.status === "PLANNED");
     const cls = (rel >= 0 ? (rel > 180 ? "bl" : "bl soon") : "bl gone") + (isPlan ? " planned" : "");
     const ptag = isPlan ? '<span class="ptag">geplant</span>' : "";
+    const gtag = d.gDelay != null ? '<span class="ptag gtag" title="Verspätungs-Overlay: gtfs.de-Realtime (Datenbasis DELFI, CC BY 4.0), serverseitig aufbereitet über gtfsproxy.php">gtfs.de ' +
+      (d.gDelay >= 0 ? "+" : "-") + Math.round(Math.abs(d.gDelay) / 60) + " min</span>" : "";
     const now = new Date();
     const t = new Date(now.getTime() + rel * 1000);
     const clock = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
@@ -8098,7 +8200,7 @@ function busLinesHTML(v, horizonSec, withFollow) {
         '<span class="dl blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(d.line) + '</span>' +
         (plat ? '<span class="plat">[' + escapeHtml(plat) + ']</span>' : '') +
         '<span class="mqwrap"><span class="mqi blink' + (clickable ? '" data-buslink="' + bLink : "") + '">' + escapeHtml(text) + "</span></span>" +
-        '<span class="btime">' + right + ptag + "</span></div>" +
+        '<span class="btime">' + right + ptag + gtag + "</span></div>" +
         (withFollow ? rowFollowHTML(v.stop.shortName, d) : "") + "</div>",
       losMin
     });
@@ -11636,6 +11738,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
   h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Der 🚲?-Knopf am aktiven Standort unter dem Adressfeld ist seit v1.4.18 entfallen, weil die Leihstationen direkt über die Stationssuche erreichbar sind. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
   h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern in zwei Listen (seit v1.4.16: E-Bikes nach Akkustand absteigend, darunter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar und der Rest hinter einem Aufklapp-Knopf; jedes Rad trägt seinen von Donkey vergebenen Vornamen wie „Frieda“ mit Kurz-ID), hinter jedem Rad das kleine Esel-Symbol 🫏 als Donkey-App-Link (v1.4.16, ersetzt den früheren 📲-Chip aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung (seit v1.4.17 erscheint der 📌-Knopf nur bei übernommener Station, und unter Punkt 2 stehen Zähler und ausklappbare Rad-Liste der Station, Details im v1.4.17-Absatz). Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
+   h += P("<b>⏱ Verspätungs-Overlay gtfs.de für ganz Deutschland (v1.5.2):</b> Für Fern-Stationen, deren regionale Quelle nur Plan-Sollzeiten liefert (Frankfurt, Hamburg, Köln, Leipzig, Nürnberg und alle Regionen ohne eigenen Live-Dienst, soweit der freie DELFI-Sammelstream Daten liefert), fragt die App zusätzlich das eigene serverseitige gtfsproxy.php ab: Es hört den freien gtfs.de-Realtime-Strom (rund 10 MB Protokollpuffer, alle 10 Sekunden aktualisiert; Datenbasis DELFI, gtfs.de free, Creative Commons BY 4.0) serverseitig ab und antwortet je Station nur mit den dort aktiven Fahrten samt Linie und Verspätung in Sekunden. Die App legt die Werte als Overlay über die geplanten Zeilen: Schienenfahrten bindet sie exakt an Linie und Planzeit (Ausgleichsfenster 2 Minuten), Busse nur, wenn alle aktiven Fahrten der Linie dieselbe Verspätung tragen (Spannweite bis 90 Sekunden, dann gilt der Median). Erst ab 60 Sekunden Verspätung erscheint der türkise gtfs.de-Chip hinter dem geplant-Tag, und Uhrzeit, Countdown und „los in“-Angabe der Zeile rechnen die Verspätung direkt ein; echte Echtzeit-Zeilen (blaue Dienste, nah.sh-Rückfälle mit Prognose) bleiben unberührt. Beim allerersten Aufruf einer neuen Region baut der Proxy seine Tagesdaten aus den gtfs.de-Feeds auf (dauert einen Moment, die Liste zeigt trotzdem schon den Fahrplan), danach antwortet er in Echtzeit. Die elfte LED (gtfs.de, türkis) blinkt bei jeder Overlay-Abfrage.");
    h += P("<b>🚉 MVV: München als Regiondienst (v1.5.1):</b> München und Umland gehören zum Facelift-System: Fern-Stationen der Region (von Starnberg über die Innenstadt bis Freising und Ebersberg) zeigen Live-Abfahrten über die offizielle MVV-EFA-Schnittstelle (efa.mvv-muenchen.de), mit Echtzeit-Ist-Zeit, Countdown und Bahnsteig; bereits abgefahrene Fahrten entfallen. Beste Echtzeit-Quote der App: Praktisch alle Abfahrten an Marienplatz (U-Bahn, Tram, Bus) und Ostbahnhof laufen mit Ist-Zeit. Die zusätzliche grüne LED blinkt als zehnte in der Kette. Scheitert die Abfrage oder liegt die aufgelöste Station weiter als 600 m von der nah.sh-Station entfernt, greift wie überall der nah.sh-Fallback. Außerhalb der Münchner Region verändert sich nichts: Berlin, Stuttgart und Dresden behalten ihre Dienste, alles Übrige läuft über nah.sh."); h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS, MVV oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, MVV in München und Umland, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, MVV grün, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
   h += P("<b>📌 Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog (v1.4.17):</b> Der 📌-Knopf unter dem Abholrad-Pulldown ist Spezialist: Er erscheint nur noch, wenn der Dialog mit einer übernommenen Donkey-Station geöffnet wurde (🚲-Zeile der Stationssuche oder 🚲?-Knopf im MM-Reiter). Genau dann soll Punkt 2 festgehalten werden, während Punkt 1 (Start) noch frei wechselbar ist oder gerade die GPS-Position läuft; nochmal drücken löst die Fixierung, wieder drücken fixiert die Station des aktuell gewählten Rads neu. Ohne übernommene Station gibt es den Knopf gar nicht, denn dort ergibt Fixieren keinen Sinn: Punkt 2 bleibt dann die normale Räder-Suche um den Start. Bei fixierter Station steht unter Punkt 2 jetzt außerdem ein Zähler (freie E-Bikes mit mind. 40 % Akku, freie Standardräder, reservierte/gesperrte dahinter) und darunter die ausklappbare Rad-Liste der Station mit genau einem sichtbaren Eintrag: E-Bikes nach Akkustand absteigend (ohne Wert ans Ende), dahinter die Standardräder nach Namen, je mit Vorname, Akku, Reichweite und dem kleinen Esel-Symbol als Donkey-App-Link hinter dem Rad. Der Überblick ist damit schon vor der Rad-Wahl da, aufgeklappt auf Wunsch.");
   h += P("<b>🫏 Donkey-App-Link, Rad-Namen und Knopf-Breite (v1.4.16):</b> Der offizielle Miet-Link eines Rads ist jetzt ein kleines Donkey-Esel-Symbol direkt hinter dem Rad: Es verbraucht keine eigene Zeile und öffnet auf dem Handy die Donkey-App direkt beim Rad; ohne installierte App landet man auf der Download-Seite von Donkey (ältere Geräte ohne das Esel-Emoji zeigen automatisch 📲). Die Räder heißen bei Donkey richtig („Frieda“, „E-bike Fischi“); donkeyproxy.php liest diese Namen jetzt mit aus und die App zeigt sie überall: im Pulldown des Routing-Dialogs, in der Rad-Zeile des Dialogs, im MM-Reiter (dort als zwei Listen: E-Bikes nach Akkustand absteigend, dahinter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar) und im Abholrad-Weg der übernommenen MM-Route. Die Knöpfe der Hauptleiste sind alle exakt so breit wie die Knöpfe der obersten Zeile, und eine nicht ganz gefüllte Zeile steht mittig. Die Favoritenknöpfe sind komplett dynamisch: Beim ersten Start gibt es genau einen, weitere entstehen per langem Druck (bis acht), und Löschen nimmt den Knopf jetzt zuverlässig aus der Leiste, Belegungen rutschen nach, der letzte bleibt immer stehen.");
@@ -13944,7 +14047,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.1 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.2 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
