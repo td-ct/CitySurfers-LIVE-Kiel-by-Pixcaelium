@@ -10763,9 +10763,16 @@ function bikeFeature(lat, lon, name, desc) {
 // uMap mit Direkt-GeoJSON: gewaehltes Rad als Stern, die anderen dazu, plus
 // Rueckgabe-Stationen um das Ziel; Karte zentriert auf das gewaehlte Rad.
 // Wichtig: data=/dataFormat= importiert uMap nur im Erstell-Modus, also /map/new/.
+// uMap dekodiert data= ZWEIMAL (URLSearchParams.get plus decodeURIComponent):
+// Ein Prozent im GeoJSON (z.B. "Akku 42 %") wirft dann beim zweiten Dekodieren
+// einen URIError, der Import bricht still ab und die Karte bleibt ohne Symbole.
+// Deshalb wird %25 im encodierten Payload zu %2525 verdoppelt: nach uMaps
+// Doppel-Dekodieren steht das Prozent wieder korrekt im JSON (faellt uMap auf
+// einmaliges Dekodieren zurueck, kommt ein harmloses %25 im Text an).
+function bikeUmapDataParam(s) { return encodeURIComponent(s).replace(/%25/g, "%2525"); }
 function bikeUmapURL(features, center) {
   const gj = JSON.stringify({ type: "FeatureCollection", features: features });
-  let u = "https://umap.openstreetmap.fr/de/map/new/?data=" + encodeURIComponent(gj) + "&dataFormat=geojson";
+  let u = "https://umap.openstreetmap.fr/de/map/new/?data=" + bikeUmapDataParam(gj) + "&dataFormat=geojson";
   if (center && center.lat != null && center.lon != null)
     u += "#15/" + Number(center.lat).toFixed(5) + "/" + Number(center.lon).toFixed(5);
   return u;
@@ -10774,7 +10781,7 @@ function bikeUmapURL(features, center) {
 // (data/dataUrl/dataFormat greifen nur im Erstell-Modus, deshalb /map/new/)
 function bikeUmapAllURL() {
   return "https://umap.openstreetmap.fr/de/map/new/?dataUrl=" +
-    encodeURIComponent(donkeyProxyURL(true)) + "&dataFormat=geojson";
+    bikeUmapDataParam(donkeyProxyURL(true)) + "&dataFormat=geojson";
 }
 // Knopf 🚲? fuer Bloecke/Ausloeser: data-rtbike traegt "h" oder die Abschnitts-
 // Nummer; ctx (Adresse/Stationsreiter) steckt seine Werte direkt im Handler.
@@ -11896,7 +11903,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.2 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.3 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
