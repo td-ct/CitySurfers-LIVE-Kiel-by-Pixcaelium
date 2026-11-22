@@ -661,6 +661,11 @@
   #apiStats .asdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   #apiStats .asname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   #apiStats .asval { color: #cbd5e1; white-space: nowrap; }
+  #apiStats .asflag { display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    font-size: 10px; font-weight: 800; line-height: 14px; text-align: center;
+    flex-shrink: 0; color: #ffffff; }
+  #apiStats .asflag.asferr { background: #ef4444; }
+  #apiStats .asflag.asfwarn { background: #facc15; color: #1e293b; }
   #apiStats .astot { border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px;
     color: #e2e8f0; font-weight: 600; }
   #apiStats .asdim { color: #64748b; margin-top: 6px; }
@@ -683,8 +688,18 @@
   #apiInd [data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
   #apiInd [data-ind=don]  { --c: #22d3ee; }  /* Donkey/SprottenFlotte: Cyan */
   #apiInd [data-ind=gtf]  { --c: #14b8a6; }  /* gtfs.de (DELFI-Verspaetungen): Tuerkis */
+  #apiInd [data-ind=delfi]{ --c: #647CFF; }  /* DELFI-Pool (delfiproxy.php): Blauviolett */
   #apiInd .led.ping { opacity: 1; animation: indPing 0.9s ease-out; }
   #apiInd .ind.ping { opacity: 1; }  /* alte Regel fuer Wecker-/Finde-nach-Hause-Knoepfe */
+  /* v1.5.3: Fehler-Markierung der LED-Kette: rotes ! = trotz Versuchen keine Verbindung
+     seit dem letzten Zuruecksetzen, gelbes ! = instabile Verbindung (Erfolge und
+     Fehlversuche gemischt) */
+  #apiInd .ledw { position: relative; display: inline-flex; align-items: center; }
+  #apiInd .ledflag { position: absolute; top: -8px; right: -1px; width: 11px; height: 11px;
+    border-radius: 50%; font-style: normal; font-size: 9px; font-weight: 800;
+    line-height: 11px; text-align: center; color: #ffffff; pointer-events: none; }
+  #apiInd .ledflag.ferr { background: #ef4444; box-shadow: 0 0 4px #ef4444; }
+  #apiInd .ledflag.fwarn { background: #facc15; color: #1e293b; box-shadow: 0 0 4px #facc15; }
   /* v1.5.0: Kurzzeichen-Chip des Live-Dienstes (Fern-Stationen, Stationskopf) */
   .regsvc { display: inline-block; font-size: 0.62rem; font-weight: 700; padding: 2px 6px;
     border-radius: 999px; border: 1px solid #334155; background: #0f172ae6; white-space: nowrap; }
@@ -694,8 +709,11 @@
   .regsvc.dmvv  { color: #86efb0; }
   .regsvc.ddvb  { color: #ffb0d4; }
   .regsvc.dgtfs { color: #5eead4; }
+  .regsvc.ddelfi { color: #97a9ff; }
   /* v1.5.2: Verspaetungs-Overlay-Chip gtfs.de neben dem geplant-Tag */
   .ptag.gtag { color: #2dd4bf; border-color: #2dd4bf66; }
+  /* v1.5.3: DELFI-Pool-Chip des delfiproxy-Overlays */
+  .ptag.delfitag { color: #97a9ff; border-color: #647CFF66; }
   /* v1.5.0: Statistik-Legende: Kurzbezeichnung fett, danach die Spezifikation */
   #apiStats .asname b { color: #e2e8f0; }
   #apiStats .asdesc { color: #94a3b8; }  @keyframes indPing {
@@ -711,7 +729,7 @@
   <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
   <button class="ind" id="alarmInd" title="Gestellte Wecker: Zahl = Anzahl, Klick zeigt die Weckerliste (anzeigen, deaktivieren, löschen)">⏰</button>
   <button class="ind" id="fhInd" title="Finde nach Hause: Zahl = aktive Hinweise, Klick zeigt die Hinweisliste; ausgegraut = gerade keine">🏠</button>
-  <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (nah.sh, KVG, VBB, VVS, MVV, DVB, gtfs.de, OSM, OSRM, Donkey) und blinkt, wenn er Daten liefert. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
+  <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; rotes Ausrufezeichen: trotz Versuchen keine Verbindung seit dem Zurücksetzen, gelbes: instabile Verbindung; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (nah.sh, KVG, VBB, VVS, MVV, DVB, gtfs.de, DELFI, OSM, OSRM, Donkey) und blinkt, wenn er Daten liefert. Ein rotes ! über einer LED heißt: Dieser Dienst wurde seit dem letzten Zurücksetzen versucht, hatte aber noch keine einzige erfolgreiche Verbindung. Ein gelbes ! heißt: instabile Verbindung, Erfolge und Fehlversuche gemischt. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
 </div>
 <div id="alarmList" hidden></div>
 <div id="fhList" hidden></div>
@@ -835,7 +853,7 @@
 
   <footer>
     Datenquellen: KVG (inoffizielle Schnittstelle wie kvg-kiel.de) · nah.sh/HAFAS · regionale Live-Dienste
-    VBB/VVS/MVV/DVB · Verspätungen bundesweit: gtfs.de/DELFI (Overlay) · Leihräder: Donkey/SprottenFlotte · Fußwege: OSRM/OpenStreetMap · Adressen: Photon ·
+    VBB/VVS/MVV/DVB · Verspätungen: DELFI-Pool via delfiproxy.php (nah.sh-Gebiet) und gtfs.de (Rest-Deutschland) · Leihräder: Donkey/SprottenFlotte · Fußwege: OSRM/OpenStreetMap · Adressen: Photon ·
     Details unter „Über diese App“. Offizielle Alternative:
     <a href="https://www.nah.sh">NAH.SH</a>.
 
@@ -849,9 +867,10 @@
       Facelift-System: Für jede Anfrage versucht die App zunächst den regionalen Live-Dienst der
       Region (KVG in Kiel, VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, DVB in
       Dresden) und greift sonst auf den deutschlandweiten Fallback zurück, die NAH.SH-Auskunft mit
-      Fahrplan bundesweit und Echtzeit, soweit vorhanden; und bundesweit legt das gtfs.de-Overlay
-      (freier DELFI-Verspätungsstrom, serverseitig aufbereitet) echte Verspätungen über die Planzeiten
-      der Regionen ohne eigenen Live-Dienst; zusätzlich stehen die Leihfahrräder von
+      Fahrplan bundesweit und Echtzeit, soweit vorhanden; und bundesweit legen die Verspätungs-Overlays
+      echte Verspätungen über die Planzeiten der Regionen ohne eigenen Live-Dienst: im nah.sh-Gebiet der
+      echte DELFI-Pool (serverseitig via delfiproxy.php), sonst und ergänzend der freie DELFI-Sammelstrom
+      von gtfs.de (gtfsproxy.php); zusätzlich stehen die Leihfahrräder von
       Donkey Republic (SprottenFlotte) direkt in der Verbindungssuche.</p>
       <div class="theses">
         <p><b>Live statt Papierfahrplan:</b> Echtzeit-Abfahrten der Kieler Verkehrsgesellschaft direkt aus derselben Quelle wie kvg-kiel.de – inklusive Ist-Zeiten und Prognosen.</p>
@@ -860,7 +879,10 @@
       </div>
       <p><b>Datenquellen im Detail:</b> Die LED-Kette oben rechts misst je Quelle die übertragenen
       Bytes; jede Zeile hier nennt LED-Farbe, Kurzbezeichnung und Spezifikation (antippen zeigt
-      dieselben Angaben samt Anfrage-Zählern aufklappbar in der Statusleiste).</p>
+      dieselben Angaben samt Anfrage-Zählern aufklappbar in der Statusleiste). Ein rotes ! über
+      einer LED heißt: Dieser Dienst wurde seit dem letzten Zurücksetzen versucht, hatte aber
+      noch keine einzige erfolgreiche Verbindung; ein gelbes ! heißt: instabile Verbindung mit
+      Erfolgen und Fehlversuchen gemischt.</p>
       <p><b>nah.sh</b> <span class="regsvc dnahsh">nah.sh</span> (rote LED): HAFAS-Auskunft der DB Regio Nord
       (nahsh.hafas.cloud, offen per CORS): Echtzeit-Zugabfahrten rund um Kiel inklusive Fahrplan-Fallback
       für die geplanten KVG-Fahrten, die deutschlandweite Verbindungs- und Stationssuche (TripSearch,
@@ -895,7 +917,17 @@
       passen), Busse nur, wenn alle teilsverspäteten Fahrten einer Linie dieselbe Verspätung tragen (Spannweite bis
       90 Sekunden, Median). Erst ab 60 Sekunden Verspätung erscheint der türkise gtfs.de-Chip, und die Zeile zahlt
       die Verspätung in Uhrzeit und Countdown ein. Beim ersten Aufruf einer neuen Region baut der Proxy seine
-      Tagesdaten auf, dann antwortet er in Echtzeit.</p>
+      Tagesdaten auf, dann antwortet er in Echtzeit. Seit v1.5.3 ergänzt er im nah.sh-Gebiet das DELFI-Overlay
+      (siehe nächster Absatz) und bleibt außerhalb von dessen Fußabdruck die einzige Verspätungsquelle.</p>
+      <p><b>DELFI</b> <span class="regsvc delfi" style="color:#97a9ff">DELFI</span> (blauviolette LED): Der echte DELFI-Pool
+      (Mobilithek, GTFS-Realtime, Zugriff per Clientzertifikat) liefert die lückenlosesten Verspätungen
+      im nah.sh-Gebiet: Das serverseitige delfiproxy.php zapft den Pool an und verbindet seine Fahrten mit
+      den offiziellen nah.sh-Solldaten (GTFS des Landes Schleswig-Holstein, Open Data Portal SH, CC BY 4.0),
+      damit jede Live-Fahrt der richtigen geplanten Abfahrt zugeordnet wird; Fahrten mit ausgefallenen
+      Halten entfallen bereits serverseitig. Im nah.sh-Fußabdruck hat dieses Overlay Vorrang, die App
+      fragt dort beide Proxys ab: Zeilen ohne DELFI-Treffer (etwa IC/ICE außerhalb des nah.sh-Datenbestands)
+      ergänzt das gtfs.de-Overlay. Erst ab 60 Sekunden Verspätung erscheint der blaue DELFI-Chip.
+      Außerhalb des nah.sh-Gebiets greift delfiproxy gar nicht, dort bleibt es beim gtfs.de-Overlay.</p>
       <p><b>Donkey / SprottenFlotte</b> <span class="regsvc" style="color:#22d3ee">Donkey</span> (cyanfarbene LED):
       GBFS-Feeds von Donkey Republic (Kiel und Umgebung, Feeds donkey_kiel und donkey_kielsmile) über
       donkeyproxy.php, das serverseitige Skript dieser App; es lädt zusätzlich die Rad-Namen aus der
@@ -907,8 +939,9 @@
       <p><b>Karten-Links</b> (ohne LED): Karten- und uMap-Links öffnen externe Dienste nur mit den Koordinaten
       in der URL (OpenStreetMap, uMap, OpenRailwayMap, Google Maps), die App fragt dabei keine Karten-Server ab.
       Koordinaten und Locator-Texte werden lokal erkannt.</p>
-      <p class="dim">Bekannt, aber (noch) nicht integriert: DELFI-Realtime im vollen Umfang über die Mobilithek
-      (Anmeldung erforderlich, wäre die lückenlose Bezahl-Variante des freien gtfs.de-Stroms), HVV Geofox GTI
+      <p class="dim">Bekannt, aber (noch) nicht integriert: Der volle DELFI-Umfang außerhalb des nah.sh-Gebiets
+      (das eigene delfiproxy.php deckt heute nur den schleswig-holsteinischen Fußabdruck des Pools ab, weitere
+      Regionen könnten folgen), HVV Geofox GTI
       (Zugangsdaten), VAG Nürnberg (Token) sowie die GTFS-RT-Angebote von VRS und VRR (Nutzungsvereinbarung);
       deren Regionen laufen über den nah.sh-Fallback, die Verspätungen dazu aus dem freien gtfs.de-Overlay.</p>
       <div class="dim" id="aboutApp"></div>
@@ -7019,7 +7052,8 @@ const API_KINDS = {
   nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
   osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
   don:  { label: "Donkey", desc: "Donkey Republic / SprottenFlotte: GBFS-Leihräder in Kiel und Umgebung über donkeyproxy.php (eigenes serverseitiges Skript mit Rad-Namen-Cache)", color: "#22d3ee" },
-  gtf:  { label: "gtfs.de", desc: "Bundesweite Verspätungen aus dem freien DELFI-Sammelstream von gtfs.de (GTFS-Realtime, alle 10 Sekunden, CC BY 4.0), aufbereitet über das serverseitige gtfsproxy.php als kleine Antwort je Station und als Overlay über die geplanten Zeilen der Fern-Stationen gelegt (Schiene exakt an die Planzeit gebunden, Busse nur bei konsistenter Verspätung der Linie)", color: "#14b8a6" }
+  gtf:  { label: "gtfs.de", desc: "Bundesweite Verspätungen aus dem freien DELFI-Sammelstream von gtfs.de (GTFS-Realtime, alle 10 Sekunden, CC BY 4.0), aufbereitet über das serverseitige gtfsproxy.php als kleine Antwort je Station und als Overlay über die geplanten Zeilen der Fern-Stationen gelegt (Schiene exakt an die Planzeit gebunden, Busse nur bei konsistenter Verspätung der Linie); im nah.sh-Gebiet ergänzt er das DELFI-Overlay, außerhalb dessen Fußabdruck ist er die einzige Verspätungsquelle", color: "#14b8a6" },
+  delfi:{ label: "DELFI", desc: "Verspätungen aus dem echten DELFI-Pool (Mobilithek, GTFS-Realtime per Clientzertifikat, Solldaten aus dem offiziellen nah.sh-GTFS des Landes Schleswig-Holstein, CC BY 4.0), aufbereitet über das serverseitige delfiproxy.php: Dessen Overlay hat im nah.sh-Gebiet Vorrang (lückenloser Bestand mit exakten Haltestellen-IDs), gtfs.de ergänzt Fahrten ohne DELFI-Treffer (etwa IC/ICE); erst ab 60 Sekunden Verspätung erscheint der blaue DELFI-Chip", color: "#647CFF" }
 };
 // v1.5.0: LED-Kette aufbauen: je Dienst eine kleine LED in der Leiste oben rechts
 function renderLedStrip() {
@@ -7027,8 +7061,9 @@ function renderLedStrip() {
   if (!el) return;
   let h = "";
   for (const k in API_KINDS)
-    h += '<span class="led" data-ind="' + k + '" aria-hidden="true" title="' +
-      escapeHtml(API_KINDS[k].label + ": " + API_KINDS[k].desc) + '"></span>';
+    h += '<span class="ledw"><span class="led" data-ind="' + k + '" aria-hidden="true" title="' +
+      escapeHtml(API_KINDS[k].label + ": " + API_KINDS[k].desc) + '"></span><i class="ledflag" data-flag="' +
+      k + '" hidden aria-hidden="true">!</i></span>';
   el.innerHTML = h;
 }
 renderLedStrip();
@@ -7039,27 +7074,81 @@ try {
 } catch (e) { apiStats = null; }
 if (!apiStats) {
   apiStats = { since: Date.now(), kinds: {} };
-  for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+  for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };
 }
-for (const k in API_KINDS) if (!apiStats.kinds[k]) apiStats.kinds[k] = { n: 0, b: 0 };   // alte Zaehler um neue Quellen ergaenzen
+for (const k in API_KINDS) if (!apiStats.kinds[k]) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };   // alte Zaehler um neue Quellen ergaenzen
+// v1.5.3: Bestand a (Versuche) und e (Fehlversuche) nachruesten; alte Statistiken
+// kannten nur n (= Erfolge), deshalb gilt dort rueckwirkend a = n, e = 0.
+for (const k in apiStats.kinds) { const st = apiStats.kinds[k];
+  if (!st || st.a == null) (apiStats.kinds[k] = { n: (st && st.n) || 0, b: (st && st.b) || 0, a: (st && st.n) || 0, e: 0 });
+  else if (st.e == null) st.e = 0; }
+updateLedFlags();
 function saveApiStats() {
   try { localStorage.setItem("kvg-apistats", JSON.stringify(apiStats)); } catch (e) {}
 }
 const apiEnc = new TextEncoder();
+/* v1.5.3: Verbindungszustand je Dienst seit dem letzten Zuruecksetzen:
+   "err"  = zwar probiert, aber noch KEINE erfolgreiche Verbindung -> rotes !
+   "warn" = Erfolge und Fehlversuche gemischt = instabile Verbindung -> gelbes !
+   ""     = alles normal (nur Erfolge oder noch gar nicht benutzt) */
+function apiKindState(st) {
+  const ok = (st && st.n) || 0, err = (st && st.e) || 0;
+  const att = (st && st.a != null) ? st.a : ok + err;
+  if (att > 0 && ok < 1) return "err";
+  if (ok > 0 && err > 0) return "warn";
+  return "";
+}
+function apiFlagTitle(k, s) {
+  const st = apiStats.kinds[k] || {};
+  const att = st.a != null ? st.a : (st.n || 0) + (st.e || 0);
+  return s === "err"
+    ? API_KINDS[k].label + ": keine Verbindung - " + att + " Versuch" + (att === 1 ? "" : "e") +
+      " ohne einen Erfolg seit dem letzten Zurücksetzen"
+    : API_KINDS[k].label + ": instabile Verbindung - " + (st.e || 0) + " von " + att +
+      " Anfragen ohne Erfolg, seit dem letzten Zurücksetzen";
+}
+function updateLedFlags() {   // v1.5.3: rotes/gelbes ! ueber den LEDs aktualisieren
+  const strip = document.getElementById("ledStrip");
+  if (!strip) return;
+  for (const k in API_KINDS) {
+    const f = strip.querySelector('[data-flag="' + k + '"]');
+    if (!f) continue;
+    const s = apiKindState(apiStats.kinds[k]);
+    if (!s) { f.hidden = true; f.classList.remove("ferr", "fwarn"); f.removeAttribute("title"); }
+    else {
+      f.hidden = false;
+      f.classList.toggle("ferr", s === "err");
+      f.classList.toggle("fwarn", s === "warn");
+      f.title = apiFlagTitle(k, s);
+    }
+  }
+}
+function apiStatsChanged() { saveApiStats(); renderApiStats(); updateLedFlags(); }
 async function apiFetch(kind, url, opts) {
   flashAPI(kind);
-  const res = await fetch(url, opts);
-  if (res.ok) {
-    try {
-      if (!apiStats.kinds[kind]) apiStats.kinds[kind] = { n: 0, b: 0 };
-      const c = res.clone();
-      const txt = await c.text();
-      apiStats.kinds[kind].n++;
-      apiStats.kinds[kind].b += apiEnc.encode(txt).length;
-      saveApiStats();
-      renderApiStats();
-    } catch (e) {}
+  let st = apiStats.kinds[kind];
+  if (!st) st = apiStats.kinds[kind] = { n: 0, b: 0, a: 0, e: 0 };
+  st.a++;   // v1.5.3: jeder Versuch zaehlt, egal wie er ausgeht
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (errSt) {   // Netzwerk-/DNS-/Abbruch-Fehler: fehlgeschlagener Versuch
+    st.e++;
+    apiStatsChanged();
+    throw errSt;
   }
+  if (!res.ok) {   // HTTP-Fehlerstatus: fehlgeschlagener Versuch, Antwort bleibt fuer den Aufrufer lesbar
+    st.e++;
+    apiStatsChanged();
+    return res;
+  }
+  try {
+    const c = res.clone();
+    const txt = await c.text();
+    st.n++;
+    st.b += apiEnc.encode(txt).length;
+    apiStatsChanged();
+  } catch (e) {}
   return res;
 }
 function fmtBytes(b) {
@@ -7073,17 +7162,22 @@ function renderApiStats() {   // v1.5.0 aufklappbare Legende der LED-Kette: LED 
   let totN = 0, totB = 0;
   let html = '<div class="ashdr">LED-Leiste: Dienste, Anfragen und übertragene Bytes</div>';
   for (const k in API_KINDS) {
-    const st = apiStats.kinds[k] || { n: 0, b: 0 };
+    const st = apiStats.kinds[k] || { n: 0, b: 0, a: 0, e: 0 };
     totN += st.n; totB += st.b;
+    const fs = apiKindState(st);   // v1.5.3: rotes/gelbes ! fuer fehlgeschlagene Versuche
+    const fl = fs ? '<span class="asflag ' + (fs === "err" ? "asferr" : "asfwarn") + '" title="' +
+      escapeHtml(apiFlagTitle(k, fs)) + '">!</span>' : "";
+    const att = st.a != null ? st.a : st.n;   // Anzeige n/att, sobald Versuche daneben schiefgingen
     html += '<div class="asrow" title="' + escapeHtml(API_KINDS[k].desc) +
       '"><span class="asdot" style="background:' + API_KINDS[k].color +
-      '"></span><span class="asname"><b>' + API_KINDS[k].label + '</b> <span class="asdesc">' +
+      '"></span>' + fl + '<span class="asname"><b>' + API_KINDS[k].label + '</b> <span class="asdesc">' +
       escapeHtml(API_KINDS[k].desc) + '</span></span><span class="asval">' +
-      st.n + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
+      (att > st.n ? st.n + "/" + att : st.n) + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
   }
   html += '<div class="asrow astot"><span class="asname">insgesamt</span><span class="asval">' +
     totN + " Anfr. · " + fmtBytes(totB) + "</span></div>";
   html += '<div class="asdim">Facelift-System: Abfahrten fragen zuerst den regionalen Live-Dienst der Region ab (KVG in Kiel, VBB in Berlin/Brandenburg, VVS in der Region Stuttgart, DVB in Dresden), sonst den deutschlandweiten Fallback über nah.sh. Die LED oben rechts blinkt, sobald ihr Dienst Daten liefert.</div>';
+  html += '<div class="asdim">Rotes ! = seit dem letzten Zurücksetzen nur Fehlversuche, noch keine einzige Verbindung zustande gekommen. Gelbes ! = instabile Verbindung: Erfolge und Fehlversuche gemischt. Die Zahl dahinter nennt erfolgreiche/gesamte Anfragen.</div>';
   html += '<div class="asdim">Statistik seit ' + new Date(apiStats.since).toLocaleString("de-DE") + "</div>";
   html += '<button class="afbtn" id="apiStatsReset" style="width:100%;margin-top:8px;">Zähler zurücksetzen</button>';
   el.innerHTML = html;
@@ -7103,9 +7197,10 @@ document.addEventListener("click", e => {
 document.getElementById("apiStats").addEventListener("click", e => {
   if (e.target.closest("#apiStatsReset")) {
     apiStats = { since: Date.now(), kinds: {} };
-    for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
+    for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };
     saveApiStats();
     renderApiStats();
+    updateLedFlags();
   }
 });
 async function dbFetch(svcReqL) {
@@ -7501,7 +7596,9 @@ async function rsDepsDVB(m) {   // Dresden: offene Web-API (RealTime/ScheduledTi
    (negativ = frueher), p = planmaessige Abfahrtszeit HH:MM (nur Schienenfahrten aus den
    stop_times der Regional- und Fernverkehrsfeeds, sonst null), s = stop_sequence,
    t = Trip-ID. Fehler-Philosophie: antwortet der Proxy nicht oder mit ok:false, bleibt
-   alles einfach beim Anzeigestand, die Zeilen bleiben Plan-Sollzeiten. */
+   alles einfach beim Anzeigestand, die Zeilen bleiben Plan-Sollzeiten. Seit v1.5.3 greift
+   im nah.sh-Gebiet ZUERST delfiproxy.php (echter DELFI-Pool, siehe REMDEP-DELFI), diese
+   Quelle ergaenzt nur Zeilen ohne DELFI-Treffer. */
 const GTFS_MIN_DELAY_S = 60;    // Overlay earliest ab 60 s Verspaetung
 const GTFS_SPREAD_S = 90;       // Bus-Konsistenz: Spannweite der Delays einer Linie
 const GTFS_MATCH_MIN = 2;       // Schiene: Planzeit-Ausgleichsfenster in Minuten
@@ -7510,6 +7607,37 @@ function rsGtfsProxyURL() {   // Web: relativ, Android file://: feste Produktiv-
   return (location && location.protocol === "file:")
     ? "https://pixcaelium.timo-damm.de/apps/citysurfers/gtfsproxy.php" : "gtfsproxy.php";
 }
+/* v1.5.3 REMDEP-DELFI-START: delfiproxy.php zapft den ECHTEN DELFI-Pool (Mobilithek,
+   GTFS-Realtime per Clientzertifikat) an und bindet die Verspaetungen an die offiziellen
+   nah.sh-Solldaten (GTFS des Landes SH, CC BY 4.0). Im nah.sh-Footprint (Grob-BBox) hat
+   sein Overlay Vorrang, weil der DELFI-Pool dort lueckenlos ist; gtfsproxy uebernimmt nur
+   Zeilen ohne DELFI-Treffer (deckt Fernzuege, falls der Pool IC/ICE verpasst). Ausserhalb
+   des Fussabdrucks bleibt alles beim bisherigen gtfsproxy-Overlay, dort kennt delfiproxy
+   schlicht keine Stops. */
+function rsDelfiProxyURL() {   // Web: relativ, Android file://: feste Produktiv-URL (wie DONKEY_BASE)
+  return (location && location.protocol === "file:")
+    ? "https://pixcaelium.timo-damm.de/apps/citysurfers/delfiproxy.php" : "delfiproxy.php";
+}
+const DELFI_SH = { latMin: 53.3, latMax: 55.6, lonMin: 7.8, lonMax: 11.6 };   // Grob-BBox nah.sh
+function rsInSH(m) {   // liegt die Station im nah.sh-Footprint -> beide Proxys fragen
+  return !!(m && typeof m.lat === "number" && typeof m.lon === "number" &&
+    m.lat >= DELFI_SH.latMin && m.lat <= DELFI_SH.latMax &&
+    m.lon >= DELFI_SH.lonMin && m.lon <= DELFI_SH.lonMax);
+}
+const rsDelfiCache = { key: "", ts: 0, at: null };
+async function rsDelfiFetch(m) {   // wie rsGtfsFetch: 45 s Cache, Fehler = still kein Beitrag
+  const now = Date.now();
+  if (rsDelfiCache.key !== m.shortName || now - rsDelfiCache.ts > 45000 || !rsDelfiCache.at) {
+    const res = await apiFetch("delfi", rsDelfiProxyURL() + "?lat=" + m.lat.toFixed(4) + "&lon=" + m.lon.toFixed(4));
+    const j = res.ok ? await res.json().catch(() => null) : null;
+    if (!j || !j.ok || !Array.isArray(j.at)) return null;
+    rsDelfiCache.key = m.shortName;
+    rsDelfiCache.ts = now;
+    rsDelfiCache.at = j.at;
+  }
+  return rsDelfiCache.key === m.shortName ? rsDelfiCache.at : null;
+}
+/* v1.5.3 REMDEP-DELFI-END */
 function rsGtfsWrap(a, b) {   // Minuten-Differenz mit Mitternacht-Umbruch (kuerzester Weg)
   let d = (a - b) % 1440;
   if (d > 720) d -= 1440;
@@ -7528,43 +7656,49 @@ async function rsGtfsFetch(m) {   // je Station 45 s Cache; Proxy-Fehler = still
   }
   return rsGtfsCache.key === m.shortName ? rsGtfsCache.at : null;
 }
+function rsDelayFor(at, lf, plMin) {   // Verspaetung einer Quelle fuer Linie+Planzeit suchen
+  if (plMin != null) for (const e of at) {   // Schiene: Linie passt und Planzeit im ±2-Minuten-Fenster
+    if (!e || !e.l || typeof e.d !== "number" || !e.p) continue;
+    if (rsFold(e.l) !== lf) continue;
+    if (Math.abs(rsGtfsWrap(plMin, hhmmToMin(e.p))) <= GTFS_MATCH_MIN) return e.d;
+  }
+  const ds = [];   // Bus/abhaengige Planbindung: konsistente Delays der ganzen Linie
+  for (const e of at) {
+    if (!e || !e.l || typeof e.d !== "number" || e.p) continue;
+    if (rsFold(e.l) === lf) ds.push(e.d);
+  }
+  if (ds.length) {
+    const mx = Math.max.apply(null, ds), mn = Math.min.apply(null, ds);
+    if (mx - mn <= GTFS_SPREAD_S) {
+      const s = ds.slice().sort((a, b) => a - b);
+      return s[Math.floor((s.length - 1) / 2)];
+    }
+  }
+  return null;
+}
 async function rsOverlayGtfs(m, rows) {   // nur geplante Zeilen, vvPREDICTED bleibt unberuehrt
-  try {
+  try {   // v1.5.3: Quellen in Prioritaet - in SH delfiproxy zuerst, gtfsproxy ergaenzt
     if (!m || m.lat == null || m.lon == null || !Array.isArray(rows)) return rows;
     const planRows = rows.filter(r => r && r.status === "PLANNED");
     if (!planRows.length) return rows;
-    const at = await rsGtfsFetch(m);
-    if (!at || !at.length) return rows;
-    const rail = [];
-    const busBy = new Map();
-    for (const e of at) {
-      if (!e || !e.l || typeof e.d !== "number") continue;
-      if (e.p) rail.push(e);
-      else {
-        const k = rsFold(e.l);
-        if (!busBy.has(k)) busBy.set(k, []);
-        busBy.get(k).push(e.d);
-      }
+    const srcs = [];
+    if (rsInSH(m)) {   // delfiproxy: Fehler/warm/leer = still nur gtfsproxy (kein Beitrag)
+      const dAt = await rsDelfiFetch(m).catch(() => null);
+      if (dAt && dAt.length) srcs.push({ tag: "delfi", at: dAt });
     }
+    const gAt = await rsGtfsFetch(m).catch(() => null);
+    if (gAt && gAt.length) srcs.push({ tag: "gtf", at: gAt });
+    if (!srcs.length) return rows;
     for (const r of planRows) {
       const lf = rsFold(r.line);
-      let d = null;
-      for (const e of rail) {   // Schiene: Linie passt und Planzeit im ±2-Minuten-Fenster
-        if (rsFold(e.l) !== lf) continue;
-        if (Math.abs(rsGtfsWrap(hhmmToMin(r.plannedTime), hhmmToMin(e.p))) <= GTFS_MATCH_MIN) { d = e.d; break; }
-      }
-      if (d == null) {   // Bus/abhaengige Planbindung: konsistente Delays der ganzen Linie
-        const ds = busBy.get(lf);
-        if (ds && ds.length) {
-          const mx = Math.max.apply(null, ds), mn = Math.min.apply(null, ds);
-          if (mx - mn <= GTFS_SPREAD_S) {
-            const s = ds.slice().sort((a, b) => a - b);
-            d = s[Math.floor((s.length - 1) / 2)];
-          }
-        }
+      let d = null, tag = null;
+      for (const s of srcs) {
+        d = rsDelayFor(s.at, lf, hhmmToMin(r.plannedTime));
+        if (d != null) { tag = s.tag; break; }   // erste Quelle mit Treffer gewinnt
       }
       if (d == null || Math.abs(d) < GTFS_MIN_DELAY_S) continue;
       r.gDelay = d;   // Sekunden, negativ = frueher; Uhrzeit und Countdown rechnen es ein
+      r.gSrc = tag;   // v1.5.3: Chip zeigt die Quelle (DELFI- oder gtfs.de-Realtime)
       r.actualRelativeTime = (r.actualRelativeTime || 0) + d;
     }
     rows.sort((a, b) => (a.actualRelativeTime || 0) - (b.actualRelativeTime || 0));
@@ -8174,7 +8308,10 @@ function busLinesHTML(v, horizonSec, withFollow) {
     const isPlan = d.earlier ? d.status === "PLANNED" : (d.planned || d.status === "PLANNED");
     const cls = (rel >= 0 ? (rel > 180 ? "bl" : "bl soon") : "bl gone") + (isPlan ? " planned" : "");
     const ptag = isPlan ? '<span class="ptag">geplant</span>' : "";
-    const gtag = d.gDelay != null ? '<span class="ptag gtag" title="Verspätungs-Overlay: gtfs.de-Realtime (Datenbasis DELFI, CC BY 4.0), serverseitig aufbereitet über gtfsproxy.php">gtfs.de ' +
+    const gsrc = d.gSrc === "delfi";   // v1.5.3: DELFI-Chip (blau) oder gtfs.de-Chip (tuerkis)
+    const gtag = d.gDelay != null ? '<span class="ptag ' + (gsrc ? "delfitag" : "gtag") + '" title="Verspätungs-Overlay: ' +
+      (gsrc ? "DELFI-Pool-Realtime (Mobilithek, clientzertifikatsverschlüsselt), Solldaten nah.sh, serverseitig aufbereitet über delfiproxy.php"
+            : "gtfs.de-Realtime (Datenbasis DELFI, CC BY 4.0), serverseitig aufbereitet über gtfsproxy.php") + '">' + (gsrc ? "DELFI " : "gtfs.de ") +
       (d.gDelay >= 0 ? "+" : "-") + Math.round(Math.abs(d.gDelay) / 60) + " min</span>" : "";
     const now = new Date();
     const t = new Date(now.getTime() + rel * 1000);
@@ -11739,7 +11876,8 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Der 🚲?-Knopf am aktiven Standort unter dem Adressfeld ist seit v1.4.18 entfallen, weil die Leihstationen direkt über die Stationssuche erreichbar sind. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
   h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern in zwei Listen (seit v1.4.16: E-Bikes nach Akkustand absteigend, darunter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar und der Rest hinter einem Aufklapp-Knopf; jedes Rad trägt seinen von Donkey vergebenen Vornamen wie „Frieda“ mit Kurz-ID), hinter jedem Rad das kleine Esel-Symbol 🫏 als Donkey-App-Link (v1.4.16, ersetzt den früheren 📲-Chip aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung (seit v1.4.17 erscheint der 📌-Knopf nur bei übernommener Station, und unter Punkt 2 stehen Zähler und ausklappbare Rad-Liste der Station, Details im v1.4.17-Absatz). Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
    h += P("<b>⏱ Verspätungs-Overlay gtfs.de für ganz Deutschland (v1.5.2):</b> Für Fern-Stationen, deren regionale Quelle nur Plan-Sollzeiten liefert (Frankfurt, Hamburg, Köln, Leipzig, Nürnberg und alle Regionen ohne eigenen Live-Dienst, soweit der freie DELFI-Sammelstream Daten liefert), fragt die App zusätzlich das eigene serverseitige gtfsproxy.php ab: Es hört den freien gtfs.de-Realtime-Strom (rund 10 MB Protokollpuffer, alle 10 Sekunden aktualisiert; Datenbasis DELFI, gtfs.de free, Creative Commons BY 4.0) serverseitig ab und antwortet je Station nur mit den dort aktiven Fahrten samt Linie und Verspätung in Sekunden. Die App legt die Werte als Overlay über die geplanten Zeilen: Schienenfahrten bindet sie exakt an Linie und Planzeit (Ausgleichsfenster 2 Minuten), Busse nur, wenn alle aktiven Fahrten der Linie dieselbe Verspätung tragen (Spannweite bis 90 Sekunden, dann gilt der Median). Erst ab 60 Sekunden Verspätung erscheint der türkise gtfs.de-Chip hinter dem geplant-Tag, und Uhrzeit, Countdown und „los in“-Angabe der Zeile rechnen die Verspätung direkt ein; echte Echtzeit-Zeilen (blaue Dienste, nah.sh-Rückfälle mit Prognose) bleiben unberührt. Beim allerersten Aufruf einer neuen Region baut der Proxy seine Tagesdaten aus den gtfs.de-Feeds auf (dauert einen Moment, die Liste zeigt trotzdem schon den Fahrplan), danach antwortet er in Echtzeit. Die elfte LED (gtfs.de, türkis) blinkt bei jeder Overlay-Abfrage.");
-   h += P("<b>🚉 MVV: München als Regiondienst (v1.5.1):</b> München und Umland gehören zum Facelift-System: Fern-Stationen der Region (von Starnberg über die Innenstadt bis Freising und Ebersberg) zeigen Live-Abfahrten über die offizielle MVV-EFA-Schnittstelle (efa.mvv-muenchen.de), mit Echtzeit-Ist-Zeit, Countdown und Bahnsteig; bereits abgefahrene Fahrten entfallen. Beste Echtzeit-Quote der App: Praktisch alle Abfahrten an Marienplatz (U-Bahn, Tram, Bus) und Ostbahnhof laufen mit Ist-Zeit. Die zusätzliche grüne LED blinkt als zehnte in der Kette. Scheitert die Abfrage oder liegt die aufgelöste Station weiter als 600 m von der nah.sh-Station entfernt, greift wie überall der nah.sh-Fallback. Außerhalb der Münchner Region verändert sich nichts: Berlin, Stuttgart und Dresden behalten ihre Dienste, alles Übrige läuft über nah.sh."); h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS, MVV oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, MVV in München und Umland, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, MVV grün, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
+   h += P("<b>🚆 DELFI-Pool-Partner delfiproxy.php (v1.5.3):</b> Im nah.sh-Gebiet (Schleswig-Holstein und Grenzbereiche, erkannt an einer Grob-Box um die Stationskoordinate) fragt die App für geplante Zeilen jetzt zwei Verspätungs-Quellen ab: zuerst das eigene delfiproxy.php, das den ECHTEN DELFI-Pool hört (Mobilithek-Realtime, serverseitig per Clientzertifikat Sturz für Sturz mitgelesen) und seine Fahrten an den offiziellen nah.sh-Solldaten festmacht (GTFS des Landes Schleswig-Holstein, CC BY 4.0); ausgereiste Halte fehlen dort schon serverseitig, und die Zuordnung läuft über die exakten Haltestellen-IDs des DELFI-Systems. Fahrten, die der DELFI-Pool nicht kennt (etwa IC/ICE, deren Betreiber im Pool fehlen), ergänzt anschließend das gtfs.de-Overlay aus v1.5.2. Erst ab 60 Sekunden Verspätung erscheint der blaue DELFI-Chip (bei der Ergänzung der türkise gtfs.de-Chip), Uhrzeit und Countdown rechnen ihn ein. Antwortet delfiproxy nicht, ist es noch im Aufbau („warm“) oder kennt die Station nicht, merkt die App davon nichts: Es gilt dann einfach das bisherige gtfs.de-Overlay. Außerhalb des nah.sh-Gebiets wird delfiproxy gar nicht erst gefragt. Die zwölfte LED (DELFI, blauviolett) blinkt bei jeder DELFI-Abfrage und steht samt Fehler-Markierung (rotes/gelbes !) in derselben LED-Kette wie alle anderen Dienste.");
+   h += P("<b>🚦 Fehler-Markierung der Datenquellen-LEDs (v1.5.3):</b> Die LED-Kette oben rechts zeigt jetzt auch, welche Dienste gerade zicken: Ein rotes Ausrufezeichen über einer LED heißt, dass dieser Dienst seit dem letzten Zurücksetzen der Statistik zwar probiert wurde, aber noch keine einzige Anfrage erfolgreich war - der Dienst ist also aktuell gar nicht erreichbar. Ein gelbes Ausrufezeichen heißt: instabile Verbindung, es gab sowohl Erfolge als auch Fehlversuche gemischt. Alles ohne Ausrufezeichen arbeitet normal. Auch in der aufklappbaren Legende steht das Ausrufezeichen jeweils hinter dem Farbpunkt des Diensts, mit dem genauen Fehlertext beim Draufzeigen (Anzahl der Fehlversuche, seit wann gezählt wird); die Spalte rechts nennt daneben erfolgreiche und gesamte Anfragen als Bruch (zum Beispiel 4/6 Anfragen, wenn zwei scheiterten). Ein Tipp auf Zurücksetzen setzt alle Markierungen zurück, gezählt wird also immer nur seit diesem Punkt."); h += P("<b>🚉 MVV: München als Regiondienst (v1.5.1):</b> München und Umland gehören zum Facelift-System: Fern-Stationen der Region (von Starnberg über die Innenstadt bis Freising und Ebersberg) zeigen Live-Abfahrten über die offizielle MVV-EFA-Schnittstelle (efa.mvv-muenchen.de), mit Echtzeit-Ist-Zeit, Countdown und Bahnsteig; bereits abgefahrene Fahrten entfallen. Beste Echtzeit-Quote der App: Praktisch alle Abfahrten an Marienplatz (U-Bahn, Tram, Bus) und Ostbahnhof laufen mit Ist-Zeit. Die zusätzliche grüne LED blinkt als zehnte in der Kette. Scheitert die Abfrage oder liegt die aufgelöste Station weiter als 600 m von der nah.sh-Station entfernt, greift wie überall der nah.sh-Fallback. Außerhalb der Münchner Region verändert sich nichts: Berlin, Stuttgart und Dresden behalten ihre Dienste, alles Übrige läuft über nah.sh."); h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS, MVV oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, MVV in München und Umland, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, MVV grün, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
   h += P("<b>📌 Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog (v1.4.17):</b> Der 📌-Knopf unter dem Abholrad-Pulldown ist Spezialist: Er erscheint nur noch, wenn der Dialog mit einer übernommenen Donkey-Station geöffnet wurde (🚲-Zeile der Stationssuche oder 🚲?-Knopf im MM-Reiter). Genau dann soll Punkt 2 festgehalten werden, während Punkt 1 (Start) noch frei wechselbar ist oder gerade die GPS-Position läuft; nochmal drücken löst die Fixierung, wieder drücken fixiert die Station des aktuell gewählten Rads neu. Ohne übernommene Station gibt es den Knopf gar nicht, denn dort ergibt Fixieren keinen Sinn: Punkt 2 bleibt dann die normale Räder-Suche um den Start. Bei fixierter Station steht unter Punkt 2 jetzt außerdem ein Zähler (freie E-Bikes mit mind. 40 % Akku, freie Standardräder, reservierte/gesperrte dahinter) und darunter die ausklappbare Rad-Liste der Station mit genau einem sichtbaren Eintrag: E-Bikes nach Akkustand absteigend (ohne Wert ans Ende), dahinter die Standardräder nach Namen, je mit Vorname, Akku, Reichweite und dem kleinen Esel-Symbol als Donkey-App-Link hinter dem Rad. Der Überblick ist damit schon vor der Rad-Wahl da, aufgeklappt auf Wunsch.");
   h += P("<b>🫏 Donkey-App-Link, Rad-Namen und Knopf-Breite (v1.4.16):</b> Der offizielle Miet-Link eines Rads ist jetzt ein kleines Donkey-Esel-Symbol direkt hinter dem Rad: Es verbraucht keine eigene Zeile und öffnet auf dem Handy die Donkey-App direkt beim Rad; ohne installierte App landet man auf der Download-Seite von Donkey (ältere Geräte ohne das Esel-Emoji zeigen automatisch 📲). Die Räder heißen bei Donkey richtig („Frieda“, „E-bike Fischi“); donkeyproxy.php liest diese Namen jetzt mit aus und die App zeigt sie überall: im Pulldown des Routing-Dialogs, in der Rad-Zeile des Dialogs, im MM-Reiter (dort als zwei Listen: E-Bikes nach Akkustand absteigend, dahinter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar) und im Abholrad-Weg der übernommenen MM-Route. Die Knöpfe der Hauptleiste sind alle exakt so breit wie die Knöpfe der obersten Zeile, und eine nicht ganz gefüllte Zeile steht mittig. Die Favoritenknöpfe sind komplett dynamisch: Beim ersten Start gibt es genau einen, weitere entstehen per langem Druck (bis acht), und Löschen nimmt den Knopf jetzt zuverlässig aus der Leiste, Belegungen rutschen nach, der letzte bleibt immer stehen.");
   h += P("<b>Farbige Reiter und Knopf-Umbruch (v1.4.15):</b> Die Reiter oben tragen jetzt die Farbe ihres Knopfes in der Leiste: Route-Reiter sind pink wie der 🧭 Route-Knopf, MM-Reiter blau wie 🚲 MM, Stations-Reiter bleiben beim gewohnten Stil; aktive Reiter leuchten in ihrer Farbe, inaktive bleiben dezent. Die Knöpfe der Leiste brechen früh genug um und behalten eine nutzbare Breite; seit v1.4.16 sind alle Knöpfe außerdem exakt so breit wie die der obersten Zeile, eine nicht ganz gefüllte Zeile steht mittig.");
@@ -14047,7 +14185,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.2 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.3 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
