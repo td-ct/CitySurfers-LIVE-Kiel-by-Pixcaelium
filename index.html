@@ -2226,9 +2226,12 @@ const ROUTE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden=
   '<path d="M3 6.5l5.5-2 6 2 6.5-2v13l-6.5 2-6-2-5.5 2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>' +
   '<path d="M7.2 16.3c2.3-6.2 6.6-7.6 8.6-4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.4 2"/>' +
   '<path d="M17.4 10.5l-1.6-1.3-.4 2.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-function routeIconHTML(to, title) {
+function routeIconHTML(to, title) {   // seit v1.4.8 mit zweitem Chip: 0) genereller Karten-Link (Web), 1) geo:-Chooser (installierte Apps)
   return '<a class="ricon" target="_blank" rel="noopener" href="' + placeUrlG(to) +
-    '" title="' + escapeHtml(title) + '" aria-label="Ort an eine externe Karten-App übergeben">' + ROUTE_ICON + "</a>";
+    '" title="' + escapeHtml(title) + '" aria-label="Ort an eine externe Karten-App übergeben">' + ROUTE_ICON + "</a>" +
+    '<a class="ricon" href="' + geoTargetURL(to, (to && (to.name || to.label)) || title || "") +
+    '" title="' + escapeHtml(title) + ' an eine installierte Karten-App übergeben (geo:-Link, Android zeigt die App-Auswahl)' +
+    '" aria-label="Ort an eine installierte Karten-App übergeben">📱</a>';
 }
 // OSRM-Fußweg-Routing zwischen zwei Punkten (ohne Cache, für Dialoge):
 // liefert { m, est } bzw. null. Luftlinie × 1,3 als Schätzung, wenn der
@@ -8929,6 +8932,49 @@ const MOB_FEET_MAX_MIN = 7;     // Strecken bis 7 Gehminuten bleiben Fussweg (be
 let routeScootMin = 5;   // Spar-Schwelle: Fahrrad-/Roller-Verbindungen nur, wenn sie so viel sparen
 try { const v = Number(localStorage.getItem("kvg-routescootmin"));
   if (v === 0 || v === 5 || v === 10 || v === 15) routeScootMin = v; } catch (e) {}
+// v1.4.8: Sortierung der Verbindungssuche: "arr" = frueheste Ankunft am Ziel,
+// "dur" = kuerzeste Fahrzeit (inkl. Wartezeit bis zur Abfahrt), "chg" = weniger Umstiege.
+let routeSort = "arr";
+try { const rs = localStorage.getItem("kvg-routesort"); if (rs === "dur" || rs === "chg") routeSort = rs; } catch (e) {}
+const ROUTE_CONS_GOAL = 10;   // so viele Verbindungen sammelt die Suche an (NAH.SH liefert max. 6 pro Anfrage)
+function routeArrMin(c) {   // v1.4.8: Ankunft als Tagesminute, Mitternachts-Wrap ueber die Abfahrtszeit
+  const a = /^(\d{1,2}):(\d{2})$/.exec(String(c.arr || ""));
+  if (!a) return 0;
+  let am = Number(a[1]) * 60 + Number(a[2]);
+  const d = /^(\d{1,2}):(\d{2})$/.exec(String(c.dep || ""));
+  if (d) { const dm = Number(d[1]) * 60 + Number(d[2]); if (am + 720 < dm) am += 1440; }   // Fahrt ueber Mitternacht
+  return am;
+}
+function routeApplySort(cons) {   // v1.4.8: Liste nach der gewaehlten Sortierart sortieren
+  const cmp = routeSort === "dur"
+    ? (a, b) => (a.dur - b.dur) || (routeArrMin(a) - routeArrMin(b))
+    : routeSort === "chg"
+    ? (a, b) => ((a.chg || 0) - (b.chg || 0)) || (a.dur - b.dur) || (routeArrMin(a) - routeArrMin(b))
+    : (a, b) => (routeArrMin(a) - routeArrMin(b)) ||
+      ((a.depAbsMsP || a.depAbsMs || 0) - (b.depAbsMsP || b.depAbsMs || 0));   // equal arr: fruehere Abfahrt   
+  return cons.sort(cmp);
+}
+function routeSortBtn() {   // v1.4.8: Sortier-Knopf, zieht ein Pull-down mit erklaerten Varianten herunter
+  const cfg = [
+    ["arr", "⏱", "Früheste Ankunft", "kommt am frühesten am Ziel an"],
+    ["dur", "🚀", "Kürzeste Fahrzeit", "vom Losgehen bis zur Ankunft am schnellsten"],
+    ["chg", "🔁", "Weniger Umstiege", "weniger Umsteigen, dann kürzeste Fahrzeit"]
+  ];
+  const cur = cfg.find(x => x[0] === routeSort) || cfg[0];
+  let h = ' <button class="achip on" data-rtsortbtn="1" title="Sortierung der Verbindungssuche wählen – klappt die drei Varianten mit kurzer Erklärung auf">' +
+    cur[1] + " " + cur[2] + " ▾</button>" +
+    '<span class="rtsortdd" id="rtsortdd" style="display:none;flex-direction:column;gap:4px;margin:4px 0 2px;width:100%">';
+  for (const k of cfg)
+    h += '<button class="achip' + (routeSort === k[0] ? " on" : "") + '" data-rtsort="' + k[0] +
+      '" title="Nach ' + k[2] + ' sortieren">' + k[1] + " " + k[2] +
+      ': <span style="font-weight:normal;opacity:.75">' + k[3] + "</span></button>";
+  return h + "</span>";
+}
+function routeMoreBtn() {   // v1.4.8: weitere Verbindungen nachladen (nur bei Abfahrtssuche sinnvoll)
+  if (routeArr) return "";
+  return ' <button class="achip' + (routeLoading ? " dim" : "") +
+    '" data-rtpagemore="1" title="Weitere Verbindungen ab der spätesten gefundenen Abfahrt nachladen und sofort einsortieren (NAH.SH liefert max. 6 pro Anfrage, die Suche blättert selbst bis 10 Treffer)">＋ Weitere</button>';
+}
 function routeMobName() { return routeMob === "bike" ? "Fahrrad" : "Roller"; }
 function routeMobBtn() {   // Drei-Modus-Schalter: zu Fuss -> Fahrrad -> Roller (Klick wechselt, Suche laeuft erneut)
   const nx = routeMob === "walk" ? "mit dem Fahrrad" : routeMob === "bike" ? "mit dem Roller" : "nur zu Fuß";
@@ -10400,10 +10446,10 @@ async function routeTripSearch() {
   let out = []; const seen = new Set(); const pool = [];
   let prevMs = 0;
   // NAH.SH liefert max. 6 Verbindungen pro Anfrage, Zubringer-Varianten (KISS/BIKE)
-  // belegen davon Plaetze. Solange weniger als 5 gueltige (gefilterte) Verbindungen
-  // gefunden sind, wird ab der letzten Abfahrt weitergeblaettert (max. 3 Seiten,
+  // belegen davon Plaetze. Bis ROUTE_CONS_GOAL (10) gueltige (gefilterte) Verbindungen
+  // gefunden sind, wird ab der letzten Abfahrt weitergeblaettert (max. 10 Seiten,
   // nur bei Abfahrtssuche; Ankunftssuche wuerde rueckwaerts muessen).
-  for (let page = 0; page < 3; page++) {
+  for (let page = 0; page < 10; page++) {
     const req = { depLocL: [{ type: dep.locType, lid: dep.lid }],
       arrLocL: [{ type: arr.locType, lid: arr.lid }],
       outDate: when.date, outTime: when.time,
@@ -10424,7 +10470,7 @@ async function routeTripSearch() {
     if (routeArr) break;   // Ankunftssuche: nicht blaettern
     let maxMs = 0;
     for (const c of pageCons) if (c.depAbsMsP != null && c.depAbsMsP > maxMs) maxMs = c.depAbsMsP;
-    if (out.length >= 5 || maxMs <= prevMs) break;   // genug gefunden oder kein Fortschritt
+    if (out.length >= ROUTE_CONS_GOAL || maxMs <= prevMs) break;   // genug gefunden oder kein Fortschritt
     prevMs = maxMs;
     await new Promise(r => setTimeout(r, 400));   // kurzer Abstand zum Gate (Drosselung)
     const d = new Date(maxMs + 60000), p = n => String(n).padStart(2, "0");
@@ -10502,12 +10548,9 @@ async function routeTripSearch() {
       if (keep.length) out = keep;
     }
   }
-  // Die zwei schnellsten Verbindungen mit Buslinie zuerst, danach die uebrigen
-  // (nach Abfahrtszeit) – so gibt es immer die besten Busverbindungen, plus Varianten.
-  const busCons = out.filter(c => c.hasBus).sort((a, b) => a.dur - b.dur);
-  const top = busCons.slice(0, 2);
-  const rest = out.filter(c => !top.includes(c)).sort((a, b) => (a.depAbsMsP || 0) - (b.depAbsMsP || 0));
-  return top.concat(rest);
+  // Seit v1.4.8 sortiert die gewaehlte Sortierart (frueheste Ankunft, kuerzeste
+  // Fahrzeit, weniger Umstiege) die Liste zentral; mehr Sortier-Knopf oben im Panel.
+  return routeApplySort(out);
 }
 async function routeRunSearch() {
   const rtRef = routeActiveTab >= 0 ? routeTabs[routeActiveTab] : null;
@@ -10531,6 +10574,43 @@ async function routeRunSearch() {
     routeLoading = false;
     renderRoutePanel();
   }
+}
+async function routeMoreCons() {   // v1.4.8: "＋ Weitere" ab der spaetesten gefundenen Abfahrt nachladen
+  if (routeLoading || !routeCons.length) return;
+  let maxMs = 0;
+  for (const c of routeCons) {
+    const v = c.depAbsMsP != null ? c.depAbsMsP : (c.depAbsMs != null ? c.depAbsMs : 0);
+    if (v > maxMs) maxMs = v;
+  }
+  const savedTime = routeSel.time;
+  if (!maxMs) return;   // ohne Zeitangabe kann nicht weitergeblaettert werden
+  const d = new Date(maxMs + 60000), p2 = n => String(n).padStart(2, "0");
+  routeSel.time = d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()) +
+    "T" + p2(d.getHours()) + ":" + p2(d.getMinutes());
+  const old = routeCons.slice();
+  const sigs = new Set(old.map(routeSig));
+  const mySeq = ++routeSearchSeq;
+  const rtRef = routeActiveTab >= 0 ? routeTabs[routeActiveTab] : null;
+  if (rtRef) rtRef.searching = mySeq;
+  routeLoading = true;
+  renderRoutePanel();
+  let cons = [], errMsg = null;
+  try { cons = (await routeTripSearch()) || []; }
+  catch (e) { errMsg = String(e && e.message || e); }
+  routeSel.time = savedTime;
+  if (rtRef && rtRef.searching !== mySeq) { routeLoading = false; return; }   // inzwischen von einer neuen Suche ueberholt
+  const fresh = cons.filter(c => !sigs.has(routeSig(c)));
+  if (errMsg) setLocNote("Weitere Verbindungen fehlgeschlagen: " + errMsg);
+  else if (!fresh.length) setLocNote("Keine weiteren Verbindungen gefunden (Ende des Fahrplans erreicht).");
+  const merged = routeApplySort(old.concat(fresh));
+  if (rtRef) { rtRef.cons = merged; if (!errMsg && fresh.length) rtRef.err = null; rtRef.loading = false; rtRef.searching = null; }
+  if (rtRef && routeTabs[routeActiveTab] === rtRef && mySeq === routeSearchSeq) {   // Reiter noch aktiv
+    routeCons = merged;
+    if (!errMsg && fresh.length) routeSearchErr = null;
+    routeUpdateChosen();
+  }
+  routeLoading = false;
+  renderRoutePanel();
 }
 function routeUpdateChosen() {   // gewählte Verbindungen nach einer (erneuten) Suche
   // zuordnen: Identität = Planzeiten + Linien. Gefundene bekommen die frischen
@@ -10659,11 +10739,12 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart wieder da; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route.");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.4.8 sortiert der Knopf ⏱ Frühste Ankunft ▾ die Treffer der Verbindungssuche: ein Tap klappt drei Sortierarten mit kurzer Erklärung auf, ⏱ frühste Ankunft (Standard: wer zuerst am Ziel ist, steht oben), 🚀 kürzeste Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 weniger Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt).");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „Auswahl auf uMap“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad und unter der Rückgabe-Station sowie an jeder Teilstrecke stehen Routing-Chips: OSM öffnet das Bein in OpenStreetMap, Google und Organic Maps nehmen die Route in der installierten App (die ganze 4-Punkte-Route als Start · Abholrad · Rückgabe · Ziel; Organic Maps läuft über die offizielle omaps.app-Weiterleitung: Ist die App installiert, öffnet sie sich, sonst erscheint deren Seite mit Install-Hinweis statt einer Schema-Fehlermeldung), OsmAnd startet die Turn-Navigation, und „App …“ übergibt das Ziel ans Handy, auf dem Android die installierten Karten-Apps zur Wahl stellt (die Android-App reicht geo:-Links und die Organic-Maps-Links ab v1.4.6 nach draußen). Darunter blendet ein Knopf ALLE Räder und Stationen auf einer uMap-Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
+  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad und unter der Rückgabe-Station sowie an jeder Teilstrecke stehen Routing-Chips: OSM öffnet das Bein in OpenStreetMap, Google und Organic Maps nehmen die Route in der installierten App (die ganze 4-Punkte-Route als Start · Abholrad · Rückgabe · Ziel; Organic Maps läuft über die offizielle omaps.app-Weiterleitung: Ist die App installiert, öffnet sie sich, sonst erscheint deren Seite mit Install-Hinweis statt einer Schema-Fehlermeldung), OsmAnd startet die Turn-Navigation, und „App …“ übergibt das Ziel ans Handy, auf dem Android die installierten Karten-Apps zur Wahl stellt (die Android-App reicht geo:-Links und die Organic-Maps-Links ab v1.4.6 nach draußen). Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
+  h += P("<b>🧭 Drei Wege zur Karte</b> (seit v1.4.8, überall gleich): Damit bei den vielen Karten und Routing-Apps die Übersicht bleibt, gibt es ein festes Muster mit genau drei Wegen. <b>1. Ansehen:</b> Chips mit 🗺 uMap öffnen Karten mit beliebig vielen Punkten (alle Räder und Stationen, die Räder der Auswahl oder die 4-Punkte-Route der Leihrad-Tour); uMap kann nichts zurückmelden, deshalb stehen die Kurz-IDs der Räder in Beschriftung und Pulldown zum Abgleichen. <b>2. Navigieren:</b> Die Routing-Chips (OpenStreetMap, Google, OsmAnd, Organic Maps) übernehmen eine echte Route mit bis zu 4 Punkten, je Bein oder als ganze Leihrad-Route. <b>3. Einzelpunkt übergeben:</b> Das Karten-Symbol übergibt einen einzelnen Ort als generellen Web-Link, der 📱-Chip daneben als geo:-Link ans Handy, wo Android die installierten Karten-Apps zur Auswahl stellt. Karten-Symbol und 📱-Chip sitzen überall nebeneinander, an Adressen, Favoriten, Stations- und Route-Panels.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
@@ -11106,7 +11187,7 @@ function openBikeDlg(which, ctx) {
   function fillAllWrap() {
     if (location.protocol === "http:" || location.protocol === "https:")
       allWrap.innerHTML = '<a class="achip" target="_blank" rel="noopener" href="' + bikeUmapAllURL() +
-        '">Alle Räder + Stationen auf uMap-Karte</a>';
+        '">🗺 uMap: alle Räder + Stationen</a>';
   }
   // ---- v1.4.4: Abholrad-Pulldown, Rueckgabe-Station-Pulldown, 4-Punkte-Route ----
   const selBike = wrap.querySelector("#bkSelBike"), selDrop = wrap.querySelector("#bkSelDrop");
@@ -11180,7 +11261,7 @@ function openBikeDlg(which, ctx) {
             (x.fu != null ? " · Akku " + x.fu + " %" : ""),
             fmtDm(x.dm) + " vom Start" + (s2 ? " · bei Station " + s2.name : " · frei abstellbar"));
         }), st.anchor),
-        "🗺 Auswahl auf uMap", "Alle Räder der Auswahl auf einer uMap-Karte, beschriftet mit derselben Kurz-ID und dem Akkustand wie im Pulldown: Das Rad auf der Karte finden und seine ID hier auswählen (uMap kann nichts zurückmelden)") +
+        "🗺 uMap: Räder der Auswahl", "Alle Räder der Auswahl auf einer uMap-Karte, beschriftet mit derselben Kurz-ID und dem Akkustand wie im Pulldown: Das Rad auf der Karte finden und seine ID hier auswählen (uMap kann nichts zurückmelden)") +
       rtAppChipsHTML([st.anchor, bikePt], "foot", true) + "</div>";
     const myseq = ++bikeInfoSeq;
     if (sn && sn.ad) { const e1 = bikeInfoEl.querySelector(".bkadr"); if (e1) e1.textContent = " · " + sn.ad; return; }
@@ -11318,7 +11399,7 @@ function openBikeDlg(which, ctx) {
     h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">⏱ Gesamt: ca. ' + tot + " min</div>" +
       '<div class="bksub">Fuß 5 km/h · Rad ' + kmh + " km/h (" + (bike.t === "ebike" ? "E-Bike" : "Standardrad") +
       ") · +2 min Ausleihe/Rückgabe</div></div>" +
-      chip(bikeUmapURL(feats, center), "🗺 uMap", "4-Punkte-Übersicht auf uMap: ● Start, ★ Abholrad, ■ Rückgabe-Station, 🎯 Ziel") + "</div>";
+      chip(bikeUmapURL(feats, center), "🗺 uMap: 4-Punkte-Route", "4-Punkte-Übersicht auf uMap: ● Start, ★ Abholrad, ■ Rückgabe-Station, 🎯 Ziel") + "</div>";
     h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">📲 Ganze Route in einer App (Start · Abholrad · Rückgabe · Ziel)</div>' +
       '<div class="bksub">Google verbindet alle Punkte im Rad-Modus, Organic Maps als Zwischenstopps (Modus dort wählbar)</div></div>' +
       rtChip(googleDirURL([st.anchor, bikePt4, drop, st.dest], "bike"), "Google",
@@ -11369,6 +11450,7 @@ function renderRoutePanel() {
       '<input type="datetime-local" class="rttime" id="routeTime" value="' + (routeSel.time || routeNowStr()) + '">' +
       ' <button class="achip" data-rtnow2="1" title="Zeit auf jetzt setzen">Jetzt</button>' +
       ' <button class="achip on" data-rtsearch="1" title="Verbindungen bei NAH.SH suchen">▶</button>' +
+      routeSortBtn() + routeMoreBtn() +
       routeProdBtns() + routeMobBtn() + "</div>";
     if (routeLoading) {
       topHTML += '<div style="padding:8px 2px;color:#94a3b8">Suche Verbindungen bei NAH.SH …</div>';
@@ -11611,6 +11693,26 @@ routePanel.addEventListener("click", e => {
   if (rwhen) {
     routeArrSet(rwhen.dataset.rtwhen === "arr");
     renderRoutePanel();
+    return;
+  }
+  if (e.target.closest("[data-rtsortbtn]")) {   // v1.4.8: Sortier-Pull-down auf-/zuklappen
+    const dd = document.getElementById("rtsortdd");
+    if (dd) dd.style.display = dd.style.display === "none" ? "flex" : "none";
+    return;
+  }
+  const rsort = e.target.closest("[data-rtsort]");
+  if (rsort) {   // v1.4.8: Sortierart setzen, Liste sofort neu sortieren (keine neue Suche)
+    const k = String(rsort.dataset.rtsort || "");
+    if (k === "arr" || k === "dur" || k === "chg") {
+      routeSort = k;
+      try { localStorage.setItem("kvg-routesort", k); } catch (e2) {}
+      routeApplySort(routeCons);
+      renderRoutePanel();
+    }
+    return;
+  }
+  if (e.target.closest("[data-rtpagemore]") && !routeLoading && routeCons.length && !routeArr) {
+    routeMoreCons();   // v1.4.8: weitere Verbindungen nachladen und einsortieren
     return;
   }
   const rcycl = e.target.closest("[data-rtcycl]");
@@ -12202,7 +12304,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.7 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.8 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
