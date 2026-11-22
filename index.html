@@ -115,6 +115,14 @@
   #bigAssignDlg .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a;
     color: #cbd5e1; border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; margin-top: 6px; }
   #bigAssignDlg .afbtn:hover { background: #334155; }
+  /* v1.4.14: Langdruck-Auswahl der Favoriten-Knöpfe (neu belegen vs. weiteren Knopf erzeugen) */
+  #bigLongDlg { position: fixed; top: 132px; right: 12px; z-index: 84; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 10px; max-width: 320px; width: 88vw;
+    max-height: 60vh; overflow: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+  #bigLongDlg .afsrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px;
+    border-bottom: 1px solid #1e293b; cursor: pointer; }
+  #bigLongDlg .afsrow:hover { background: #273449; border-radius: 6px; }
+  #bigLongDlg .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   #gpsDlg, #favDlg, #vehDlg { position: fixed; inset: 0; z-index: 82; background: rgba(2,6,23,.65);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
   #gpsDlg[hidden], #favDlg[hidden], #vehDlg[hidden] { display: none; }
@@ -735,7 +743,8 @@
     <button class="bigbtn orange" id="bbMute" title="Wecker und „Finde nach Hause“ gemeinsam steuern (Ruhe-Knopf)"><span class="bbsym">🔔</span><small>beides an</small></button>
     <button class="bigbtn teal" id="bbVeh" title="Ich sitze im Bus oder Zug: die gerade genutzte Linie automatisch erkennen – das Linienschild zeigt die Nummern der wahrscheinlichsten Fahrten live an"><span class="bbsym vehbadge" id="bbVehBadge">???</span><small>Fahrzeug</small></button>
     <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
-    <button class="bigbtn teal" id="bb1" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
+    <button class="bigbtn blue" id="bbMM" title="Micromobility Routing: Leihfahrrad-Route planen (Start, Abholrad, Rückgabe, Ziel) und fertig als MM-Reiter übernehmen, mit der Abholstation oben und allen Rädern dort"><span class="bbsym">🚲</span><small>MM</small></button>
+    <button class="bigbtn teal" id="bb1" title="Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
   </div>
 
@@ -776,6 +785,7 @@
   <div class="panel" id="stationPanel" hidden></div>
   <div class="panel" id="routePanel" hidden></div>
   <div class="panel" id="helpPanel" hidden></div>
+  <div class="panel" id="mmPanel" hidden></div>
   <div class="panel" id="busPanel" hidden></div>
 
   <div class="alerts" id="alerts"></div>
@@ -2881,11 +2891,49 @@ function searchHits(q) {
 // Liste in 10er-Schritten rendern: erst die nächsten/vordersten Stationen,
 // weitere Zeilen entstehen erst beim Scrollen (spart Renderzeit und Abfragen)
 let sugHits = [], sugRendered = 0;
+// v1.4.14: Donkey-Leihstationen (🚲) als eigene Treffer der Haltestellen-Suche:
+// gefiltert wie die Haltestellen (Wortanfang vor enthält) und gemeinsam mit
+// ihnen sortiert; je Zeile die Anzahl der dort stehenden freien Räder. Der Feed
+// wird beim ersten Bedarf geladen, danach aus dem Donkey-Cache gezeichnet.
+let mmSugDkTs = 0;
+function mmSugStations(q) {
+  const d = donkeyCache && donkeyCache.d;
+  if (!d || !Array.isArray(d.s)) { mmSugWarmDonkey(); return []; }
+  const ql = (q || "").toLowerCase();
+  const out = [];
+  for (const s of d.s) {
+    if (!s || s.lat == null || s.lon == null) continue;
+    const nm = String(s.name || "").toLowerCase();
+    const tier = !ql ? 0 : nm.indexOf(ql) === 0 ? 0 : nm.indexOf(ql) >= 0 ? 1 : -1;
+    if (tier < 0) continue;
+    const nBikes = (d.v || []).filter(v => v && v.st === s.id &&
+      (v.t === "bike" || v.t === "ebike") && !v.rs && !v.dis).length;
+    out.push({ dk: true, id: s.id, name: s.name || "Leihstation", lat: s.lat, lon: s.lon,
+      cap: s.cap != null ? s.cap : null, tier: tier, nBikes: nBikes });
+  }
+  return out;
+}
+function mmSugWarmDonkey() {   // Feed einmal laden und die Trefferliste dann neu aufbauen
+  if (donkeyCache && donkeyCache.d) return;
+  const now = Date.now();
+  if (now - mmSugDkTs < 60000) return;   // Proxy nicht erreichbar: nur einmal pro Minute erneut probieren
+  mmSugDkTs = now;
+  donkeyData(true).then(ok => { if (ok && !sugBox.hidden) updateSuggestions(); });
+}
 function rowHTML(s, pos) {
+  if (s && s.dk) {   // v1.4.14: Donkey-Leihstation: eigenes Symbol, eigener Reiter (kein Haltestellen-Enrich)
+    const air = pos ? dist(pos, s) * 1.3 : 0;
+    const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
+    const nfr = s.nBikes != null ? " · " + s.nBikes + (s.nBikes === 1 ? " Rad" : " Räder") : "";
+    return '<div data-dk="' + escapeHtml(s.id) + '">' +
+      '<div class="srow"><span class="sname">🚲 ' + escapeHtml(s.name) + "</span>" +
+      '<span class="smeta">' + meta + escapeHtml(nfr) + " · Leihstation</span></div>" +
+      "</div>";
+  }
   const air = pos ? dist(pos, s) * 1.3 : 0;
   const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
   return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
-    '<div class="srow"><span class="sname">' + escapeHtml(s.name) + "</span>" +
+    '<div class="srow"><span class="sname">' + (isDB(s.shortName) ? "🚆 " : "🚌 ") + escapeHtml(s.name) + "</span>" +   // v1.4.14: Symbol je Zeile (Bahn/Bus)
     '<span class="smeta">' + meta + "</span>" +
     routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") +
     starHTML(s.shortName) +
@@ -2912,6 +2960,7 @@ function updateSuggestions() {
   const pos = listPos();
   const q = search.value.trim().toLowerCase();
   let hits = q.length ? searchHits(q) : stops.map(s => ({ s: s, tier: 0 }));
+  hits = hits.concat(mmSugStations(q).map(s => ({ s: s, tier: s.tier })));   // v1.4.14: Donkey-Leihstationen (🚲) mit in die Trefferliste
   if (!hits.length) { sugBox.hidden = true; return; }
   if (pos && q.length) {
     // Suchtreffer: Haltestellenfavoriten zuerst (als ⭐ markiert), danach die
@@ -2936,7 +2985,7 @@ function updateSuggestions() {
 // Tastatursteuerung der Haltestellenliste – gilt für Fokus im Suchfeld
 // oder Fokus auf einem Listeneintrag (mobiles Öffnen ohne Tastatur)
 function handleSugNav(e) {
-  const items = [...sugBox.querySelectorAll("div[data-sn], div[data-fsn]")];
+  const items = [...sugBox.querySelectorAll("div[data-sn], div[data-fsn], div[data-dk]")];
   if (sugBox.hidden || !items.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
@@ -2955,6 +3004,7 @@ function handleSugNav(e) {
       sugBox.hidden = true;
       return;
     }
+    if (el && el.dataset.dk) { openMMTabById(el.dataset.dk); sugBox.hidden = true; return; }   // v1.4.14: Donkey-Leihstation
     if (el) selectStop(el.dataset.sn || el.dataset.fsn);
   } else if (e.key === "Escape") {
     sugBox.hidden = true;
@@ -3154,6 +3204,8 @@ sugBox.addEventListener("click", e => {
     sugBox.hidden = true;   // Auswahl schließen
     return;
   }
+  const dk = e.target.closest("div[data-dk]");   // v1.4.14: Donkey-Leihstation: eigener MM-Reiter
+  if (dk) { openMMTabById(dk.dataset.dk); sugBox.hidden = true; return; }
   const div = e.target.closest("div[data-sn]");
   if (div) selectStop(div.dataset.sn);
 });
@@ -3194,11 +3246,13 @@ function syncBarOrd() {   // Reihenfolge gegen die Livemengen syncen (ohne/plus 
     if (!u) return false;
     if (u[0] === "u") for (const x of tabs) if (x.uid === u) return true;
     for (const rt of routeTabs) if (rt.uid === u) return true;
+    for (const mt of mmTabs) if (mt.uid === u) return true;   // v1.4.14: MM-Reiter leben mit in der Leiste
     return false;
   };
   const keep = barOrd.filter(alive);
   for (const x of tabs) if (!keep.includes(x.uid)) keep.push(x.uid);
   for (const rt of routeTabs) if (!keep.includes(rt.uid)) keep.push(rt.uid);
+  for (const mt of mmTabs) if (!keep.includes(mt.uid)) keep.push(mt.uid);   // v1.4.14: MM-Reiter
   if (helpTabOpen && !keep.includes("help")) keep.push("help");
   barOrd = keep;
 }
@@ -3238,6 +3292,17 @@ function renderTabs() {
         ' <button class="tabx" data-tx="r' + ri + '" title="Route-Reiter schließen">✕</button></div>';
       continue;
     }
+    const mi = mmTabs.findIndex(x => x.uid === uid);
+    if (mi >= 0) {   // v1.4.14: MM-Reiter (Micromobility): Abholstation oben, MM-Routen darunter
+      const mt = mmTabs[mi];
+      h += '<div class="tab' + (mi === mmActiveTab && mmTabActive ? " on" : "") +
+        '" draggable="true" data-kind="m" data-uid="' + escapeHtml(uid) + '" data-mi="' + mi +
+        '" title="🚲 MM: ' + escapeHtml(mt.name) + ' · Abholstation mit allen Rädern dort und die übernommenen Leihrad-Routen"><span class="tico">🚲</span>' +
+        '<span class="tabname">' + escapeHtml(mt.name) + '</span>' +
+        (mt.routes && mt.routes.length ? ' <span class="tabal" title="übernommene MM-Routen in diesem Reiter">🚲 ' + mt.routes.length + "</span>" : "") +
+        ' <button class="tabx" data-tx="m' + mi + '" title="MM-Reiter schließen">✕</button></div>';
+      continue;
+    }
     if (uid === "help" && helpTabOpen)
       h += '<div class="tab' + (helpTabActive ? " on" : "") + '" data-kind="h" data-uid="help" data-ti="help"' +
         ' title="Anleitung: Nutzung, Schwellen und Hintergründe">❓ Anleitung <button class="tabx" data-tx="help" title="Anleitung-Reiter schließen">✕</button></div>';
@@ -3261,6 +3326,7 @@ function activateTab(i, refetch) {
   activeTab = i;
   routeTabActive = false;
   helpTabActive = false;
+  mmTabActive = false;
   const t = tabs[i];
   const stop = t ? stops.find(s => s.shortName === t.sn) : null;
   currentStop = stop || null;
@@ -3303,6 +3369,7 @@ function closeTab(i) {
     currentStop = null; currentBus = null; currentTrip = null;
     if (tabs.length) activateTab(Math.min(i, tabs.length - 1), false);
     else if (routeTabs.length) activateRouteTab(0);
+    else if (mmTabs.length) activateMMTab(0);
   } else if (activeTab > i) activeTab--;
   renderTabs();
   renderPanels();
@@ -3312,6 +3379,7 @@ tabsbar.addEventListener("click", e => {
   const x = e.target.closest(".tabx");
   if (x) {
     if (x.dataset.tx === "help") closeHelpTab();
+    else if (x.dataset.tx && x.dataset.tx[0] === "m") closeMMTab(Number(x.dataset.tx.slice(1)));   // v1.4.14: MM-Reiter
     else if (x.dataset.tx && x.dataset.tx[0] === "r") closeRouteTab(Number(x.dataset.tx.slice(1)));
     else closeTab(Number(x.dataset.tx));
     return;
@@ -3322,6 +3390,11 @@ tabsbar.addEventListener("click", e => {
   if (tb.dataset.kind === "r") {
     const i = Number(tb.dataset.tr);
     if (!(routeTabActive && i === routeActiveTab)) activateRouteTab(i);
+    return;
+  }
+  if (tb.dataset.kind === "m") {   // v1.4.14: MM-Reiter
+    const i = Number(tb.dataset.mi);
+    if (!(mmTabActive && i === mmActiveTab)) activateMMTab(i);
     return;
   }
   if (Number(tb.dataset.ti) !== activeTab) activateTab(Number(tb.dataset.ti), false);
@@ -3521,7 +3594,7 @@ function renderPanels() {
   // Sicherheitsnetz: Wirft ein Panel beim Rendern (z. B. überraschende Daten),
   // dürfen die anderen Panels nicht mit leer bleiben – der Fehler wird sichtbar
   // statt als schwarzes Loch („nur der Reiter oben, kein Inhalt“).
-  for (const fn of [renderStationPanel, renderBusPanel, renderRoutePanel, renderHelpPanel]) {
+  for (const fn of [renderStationPanel, renderBusPanel, renderRoutePanel, renderHelpPanel, renderMMPanel]) {
     try { fn(); } catch (e) {
       try { setLocNote("⚠️ Anzeige-Fehler (" + (fn.name || "Panel") + "): " +
         String(e && e.message || e) + " – ↻/neu laden hilft meist."); } catch (e2) {}
@@ -7959,13 +8032,18 @@ bbMute.addEventListener("click", () => {
         : "🔔 Wecker und „Finde nach Hause“ wieder an.");
 });
 
-// Drei belegbare Knöpfe: langer Druck = Belegung, einfacher Klick = Aktion
+// Belegbare Favoriten-Knöpfe (v1.4.14): Langer Druck fragt erst, was gemeint
+// ist: diesen Knopf (neu) belegen oder einen weiteren Favoriten-Knopf in der
+// Leiste erzeugen. Einfacher Klick = Aktion bzw. Belegung, wenn der Knopf frei
+// ist. Knöpfe über die Obergrenze BIGBTN_MAX hinaus werden dynamisch erzeugt
+// und über kvg-bigbtns (Arraylänge) mit-restauriert.
 let bbPressTimer = null, bbLongFired = false;
-bbBtns.forEach((b, i) => {
-  if (!b) return;
+const BIGBTN_MAX = 8;   // Obergrenze: insgesamt acht Favoriten-Knöpfe in der Leiste
+function rigBigBtn(b, i) {
   b.addEventListener("pointerdown", () => {
     bbLongFired = false;
-    bbPressTimer = setTimeout(() => { bbLongFired = true; openBigAssignDlg(i + 1); }, 550);
+    clearTimeout(bbPressTimer);
+    bbPressTimer = setTimeout(() => { bbLongFired = true; openBigLongDlg(i + 1); }, 550);
   });
   ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
     b.addEventListener(ev, () => clearTimeout(bbPressTimer)));
@@ -7976,7 +8054,7 @@ bbBtns.forEach((b, i) => {
     if (a.kind === "addr") {
       const f = addrFavs.find(x => x.name === a.name);
       if (!f) { openBigAssignDlg(i + 1); return; }
-      // Adressfavorit als Startadresse einsetzen – immer mit den gespeicherten Koordinaten
+      // Adressfavorit als Startadresse einsetzen, immer mit den gespeicherten Koordinaten
       addrPos = { lat: f.lat, lon: f.lon, label: f.name };
       try { localStorage.setItem("kvg-addr", JSON.stringify(addrPos)); } catch (e) {}
       addrSug.hidden = true;
@@ -7997,6 +8075,76 @@ bbBtns.forEach((b, i) => {
       openStopListAfterFav();   // Haltestellenliste gleich mit aufklappen
     }
   });
+}
+function addBigBtn() {   // weiteren Favoriten-Knopf dynamisch in die Leiste setzen
+  if (bigAssign.length - 1 >= BIGBTN_MAX) {
+    setLocNote("Bereits alle " + BIGBTN_MAX + " Favoriten-Knöpfe der Leiste vergeben.");
+    return false;
+  }
+  bigAssign.push(null);
+  saveBigAssign();
+  const nb = document.createElement("button");
+  nb.className = "bigbtn teal";
+  nb.title = "Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen";
+  nb.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
+  document.getElementById("bigbtns").appendChild(nb);
+  bbBtns.push(nb);
+  rigBigBtn(nb, bbBtns.length - 1);
+  renderBigBtns();
+  setLocNote("Weiterer Favoriten-Knopf ist in der Leiste entstanden: Langer Druck belegt ihn.");
+  return true;
+}
+function ensureBigBtns() {   // beim Start: gespeicherte Knopfzahl wiederherstellen
+  while (bbBtns.length < Math.min(BIGBTN_MAX, bigAssign.length - 1)) {
+    const nb = document.createElement("button");
+    nb.className = "bigbtn teal";
+    nb.title = "Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen";
+    nb.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
+    document.getElementById("bigbtns").appendChild(nb);
+    bbBtns.push(nb);
+    rigBigBtn(nb, bbBtns.length - 1);
+  }
+  renderBigBtns();
+}
+// v1.4.14: Langdruck-Auswahl des Favoriten-Knopfs (Belegen oder weiteren Knopf erzeugen)
+function openBigLongDlg(i) {
+  const old = document.getElementById("bigLongDlg");
+  if (old) { old.remove(); return; }
+  const ad = document.getElementById("bigAssignDlg");
+  if (ad) ad.remove();   // Belegungsdialog zu, dieser Dialog ist der Einstieg
+  const full = bigAssign.length - 1 >= BIGBTN_MAX;
+  let inner = '<div class="afshead"><span><b>Knopf ' + i + '</b>: was soll passieren?</span></div>';
+  inner += '<div class="afsrow" data-bl="assign" title="Diesen Knopf mit einem Adress- oder Haltestellenfavorit belegen (einmal antippen, danach den Favoriten wählen)"><span class="afsname">⭐ Favorit hier (neu) belegen</span></div>';
+  inner += '<div class="afsrow" data-bl="add"' + (full ? ' style="opacity:.55"' : ' title="Einen weiteren belegbaren Favoriten-Knopf in die Leiste setzen"') +
+    '><span class="afsname">' + (full ? "➕ Kein weiterer Platz (maximal " + BIGBTN_MAX + ")" : "➕ Weiteren Favoriten-Knopf erzeugen") + "</span></div>";
+  const wrap = document.createElement("div");
+  wrap.id = "bigLongDlg";
+  wrap.innerHTML = inner;
+  wrap.addEventListener("click", e => {
+    e.stopPropagation();
+    const row = e.target.closest("[data-bl]");
+    if (!row) return;
+    wrap.remove();
+    if (row.dataset.bl === "assign") openBigAssignDlg(i);
+    else addBigBtn();
+  });
+  document.body.appendChild(wrap);
+}
+document.addEventListener("click", e => {
+  const d = document.getElementById("bigAssignDlg");
+  if (d && !e.target.closest("#bigAssignDlg") && !e.target.closest(".bbx")) d.remove();
+  const d2 = document.getElementById("bigLongDlg");
+  if (d2 && !e.target.closest("#bigLongDlg") && !e.target.closest(".bbx")) d2.remove();
+});
+bbBtns.forEach((b, i) => { if (b) rigBigBtn(b, i); });
+ensureBigBtns();
+// 🚲 MM-Knopf (v1.4.14, fünfter Knopf der Leiste zwischen Route und Favoriten):
+// öffnet den Micromobility-Routing-Dialog frei, ohne OEPNV-Bezug; der Start
+// läuft nach der Punkt-1-Regel (GPS des Stationssuchfelds, sonst Eintrag des
+// Adressfelds, sonst Live-GPS), das Ziel wird im Dialog gewählt.
+const bbMM = document.getElementById("bbMM");
+bbMM.addEventListener("click", () => {
+  openBikeDlg(null, { mmFree: true, anchor: mmDefaultStart(), ents: [], title: "🚲? Micromobility Routing" });
 });
 
 // ---------- 🚍 Fahrzeug-Erkennung: „Ich sitze gerade im Bus/Zug“ ----------
@@ -8899,12 +9047,11 @@ function openBigAssignDlg(i) {
   });
   document.body.appendChild(wrap);
 }
-document.addEventListener("click", e => {
-  const d = document.getElementById("bigAssignDlg");
-  if (d && !e.target.closest("#bigAssignDlg") && !e.target.closest(".bbx")) d.remove();
-});
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") { const d = document.getElementById("bigAssignDlg"); if (d) d.remove(); }
+  if (e.key === "Escape") {
+    const d = document.getElementById("bigAssignDlg"); if (d) d.remove();
+    const d2 = document.getElementById("bigLongDlg"); if (d2) d2.remove();
+  }
 });
 
 
@@ -9413,8 +9560,6 @@ function paintRouteSpine(wrapEl, baseCol) {
 function updateRouteDots() {
   const wrapEl = (routePanel && !routePanel.hidden) ? routePanel.querySelector(".rtrail") : null;
   if (!wrapEl) return;
-  const rtMM0 = routeTabActive && routeActiveTab >= 0 ? routeTabs[routeActiveTab] : null;   // v1.4.12: MM-Reiter mit eigenem Zweig
-  if (rtMM0 && rtMM0.mmOn) { paintRouteSpine(wrapEl, MMSpineCol); mmUpdateProgress(rtMM0, wrapEl); return; }
   paintRouteSpine(wrapEl);   // durchgehende Linie unabhaengig vom GPS zeichnen
   const dot = wrapEl.querySelector(".rtdot");
   const rc = routeChosen[routeActive];
@@ -10683,6 +10828,7 @@ function activateRouteTab(i, refetchSearch) {
   stationPanelOpen = true; stationPanelCache = "";
   routeTabActive = true;
   helpTabActive = false;
+  mmTabActive = false;   // v1.4.14: MM-Reiter ist eine eigene Aktivität
   routeActiveTab = i;
   loadRouteTab(i);
   renderTabs(); renderPanels();
@@ -10698,6 +10844,7 @@ function closeRouteTab(i) {
     routeTabActive = false;
     routeCons = []; routeChosen = []; routeSearchErr = null; routeActive = -1; routeLoading = false;
     if (routeTabs.length) activateRouteTab(Math.min(i, routeTabs.length - 1));
+    else if (mmTabs.length) activateMMTab(0);
     else if (tabs.length) activateTab(0, false);
     else { renderTabs(); renderPanels(); renderAlarmInd(); }
     return;
@@ -10715,7 +10862,7 @@ function openNewRouteTab() {   // aus dem Routen-Dialog: neuer paralleler Reiter
   routeTabs.push(rt);
   activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
   stationPanelOpen = true; stationPanelCache = "";
-  routeTabActive = true; helpTabActive = false;
+  routeTabActive = true; helpTabActive = false; mmTabActive = false;
   routeActiveTab = routeTabs.length - 1;
   loadRouteTab(routeActiveTab);
   renderTabs(); renderPanels();
@@ -10726,13 +10873,14 @@ function activateHelpTab() {
   saveActiveTab();
   activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
   stationPanelOpen = true; stationPanelCache = "";
-  routeTabActive = false; helpTabActive = true;
+  routeTabActive = false; helpTabActive = true; mmTabActive = false;
   renderTabs(); renderPanels();
 }
 function closeHelpTab() {
   helpTabOpen = false; helpTabActive = false;
   if (activeTab < 0) {
     if (routeTabs.length) activateRouteTab(0);
+    else if (mmTabs.length) activateMMTab(0);
     else if (tabs.length) activateTab(0, false);
   }
   renderTabs(); renderPanels(); renderAlarmInd();
@@ -10753,7 +10901,7 @@ function helpHTML() {
   h += P("<b>Das Herzstück der App ist ihre lokale Raum-Zeit-Engine.</b> Sie behandelt jede Fahrt als Pfad in einem <b>Raum-Zeit-Würfel</b>: zwei Achsen sind die Stationkoordinaten, die dritte Achse die Zeit. Wissenschaftlich gehört dieses Konstrukt zur <b>Zeitgeografie</b>: Raum-Zeit-Würfel (space-time cube) nach Torsten Hägerstrand (1970), vertieft im zweibändigen Werk „Timing Space and Spacing Time“ von Carlstein, Parkes und Thrift (London 1978). Auf genau diesem Würfel rechnet die Engine alles lokal auf deinem Gerät: die <b>Fahrzeug-Erkennung</b> (deine GPS-Spur gegen die Fahr-Linie jeder Kandidaten-Fahrt, EIN Abstand fasst Position, Tempo und Richtung zusammen), die <b>Verspätungs-Fortschreibung</b> (die beobachtete Fahr-Linie wird entlang der Zeitachse verschoben und auf alle kommenden Stationen fortgeschrieben, die Voraussage steht damit sofort, bevor die Live-Auskunft dort Ist-Zeiten liefert), die <b>Lauf-Reichweite</b> (fachlich ein Raum-Zeit-Prisma: mit deinem eigenen Tempo erreichbare Abfahrten, kein pauschaler Radius) und die <b>Ketten-Synthese</b> (selbst gebaute Umstiegsketten, die HAFAS gar nicht anbietet, weil es Übergänge wie Bushaltestelle zu Bahn-Haltepunkt nach Metern und Wartezeit verwirft). „Raum-Zeit“ ist in dieser App deshalb kein Marketingwort, sondern das Modell: Seit v1.3 ist diese lokale Raum-Zeit-Engine der Entwicklungsschwerpunkt, jede neue Version baut sie weiter aus. Die wissenschaftlichen Referenzen stehen als Publikationsliste im README dieser App: Hägerstrand (1970), Carlstein/Parkes/Thrift (1978) und Damm/Götze (2009).");
   h += P("<b>Warum mit dieser App für Bus und Bahn planen, statt mit jeder anderen ÖPNV-Karte?</b> Weil andere Reisendenapps in der Regel zeigen, was ihnen die zentrale Auskunft vorgibt, und dort endet ihre Meinung. Diese App stellt dieselben Auskünfte (KVG, NAH.SH, DB) daneben eine eigene lokale Rechnung: <b>(1) Ehrliche drei Datenquellen</b> statt einer Zahl: Fahrplan, Live-Tafel und der lokale Raum-Zeit-Wert (immer kursiv) bleiben getrennt sichtbar, auch abgelehnte Kandidaten nennt die Engine mit Grund (Tempo, Zeitfenster, Gegenrichtung). <b>(2) Verbindungen, die andere gar nicht anbieten</b>: Ketten über kurze Übergänge (bis 600 m, Luftlinie mal 1,3), die HAFAS verwirft, baut die App selbst zusammen, gleicht lange Fußwege gegen spätere Halte derselben Fahrt ab und warnt bei knappem Anschluss samt Hinweis auf Schranken zwischen Halt und Steg. <b>(3) Verspätungen, bevor sie offiziell sind</b>: Die Raum-Zeit-Fortschreibung kennt die voraussichtliche Verspätung an jedem künftigen Halt, sobald die Fahrt nur einen Halt beobachtet hat, plus Sekunden-Countdowns und Anschluss-Warnungen in der gewählten Route. <b>(4) Deine Daten bleiben lokal</b>: GPS-Spur und Auswertung verlassen das Gerät nicht, es gibt keinen Account und keine zentrale Profilierung. <b>(5) Ein Zweck</b>: ÖPNV in Kiel und Schleswig-Holstein, ohne Werbe-Overlay.");
 h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
-  h += P("<b>Haltestellensuche:</b> Name ab 1 Buchstabe (Tippfehler werden verziehen). Mit GPS laufen die Treffer nach <b>Fußweg</b>, gerechnet mit 5 km/h (zügiger Normschritt; die Schätzung soll eher eine Minute zu früh als zu spät raten). Bahnhof-Züge kommen mit 6-Stunden-Horizont, „später“ blättert je 6.");
+  h += P("<b>Haltestellensuche:</b> Name ab 1 Buchstabe (Tippfehler werden verziehen). Mit GPS laufen die Treffer nach <b>Fußweg</b>, gerechnet mit 5 km/h (zügiger Normschritt; die Schätzung soll eher eine Minute zu früh als zu spät raten). Bahnhof-Züge kommen mit 6-Stunden-Horizont, „später“ blättert je 6. Jede Zeile trägt seit v1.4.14 ihr Symbol: 🚌 für Busse und 🚆 für Bahnen, dazu die Donkey-Leihstationen des Micromobility Routing mit 🚲, die mit in der Trefferliste stehen (Antippen öffnet den MM-Reiter der Leihstation).");
   h += P("<b>Abfahrten in der Nähe:</b> Stationen bis 15 Gehminuten, Abfahrten bis 30 Minuten voraus. Zeilenfarben: <b>grün</b> = entspannt, noch mehr als 3 Minuten; <b>gelb</b> = in spätestens 3 Minuten losgehen; <b>rot</b> = zu Fuß nicht mehr erreichbar. Abfahrten, die du schon mehr als 2 Minuten verpasst hast, verschwinden aus der Liste.");
   h += P("<b>Sekunden-Countdown:</b> Zwei Orte, dieselbe 3-Minuten-Kante: In den Stationslisten tickt „fährt in 2:54 min“ im Sekundentakt, sobald eine KVG-Echtzeit-Fahrt unmittelbar bevorsteht – bewusst nur dort, denn der Sekundenwert kommt live aus der Echtzeit-Auskunft. In den Verläufen (Fahrtverlauf und Routen-Abschnitte) tickt der Timer direkt hinter dem Verspätungs-Chip: „+5m“ bleibt stehen, dahinter läuft „in 1:23“ herunter. Der vordere Timer zählt normal auf die in „Aktuell“ stehende Zeit (Ist-Zeit, sonst Planzeit; das GPS-ETA an deiner Haltestelle ist als einziges Ziel auf die Sekunde genau, alle anderen zählen auf die volle Minute). Liefert die Raum-Zeit-Prognose eine abweichende Voraussage, läuft dahinter kursiv ein zweiter Timer in Klammern mit: „in 0:34 (0:56)“ – der hintere kursiv wie jeder Raum-Zeit-Wert; Raum-Zeit rechnet in Minuten, auf ihr Ziel wird mit der laufenden Uhr sekundengenau heruntergezählt. Während ein Listen-Countdown sichtbar ist, holt die Seite ihre Daten alle 20 Sekunden statt aller 45.");
   h += P("<b>Live und geplant:</b> Tags „Echtzeit“ bzw. „geplant“ – nachts und für Zeiten ohne Live-Daten kommen geplante Fahrten aus dem NAH.SH-Fahrplan. „früher“ lädt Abgefahrene nach, „später“ schaltet weitere geplante frei. Die Steig-Kennzeichner in eckigen Klammern (etwa „A1“) stehen seit neuestem auf allen Zeilen: Live-Zeilen nehmen sie aus der KVG-Steig-Auskunft, geplante und bereits abgefahrene Zeilen direkt aus dem NAH.SH-Fahrplan-Board (dort ist der Bahnsteig jeder Fahrt hinterlegt, auch der Bussteig) - jeweils nach derselben Regel: Gezeigt wird der Steig nur an Stationen mit mindestens drei Steigen wie am Hauptbahnhof, einfache A/B-Halte bleiben bewusst ohne Kennzeichnung. In den Stationslisten und Suchtreffer-Zeilen zählt allein die <b>Abfahrtszeit</b>: alle noch nicht abgefahrenen Verbindungen stehen in der Liste; abgefahrene bleiben bis 3 Minuten grau durchgestrichen stehen und verschwinden dann. Unter jeder Zeile der Abfahrtsliste im Stationsreiter steht die Folgefahrten-Zeile derselben Linie („auch geplant: HH:MM Uhr“); in Suchtreffer-Zeilen bleibt die Liste ohne sie. In den Verläufen (Fahrtverlauf und Routen-Abschnitte) steht sie direkt über der Kopfzeile „Gep./Aktuell“.");
@@ -10773,7 +10921,8 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der neue Knopf ✔ Als Route-Reiter übernehmen frei: Er legt die MM-Route als eigenen Unter-Reiter neben die ÖPNV-Route, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. War der Dialog aus dem normalen Routing heraus geöffnet, sitzt im ÖPNV-Fahrtverlauf der Sprung-Link „zum MM Routing“ an der sinnvollsten Stelle (dem Station-Ring nahe dem MM-Start), am Ende des MM-Reiters der Link „zum ÖPNV Routing“ zurück zur Rückkehr-Stelle; „weiter nach MM Routing“ an der Rückkehr-Stelle und der Rück-Link erscheinen nur, wenn das MM-Ziel höchstens 150 m von einem Station-Ring der Original-Route entfernt liegt. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
+  h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
+  h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern (je Rad Typ, Akku, Reichweite und der 📲-Chip „Rad in der Donkey-App“ aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung. Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert). Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
   h += P("<b>🧭 Drei Wege zur Karte</b> (seit v1.4.11, überall gleich): Damit bei den vielen Karten und Routing-Apps die Übersicht bleibt, gibt es ein festes Muster mit genau drei Wegen. <b>1. Ansehen:</b> Chips mit 🗺 uMap öffnen Karten mit beliebig vielen Punkten, die Räder der Auswahl mit Akkustand-Farben (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter, Donkey-Fahrrad-Symbol), die Rückgabe-Stationen ums Ziel, alle Räder und Stationen oder die 4-Punkte-Route des Micromobility Routings; die eigene GPS-Position steht als 📍-Marker mit auf der Karte (Ausnahme „alle Räder + Stationen“, die uMap serverseitig lädt und deine Position deshalb nicht kennt); uMap kann nichts zurückmelden, deshalb stehen die Kurz-IDs der Räder in Beschriftung und Pulldown zum Abgleichen. <b>2. Navigieren:</b> Der 🧭-Knopf klappt ein Menü auf, das nur die Optionen des jeweiligen Falls zeigt: Google Maps übernimmt die echte Route mit bis zu 4 Punkten, je Bein oder als ganze Leihrad-Route; mehrere Punkte gleichzeitig kann kein herstellerneutraler Standard übergeben, geo: fasst genau einen Punkt, deshalb nennt das Menü die konkrete App. <b>3. Einzelpunkt übergeben:</b> Das Karten-Symbol übergibt einen einzelnen Ort als generellen Web-Link, der 📱-Chip daneben als geo:-Link ans Handy, wo Android die installierten Karten-Apps zur Auswahl stellt. Karten-Symbol und 📱-Chip sitzen überall nebeneinander, an Adressen, Favoriten, Stations- und Route-Panels. Die Positions-Berechtigung für die 📍-Marker fragt die App selbst ab (Browser-Standort), uMap braucht keine eigene Freigabe: Die Koordinaten stecken in der Karten-URL. Beim Öffnen der 4-Punkte-Route nach einer fertigen MM-Route fragt die App die momentane GPS-Position frisch ab und setzt sie als zusätzlichen fünften Punkt; nur die serverseitig geladene Karte „alle Räder + Stationen“ bleibt ohne eigenen Punkt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
@@ -11075,12 +11224,8 @@ function bikeSecBtnHTML(sec, si) {
 function openBikeDlg(which, ctx) {
   const old = document.getElementById("bikeDlg");
   if (old) { old.remove(); return; }   // wie beim Wecker: nochmal tippen schliesst
-  const hasCtx = !!(ctx && (ctx.anchor || (ctx.ents && ctx.ents.length)));
+  const hasCtx = !!(ctx && (ctx.anchor || ctx.mmSt || ctx.mmFree || (ctx.ents && ctx.ents.length)));   // v1.4.14: mmSt/mmFree = Dialog ohne OEPNV-Bezug (MM-Reiter, Leisten-Knopf)
   const rc = routeChosen[routeActive] || routeChosen[0];
-  // v1.4.12: aus dem normalen Routing heraus geoeffnet? Dann kennt die
-  // Uebernahme die Original-Verbindung (Reiter + Sprung-Links dahin).
-  let bkCtxSig = null;
-  if (!hasCtx && rc && rc.con && routeTabActive && routeActiveTab >= 0) bkCtxSig = rc.sig || null;
   const c = (hasCtx || (rc && rc.con)) ? (rc ? rc.con : null) : null;
   const ents = (ctx && ctx.ents) ? ctx.ents :
     ((rc && rc.con) ? routeAlarmStations(rc) : []);   // Route-Stationen in Fahrtrichtung
@@ -11183,6 +11328,7 @@ function openBikeDlg(which, ctx) {
       '</div>' +
       '<label class="dlabel" style="margin-top:8px">Abholrad (2. Punkt)</label>' +
       '<select class="bkstop" id="bkSelBike"></select>' +
+      '<div class="routepick" style="margin-top:2px"><button class="achip" id="bkFixSt" title="Abhol-Station fixieren">📌 Abhol-Station fixieren</button></div>' +
       '<div class="bksub" id="bkBikeInfo">–</div>' +
       '<label class="dlabel" style="margin-top:8px">Ziel der Radfahrt (4. Punkt)</label>' +
       '<div class="bkbar">' +
@@ -11202,7 +11348,7 @@ function openBikeDlg(which, ctx) {
       '<div id="bkRes" style="margin-top:6px"></div>' +
       '<div id="bkAllWrap" style="margin-top:6px"></div>' +
       '<div class="bksrc">Leihräder: Donkey Republic / SprottenFlotte (GBFS 3.0) über donkeyproxy.php (Web: Seitenverzeichnis, App: pixcaelium.timo-damm.de) · Routing: OpenStreetMap / FOSSGIS-OSRM · Karten: uMap · ohne Google</div>' +
-      '<div class="dbtns"><button class="aok" id="bkTake" disabled title="Die fertige MM-Route als eigenen Routen-Reiter übernehmen (erst nach 🚴 Gesamte Route abrufen aktiv)">✔ Als Route-Reiter übernehmen</button><button class="aok" id="bkClose">Schließen</button></div>' +
+      '<div class="dbtns"><button class="aok" id="bkTake" disabled title="Die fertige MM-Route in ihren MM-Reiter übernehmen: Abholstation oben, die Route als Unter-Reiter darunter (erst nach 🚴 Gesamte Route abrufen aktiv)">✔ Als MM-Route übernehmen</button><button class="aok" id="bkClose">Schließen</button></div>' +
     '</div>';
   document.body.appendChild(wrap);
   const selFrom = wrap.querySelector("#bkSelFrom"), selTo = wrap.querySelector("#bkSelTo");
@@ -11366,6 +11512,35 @@ function openBikeDlg(which, ctx) {
       }
     });
   }));
+  // v1.4.14: Fixier-Knopf unter dem Abholrad-Pulldown. Fixiert = das Pulldown
+  // zeigt nur die Räder dieser Donkey-Station, auch wenn der Start (Punkt 1)
+  // gewechselt wird; nochmal drücken löst die Fixierung.
+  function updateBkFixBtn() {
+    const fb = wrap.querySelector("#bkFixSt");
+    if (!fb) return;
+    const f = bkst.fixSt;
+    fb.className = "achip" + (f ? " on" : "");
+    fb.textContent = f ? "📌 Abhol-Station: " + f.name : "📌 Abhol-Station fixieren";
+    fb.title = f
+      ? "Fixiert: Das Abholrad-Pulldown zeigt nur die Räder der Station " + f.name + ", auch wenn der Start wechselt. Nochmal drücken löst die Fixierung."
+      : "Die Station des aktuell gewählten Rads als Abhol-Station fixieren: Das Abholrad-Pulldown zeigt dann nur deren Räder, auch wenn der Start wechselt (ein Rad ohne Station lässt sich nicht fixieren)";
+  }
+  wrap.querySelector("#bkFixSt").addEventListener("click", () => {
+    if (bkst.fixSt) {
+      bkst.fixSt = null;
+      updateBkFixBtn();
+      renderBikes();
+      setLocNote("Abhol-Station nicht mehr fixiert: Das Abholrad-Pulldown zeigt wieder die Räder um den Start.");
+      return;
+    }
+    const v = (st.bikes || [])[Number(selBike.value)];
+    const stn = v && v.st != null ? mmStationById(v.st) : null;
+    if (!stn) { setLocNote("Das aktuell gewählte Rad liegt an keiner Donkey-Station: Fixieren erst nach Wahl eines Stations-Rads möglich."); return; }
+    bkst.fixSt = { id: stn.id, name: stn.name, lat: stn.lat, lon: stn.lon };
+    updateBkFixBtn();
+    renderBikes();
+    setLocNote("📌 Abhol-Station fixiert: " + stn.name + ", das Abholrad-Pulldown zeigt nur deren Räder, auch wenn der Start wechselt.");
+  });
   function fillAllWrap() {
     if (location.protocol === "http:" || location.protocol === "https:")
       allWrap.innerHTML = '<a class="achip" target="_blank" rel="noopener" href="' + bikeUmapAllURL() +
@@ -11375,7 +11550,7 @@ function openBikeDlg(which, ctx) {
   const selBike = wrap.querySelector("#bkSelBike"), selDrop = wrap.querySelector("#bkSelDrop");
   const bikeInfoEl = wrap.querySelector("#bkBikeInfo"), dropInfoEl = wrap.querySelector("#bkDropInfo");
   const resEl = wrap.querySelector("#bkRes");
-  const bkst = { bikeId: null, dropId: null };
+  const bkst = { bikeId: null, dropId: null, fixSt: (ctx && ctx.mmSt) ? { id: ctx.mmSt.id, name: ctx.mmSt.name, lat: ctx.mmSt.lat, lon: ctx.mmSt.lon } : null };   // v1.4.14: fixierte Abhol-Station
   let bikesSeq = 0, dropSeq2 = 0, bikeInfoSeq = 0, dropInfoSeq = 0, routeSeq = 0;
   let bkLast = null;   // v1.4.12: letztes fertiges Ergebnis fuer "Als Route-Reiter übernehmen"
   let bikeListN = BIKE_ROW_N, bikesAnchorKey = "";   // v1.4.6: am Listenende um 6 erweiterbar, Ruecksetzung bei Startwechsel
@@ -11404,13 +11579,27 @@ function openBikeDlg(which, ctx) {
       bikeInfoEl.textContent = "⚠ donkeyproxy.php antwortet im Moment nicht.";
       return;
     }
-    const pool = (d.v || []).filter(v => v && v.lat != null && v.lon != null &&
-      (v.t === "bike" || v.t === "ebike") && !v.rs && !v.dis);
-    const pick = donkeyPick(d.v, st.anchor.lat, st.anchor.lon, bikeListN);
+    let pool, pick;
+    if (bkst.fixSt) {   // v1.4.14: fixierte Abhol-Station: nur deren Räder, unabhaengig vom Start
+      pool = (d.v || []).filter(v => v && v.st === bkst.fixSt.id && v.lat != null && v.lon != null &&
+        (v.t === "bike" || v.t === "ebike") && !v.rs && !v.dis);
+      pick = pool.map(v => ({ id: v.id, lat: v.lat, lon: v.lon, t: v.t,
+        fu: v.fu != null ? v.fu : null, rm: v.rm != null ? v.rm : null,
+        st: v.st, dl: v.dl != null ? v.dl : null,
+        dm: Math.round(dist({ lat: st.anchor.lat, lon: st.anchor.lon }, { lat: v.lat, lon: v.lon })) }))
+        .sort((a, b) => a.dm - b.dm).slice(0, bikeListN);
+    } else {
+      pool = (d.v || []).filter(v => v && v.lat != null && v.lon != null &&
+        (v.t === "bike" || v.t === "ebike") && !v.rs && !v.dis);
+      pick = donkeyPick(d.v, st.anchor.lat, st.anchor.lon, bikeListN);
+    }
     st.bikes = pick;
     if (!pick.length) {
-      selBike.innerHTML = '<option value="">(keine freien Räder im Feed)</option>';
-      bikeInfoEl.textContent = "Keine freien Räder im Feed (reservierte und gesperrte bleiben draußen).";
+      selBike.innerHTML = '<option value="">' + (bkst.fixSt ? "(keine freien Räder an der fixierten Station)" : "(keine freien Räder im Feed)") + "</option>";
+      bikeInfoEl.textContent = bkst.fixSt
+        ? "An der fixierten Abhol-Station stehen im Moment keine freien Räder im Feed."
+        : "Keine freien Räder im Feed (reservierte und gesperrte bleiben draußen).";
+      updateBkFixBtn();
       return;
     }
     let h = "";
@@ -11623,24 +11812,24 @@ function openBikeDlg(which, ctx) {
     const dd = document.getElementById("rtmenu-" + mb.dataset.rtmenubtn);
     if (dd) dd.style.display = dd.style.display === "none" ? "flex" : "none";
   });
-  wrap.querySelector("#bkTake").addEventListener("click", () => {   // v1.4.12: MM-Route als eigener Unter-Reiter
-    const mmX = mmRouteFromBkLast(bkLast, bkCtxSig);
-    if (!mmX) { setLocNote("Erst 🚴 Gesamte Route abrufen, dann lässt sich die Route als Reiter übernehmen."); return; }
-    let rt = (routeTabActive && routeActiveTab >= 0) ? routeTabs[routeActiveTab] : null;
-    if (!rt) {   // ganz ohne Route-Reiter: eigener Reiter nur fuer die MM-Route (ohne NAH.SH-Suche)
-      routeTabs.push({ uid: newTabUid(), name: "MM", sel: { start: { label: mmX.from.name || "Start" }, dest: { label: mmX.dest.name || "Ziel" }, time: "" },
-        cons: [], chosen: [], sub: -1, err: null, loading: false, searched: true, searching: null,
-        topOpen: false, subOpen: true, fold: false, frozen: false, cachedTop: "", cachedSub: "" });
-      activateRouteTab(routeTabs.length - 1, false);
-      rt = routeTabs[routeActiveTab] || rt;
+  wrap.querySelector("#bkTake").addEventListener("click", () => {   // v1.4.14: MM-Route in den MM-Reiter der Abholstation
+    const mmX = mmRouteFromBkLast(bkLast);
+    if (!mmX) { setLocNote("Erst 🚴 Gesamte Route abrufen, dann lässt sich die Route als MM-Route übernehmen."); return; }
+    const stId = bkst.fixSt ? bkst.fixSt.id : mmX.stId;   // fixierte Station gewinnt, sonst Station des Abholrads
+    let mi = mmTabs.findIndex(t => t.stId === stId);
+    if (mi < 0) {   // noch kein MM-Reiter dieser Abholstation: neuen anlegen (Struktur: Abholstation oben, Routen darunter)
+      const stn = stId != null ? mmStationById(stId) : null;
+      mmTabs.push({ uid: newTabUid(), stId: stId != null ? stId : null,
+        name: stn ? (stn.name || "Leihstation") : "Abholrad frei abstellbar", routes: [], active: -1 });
+      mi = mmTabs.length - 1;
     }
-    rt.mm = mmX;
-    rt.mmOn = true;
-    if (rt.subOpen === false) rt.subOpen = true;
+    const mt = mmTabs[mi];
+    mt.routes.push(mmX);   // die Route als weitere moegliche Route im MM-Reiter (analog die Fahrten im Stationsreiter)
+    mt.active = mt.routes.length - 1;
+    activateMMTab(mi);
     wrap.remove();
-    renderRoutePanel();
-    setLocNote("✔ MM-Route als eigener Reiter übernommen: geplante Ankunft ganz links, aktuelle Voraussage aus deiner GPS-Bewegung (Raum-Zeit), Fortschritts-Strahl in Grün.");
-    const mmEl = routePanel.querySelector(".rtrail.mmrail");
+    setLocNote("✔ MM-Route übernommen: MM-Reiter mit der Abholstation oben, geplante Ankunft " + mmClockOfMs(mmX.planArrMs) + " Uhr, aktuelle Voraussage aus deiner GPS-Bewegung (Raum-Zeit), Fortschritts-Strahl in Grün.");
+    const mmEl = mmPanel.querySelector(".rtrail.mmrail");
     if (mmEl && mmEl.scrollIntoView) mmEl.scrollIntoView({ behavior: "smooth", block: "start" });
   });
   wrap.querySelector("#bkClose").addEventListener("click", () => wrap.remove());
@@ -11651,7 +11840,7 @@ function openBikeDlg(which, ctx) {
     st.gpsPos.dest = { lat: st.dest.lat, lon: st.dest.lon, acc: null, ts: Date.now() };
   bkGpsAdoptFn = (f, p) => adoptGPSField(f, p);
   bkGpsBtnRefreshFn = () => { if (document.getElementById("bikeDlg")) updateBkGpsBtns(); };
-  buildFromSel(); refreshAll(); fillAllWrap(); updateBkGpsBtns();
+  buildFromSel(); refreshAll(); fillAllWrap(); updateBkGpsBtns(); updateBkFixBtn();
 }
 // ---------- v1.4.12: Micromobility Routing (MM): Route uebernehmen, grüner Reiter ----------
 // Die fertige 4-Punkte-Route aus dem MM-Dialog (Start, Abholrad, Rueckgabe,
@@ -11661,7 +11850,6 @@ function openBikeDlg(which, ctx) {
 // gegen die geplanten Bein-Zeiten; kursiv wie alle Raum-Zeit-Werte), farbige
 // Verspaetung, und Strahl, Ringe und GPS-Punkt durchgehend in Gruen (Klasse
 // .mmrail am selben .rtrail-Gefuege, Basis-Farbe MMSpineCol statt Pink).
-const MM_LINK_BACK_M = 150;   // Rueck-Links nur, wenn das MM-Ziel max. 150 m an einem Endpunkt/Stations-Ring der Original-Route liegt
 const MMSpineCol = "#14532d";
 function mmClockOfMs(ms) {
   const d = new Date(ms);
@@ -11695,40 +11883,6 @@ function mmUmapFeats(mm) {
     bikeFeature(mm.dest.lat, mm.dest.lon, "🎯 Ziel: " + mm.dest.name, "Punkt 4 der 4-Punkte-Route",
       { _umap_options: { iconClass: "Drop", color: "Crimson" } })
   ];
-}
-// Endpunkte je Abschnitt der Original-Verbindung (Start-/Anastations-Ringe,
-// auch Zubringer): Anker der Sprung-Links zwischen OEPNV-Route und MM-Reiter.
-function mmRouteBoundaries(con) {
-  const out = [];
-  ((con && con.secs) || []).forEach((sec, si) => {
-    const jf = (sec && sec.kind === "jny" && sec.stops && sec.stops.length) ? sec.stops[0] : null;
-    const jl = (sec && sec.kind === "jny" && sec.stops && sec.stops.length) ? sec.stops[sec.stops.length - 1] : null;
-    const fp = (jf && jf.lat != null) ? { name: jf.name, lat: jf.lat, lon: jf.lon } :
-      (sec && sec.fromLat != null && sec.fromLon != null) ? { name: sec.from, lat: sec.fromLat, lon: sec.fromLon } : null;
-    const tp = (jl && jl.lat != null) ? { name: jl.name, lat: jl.lat, lon: jl.lon } :
-      (sec && sec.toLat != null && sec.toLon != null) ? { name: sec.to, lat: sec.toLat, lon: sec.toLon } : null;
-    if (fp) out.push({ si: si, pt: fp });
-    if (tp) out.push({ si: si, pt: tp });
-  });
-  return out;
-}
-function mmLinkCompute(mm) {
-  mm.linkFromSi = null; mm.linkFromPos = null; mm.linkBackSi = null; mm.linkBackPos = null;
-  if (!mm.rcSig) return;
-  const rc = routeChosen.find(r => r && r.sig === mm.rcSig);
-  if (!rc || !rc.con) return;
-  let bestFrom = null, bestBack = null;
-  for (const b of mmRouteBoundaries(rc.con)) {
-    if (!(b.pt && b.pt.lat != null)) continue;
-    const dF = dist(mm.from, b.pt);
-    if (!bestFrom || dF < bestFrom.d) bestFrom = { si: b.si, pt: b.pt, d: dF };
-    const dB = dist(mm.dest, b.pt);
-    if (dB <= MM_LINK_BACK_M && (!bestBack || dB < bestBack.d)) bestBack = { si: b.si, pt: b.pt, d: dB };
-  }
-  mm.linkFromSi = bestFrom ? bestFrom.si : null;
-  mm.linkFromPos = bestFrom ? bestFrom.pt : null;
-  mm.linkBackSi = bestBack ? bestBack.si : null;
-  mm.linkBackPos = bestBack ? bestBack.pt : null;
 }
 // Projektion der eigenen Position auf die 3 Beine der MM-Route: Rueckgabe
 // { seg, frac, dms, cums, w } mit w = zurueckgelegte Meter, oder null, wenn
@@ -11771,31 +11925,11 @@ function mmDelaySpanHTML(dmin, hasPred) {
   const txt = dmin > 0 ? "+" + dmin + "m" : dmin < 0 ? dmin + "m" : "0m";
   return ' <span class="tdelay ' + cls + '" id="mmdelayspan" title="Verspätung gegen die geplante Ankunft, aus der Raum-Zeit-Voraussage der eigenen GPS-Bewegung">' + txt + "</span>";
 }
-// Der MM-Unter-Reiter-Anstecker in der Subtab-Leiste (neben den OEPNV-Verbindungen)
-function mmTabChip(rt) {
-  const mm = rt && rt.mm;
-  if (!mm) return "";
-  const planC = mmClockOfMs(mm.planArrMs);
-  return '<div class="subtab' + (rt.mmOn ? " on" : "") + '" data-rtmmtab="1" title="Micromobility Routing: eigene Leihrad-Route (Start, Abholrad, Rückgabe, Ziel), geplante Ankunft ' + planC + ' Uhr"><span class="stt">🚲 MM ' + planC + '</span>' +
-    ' <button class="tabx" data-mmx="1" title="MM-Reiter schließen">✕</button></div>';
-}
-// Sprung-Link-Chips an der Start- und an der Rueckkehr-Stelle der Original-Verbindung
-function mmSecExtra(rt, rc, si) {
-  const mm = rt && rt.mm;
-  if (!mm || !rc || mm.rcSig !== rc.sig) return "";
-  let x = "";
-  if (mm.linkFromSi === si)
-    x += ' <button class="achip mmlink" data-mmgolink="1" title="Micromobility Routing: eigene Route mit Leihrad öffnen, Sprung zum MM-Reiter">zum MM Routing</button>';
-  if (mm.linkBackSi === si)
-    x += ' <button class="achip mmlink" data-mmgolink="1" title="Am Ende des Micromobility Routings geht es hier weiter: MM-Reiter öffnen">weiter nach MM Routing</button>';
-  return x;
-}
 // Der MM-Fahrtverlauf wie ein normaler Routen-Block: Kopfzeile mit geplanter
 // Ankunft GANZ LINKS und aktueller Voraussage daneben (kursiv = Raum-Zeit),
 // darunter der gruene Strahl mit Start-Ring, Abholrad, Ausleih-Strich,
 // Rueckgabe-Ring, Ziel-Ring und dem wandernden GPS-Punkt, am Ende die Links.
-function mmJourneyHTML(rt) {
-  const mm = rt.mm;
+function mmJourneyHTML(mm) {   // v1.4.14: das mm-Objekt direkt (liegt im MM-Reiter, nicht mehr im Route-Reiter)
   const pred = mmPredArr(mm);
   const planC = mmClockOfMs(mm.planArrMs);
   const actC = pred ? mmClockOfMs(pred.arrMs) : planC;
@@ -11832,7 +11966,6 @@ function mmJourneyHTML(rt) {
     '<div class="rtstop">🎯 <b>Ziel:</b> ' + esc(String(mm.dest.name)) + ' <span class="dim">· an ' + planC + ' Uhr</span></div>' +
     '<div class="bksub">🚶 Fußweg ' + legTxt(mm.legs && mm.legs[2], mm.w2) + '</div></div>';
   h += '<div class="routesec" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">' +
-    (mm.linkBackSi != null ? ' <button class="achip mmlink" data-mmback="1" title="Zurück zur ursprünglichen ÖPNV-Verbindung: Sprung an die Rückkehr-Stelle (der Stations-Ring nahe dem MM-Ziel)">zum ÖPNV Routing</button>' : "") +
     ' <a class="achip" data-uumaplive="1" target="_blank" rel="noopener" href="' + bikeUmapURL(mmUmapFeats(mm), mm.umapCenter) +
     '" title="4-Punkte-Übersicht auf uMap, beim Öffnen wird die momentane GPS-Position frisch abgefragt und als fünfter Punkt 📍 mitgesetzt (die Berechtigung fragt diese Seite ab, uMap braucht keine eigene)">🗺 uMap: 4-Punkte-Route</a>' +
     rtAppChipsHTML([mm.from, mm.bike, mm.drop, mm.dest], "bike") +
@@ -11841,7 +11974,7 @@ function mmJourneyHTML(rt) {
   return h;
 }
 // Uebernahme: fertiges Dialog-Ergebnis (bkLast) in das MM-Objekt ueberfuehren
-function mmRouteFromBkLast(L, ctxSig) {
+function mmRouteFromBkLast(L) {   // v1.4.14: ohne OEPNV-Sprung-Kontext, dafuer mit Abhol-Station (stId) fuer den MM-Reiter
   if (!L) return null;
   const now = Date.now();
   const tot = L.tot || ((L.w1 || 0) + (L.rb || 0) + (L.w2 || 0) + DONKEY_HANDLE_MIN);
@@ -11849,16 +11982,14 @@ function mmRouteFromBkLast(L, ctxSig) {
     t0ms: now, w1: L.w1 || 0, rb: L.rb || 0, w2: L.w2 || 0, tot: tot,
     from: L.from, bike: L.bike, drop: L.drop, dest: L.dest, legs: L.legs,
     handle: DONKEY_HANDLE_MIN, planArrMs: now + tot * 60000,
-    rcSig: ctxSig || null,
+    stId: (L.bike && L.bike.st != null) ? L.bike.st : null,
     umapCenter: L.center || { lat: (L.bike.lat + L.drop.lat) / 2, lon: (L.bike.lon + L.drop.lon) / 2 }
   };
-  mmLinkCompute(mm);
   return mm;
 }
 // Farbige Fuellungen + wandernder Punkt im MM-Reiter (gleiche Taktung wie die
 // pinke Route): Ring-Mitten der Zeilen als Anker, w = zurueckgelegte Meter.
-function mmUpdateProgress(rt, wrapEl) {
-  const mm = rt.mm;
+function mmUpdateProgress(mm, wrapEl) {   // v1.4.14: das mm-Objekt direkt
   const dot = wrapEl.querySelector(".rtdot");
   wrapEl.querySelectorAll(".rfill[data-rsi]").forEach(el => { el.style.height = "0%"; });
   if (!mm || !dot) return;
@@ -11886,13 +12017,17 @@ function mmUpdateProgress(rt, wrapEl) {
   dot.style.display = "";
   dot.style.top = (y - 5) + "px";
 }
-// 500-ms-Takt: Aktuell-Uhrzeit des MM-Reiters ohne Neu-Rendern auffrischen
+// 500-ms-Takt des aktiven MM-Reiters: Aktuell-Uhrzeit, Verspaetung und der
+// gruene Fortschritts-Strahl (Fuellung + GPS-Punkt) ohne Neu-Rendern auffrischen
 function mmTick() {
-  const rt = routeTabActive && routeActiveTab >= 0 ? routeTabs[routeActiveTab] : null;
-  if (!rt || !rt.mmOn || !rt.mm) return;
+  if (!(mmTabActive && mmActiveTab >= 0 && mmTabs[mmActiveTab])) return;
+  const mt = mmTabs[mmActiveTab];
+  const mm = (mt.routes && mt.active != null) ? mt.routes[mt.active] : null;
+  if (!mm) return;
+  const rail = mmPanel.querySelector(".rtrail.mmrail");
+  if (rail) { paintRouteSpine(rail, MMSpineCol); mmUpdateProgress(mm, rail); }
   const wrapEl = document.getElementById("mmaktwrap");
   if (!wrapEl) return;
-  const mm = rt.mm;
   const pred = mmPredArr(mm);
   const actC = pred ? mmClockOfMs(pred.arrMs) : mmClockOfMs(mm.planArrMs);
   if (wrapEl.textContent !== actC) {
@@ -11902,6 +12037,174 @@ function mmTick() {
     if (de) de.outerHTML = mmDelaySpanHTML(pred ? Math.round((pred.arrMs - mm.planArrMs) / 60000) : null, !!pred);
   }
 }
+
+// ---------- v1.4.14: MM-Reiter (Micromobility) ----------
+// Eigener Reiter-Typ ("m") neben den Stations- und Route-Reitern, session-only
+// (ueberlebt keinen Neustart, wird auch nicht mitgespeichert). Jeder MM-Reiter
+// hat IMMER dieselbe Struktur: oben das Feld ueber die Abholstation (Name,
+// Stellplaetze, ALLE dort stehenden Leihräder samt 📲-Donkey-App-Link und
+// uMap) samt 🚲?-Routing-Knopf, darunter die uebernommenen MM-Routen als
+// Unter-Reiter (analog die Fahrten im Stationsreiter). Die MM-Route steht
+// deshalb nie mehr direkt neben einer OEPNV-Verbindung im Route-Reiter.
+const mmPanel = document.getElementById("mmPanel");
+let mmTabs = [], mmTabActive = false, mmActiveTab = -1;
+let mmPanelSeq = 0;
+function mmStationById(id) {
+  const d = donkeyCache && donkeyCache.d;
+  return (id != null && d && Array.isArray(d.s)) ? d.s.find(s => s && s.id === id) : null;
+}
+function mmDefaultStart() {   // Punkt-1-Regel: GPS-Position des Stationssuchfelds, sonst Eintrag des Adressfelds, sonst Live-GPS
+  const p = listPos();
+  if (p && p.lat != null) return { name: p.label || "📍 GPS-Position (Stationssuche)", lat: p.lat, lon: p.lon };
+  const lp = livePos();
+  return (lp && lp.lat != null) ? { name: "📍 GPS-Position", lat: lp.lat, lon: lp.lon } : null;
+}
+function openMMTabById(id) {   // aus der Stationssuche: MM-Reiter der Leihstation (vorhandenen aktivieren)
+  if (id == null) return;
+  let i = mmTabs.findIndex(t => t.stId === id);
+  if (i < 0) {
+    const stn = mmStationById(id);
+    mmTabs.push({ uid: newTabUid(), stId: id, name: stn ? (stn.name || "Leihstation") : "Leihstation", routes: [], active: -1 });
+    i = mmTabs.length - 1;
+  }
+  activateMMTab(i);
+}
+function activateMMTab(i) {
+  saveActiveTab();
+  if (!mmTabs[i]) return;
+  activeTab = -1; currentStop = null; currentBus = null; currentTrip = null;
+  stationPanelOpen = true; stationPanelCache = "";
+  routeTabActive = false; helpTabActive = false;
+  mmTabActive = true; mmActiveTab = i;
+  renderTabs(); renderPanels(); renderAlarmInd();
+}
+function closeMMTab(i) {
+  mmTabs.splice(i, 1);
+  if (mmActiveTab === i) {
+    mmActiveTab = -1; mmTabActive = false;
+    if (mmTabs.length) activateMMTab(Math.min(i, mmTabs.length - 1));
+    else if (routeTabs.length) activateRouteTab(0);
+    else if (tabs.length) activateTab(0, false);
+    else { renderTabs(); renderPanels(); renderAlarmInd(); }
+    return;
+  }
+  if (mmActiveTab > i) mmActiveTab--;
+  renderTabs(); renderPanels(); renderAlarmInd();
+}
+function renderMMPanel() {   // Kopf = Abholstation mit allen Rädern, darunter die übernommenen MM-Routen
+  const show = mmTabActive && mmActiveTab >= 0 && !!mmTabs[mmActiveTab];
+  mmPanel.hidden = !show;
+  if (!show) { mmPanel.innerHTML = ""; delete mmPanel.dataset.last; return; }
+  const mt = mmTabs[mmActiveTab];
+  const d = donkeyCache && donkeyCache.d;
+  if (!d) {   // Feed nachladen, dann frisch rendern (einmalig je Öffnen; bei Offline kein weiterer Versuch im selben Atemzug)
+    const seq = ++mmPanelSeq;
+    mmPanel.innerHTML = '<div class="srow"><span class="sname dim">Leihrad-Daten (Donkey-Proxy) werden geladen …</span></div>';
+    donkeyData(false).then(ok => {
+      if (seq !== mmPanelSeq) return;
+      if (ok) { if (!mmPanel.hidden) renderMMPanel(); return; }
+      mmPanel.innerHTML = '<div class="srow"><span class="sname dim">⚠ Leihrad-Daten (Donkey-Proxy) momentan nicht erreichbar. MM-Reiter schließen und später erneut öffnen.</span></div>';
+    });
+    return;
+  }
+  const stn = mmStationById(mt.stId);
+  const pos = listPos();
+  let h = '<div class="sechead" title="Micromobility Routing: Abholstation mit allen ihren Rädern, darunter die übernommenen Leihrad-Routen">🚲 MM: ' + escapeHtml(mt.name) + '</div>';
+  if (mt.stId != null && stn) {   // Stations-Kopf: Angaben zur Station und ALLE Räder dort
+    const wheels0 = (d.v || []).filter(v => v && v.st === stn.id && (v.t === "bike" || v.t === "ebike"));
+    const wheels = wheels0.slice().sort((a, b) => dist(pos || stn, a) - dist(pos || stn, b));
+    const free = wheels.filter(v => !v.rs && !v.dis);
+    h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">🅿 ' + escapeHtml(stn.name || "Leihstation") +
+      (stn.cap != null ? ' <span class="dim">· ' + stn.cap + ' Stellplätze</span>' : "") +
+      (pos ? ' <span class="dim">· ~' + Math.round(dist(pos, stn) * 1.3) + ' m zu Fuß (Luftlinie x 1,3)</span>' : "") + '</div>' +
+      '<div class="bksub">' + free.length + (free.length === 1 ? " freies Rad" : " freie Räder") +
+      (wheels.length > free.length ? " · " + (wheels.length - free.length) + " reserviert/gesperrt" : "") + '</div></div></div>';
+    if (wheels.length) {
+      wheels.forEach(v => {
+        h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">' + (v.t === "ebike" ? "⚡" : "🚲") + " Rad #" + bikeShortId(v.id) +
+          (v.fu != null ? ' <span class="dim">· Akku ' + v.fu + ' %</span>' : "") +
+          (v.rm != null ? ' <span class="dim">· ca. ' + Math.max(1, Math.round(v.rm / 1000)) + ' km Reichweite</span>' : "") +
+          (v.rs ? ' <span class="dim">· reserviert</span>' : "") + (v.dis ? ' <span class="dim">· gesperrt</span>' : "") + '</div></div>' +
+          donkeyDlChip(v) + '</div>';   // 📲 offizieller Miet-Link dieses Rads: öffnet die Donkey-App bzw. deren Webseite
+      });
+    } else h += '<div class="bkrow"><div class="bkmeta"><div class="bksub dim">Aktuell stehen dort keine Räder im Feed.</div></div></div>';
+    const stFeats = [bikeFeature(stn.lat, stn.lon, "■ " + (stn.name || "Leihstation"),
+      "Donkey-Leihstation" + (stn.cap != null ? " · " + stn.cap + " Stellplätze" : ""),
+      { _umap_options: { iconClass: "Drop", color: "Teal", iconUrl: UMAP_STATION_ICON } })];
+    wheels.forEach(v => stFeats.push(bikeFeature(v.lat, v.lon,
+      (v.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") + " #" + bikeShortId(v.id) + (v.fu != null ? " · Akku " + v.fu + " %" : ""),
+      donkeyBikeText(v, stn.name || ""), bikeBikeUmOpt(v))));
+    h += '<div class="bkrow" style="flex-wrap:wrap;gap:6px;align-items:center">' +
+      rtChip(bikeUmapURL(stFeats, stn), "🗺 uMap: Station + Räder",
+        "Die Abholstation und alle dort stehenden Räder auf einer uMap-Karte: Räder mit Akku-Farbmarken (🟢 ab 80 %, 🟡 ab 60 %, 🟴 ab 40 %, 🔴 darunter) und Donkey-Fahrrad-Symbol, die Station als Fahrrad-Parkplatz-Symbol; beim Öffnen wird die momentane GPS-Position frisch abgefragt (Berechtigung fragt diese Seite)") +
+      '</div>';
+  }
+  // 🚲?-Routing-Knopf im Stations-Kopf: Start nach der Punkt-1-Regel, Abholstation im Dialog vorausgewählt und fixiert
+  h += '<div class="bkrow" style="flex-wrap:wrap;gap:6px;align-items:center">' +
+    '<button class="achip" data-mmgostart="1" title="Micromobility Routing mit dieser Abholstation starten: Start ist die GPS-Position des Stationssuchfelds oder der Eintrag des Adressfelds; im Dialog ist die Abholstation vorausgewählt und fixiert (📌)">🚲? MM Routing starten</button>' +
+    '</div>';
+  if (mt.routes.length) {   // übernommene MM-Routen als Unter-Reiter (analog die Fahrten im Stationsreiter)
+    h += '<div class="sechead">MM-Routen in diesem Reiter</div><div class="subtabbar">' +
+      mt.routes.map((mm, ri) =>
+        '<div class="subtab' + (ri === mt.active ? " on" : "") + '" data-mmsub="' + ri +
+        '" title="MM-Route: geplante Ankunft ' + mmClockOfMs(mm.planArrMs) + ' Uhr · Start ' + escapeHtml(String((mm.from && mm.from.name) || "?")) + ' → Ziel ' + escapeHtml(String((mm.dest && mm.dest.name) || "?")) + '"><span class="stt">🚲 MM ' + mmClockOfMs(mm.planArrMs) + '</span>' +
+        ' <button class="tabx" data-mmxsub="' + ri + '" title="MM-Route aus diesem Reiter entfernen">✕</button></div>').join("") +
+      "</div>";
+    const mm = mt.routes[mt.active != null ? mt.active : 0];
+    if (mm) h += mmJourneyHTML(mm);
+  } else h += '<div class="bkrow"><div class="bkmeta"><div class="bksub dim">Noch keine übernommene MM-Route: 🚲? MM Routing starten, 🚴 Gesamte Route abrufen, dann ✔ Als MM-Route übernehmen.</div></div></div>';
+  if (mmPanel.dataset.last !== h) {
+    mmPanel.dataset.last = h;
+    mmPanel.innerHTML = h;
+  }
+  mmTick();   // grüner Fortschritts-Strahl, GPS-Punkt und Aktuell-Uhr der aktiven Route
+}
+mmPanel.addEventListener("click", e => {
+  const mmx = e.target.closest("[data-mmxsub]");
+  if (mmx) {   // MM-Route aus dem Unter-Reiter entfernen
+    const mt = mmTabs[mmActiveTab];
+    if (!mt) return;
+    mt.routes.splice(Number(mmx.dataset.mmxsub), 1);
+    if (mt.active >= mt.routes.length) mt.active = mt.routes.length - 1;
+    renderMMPanel();
+    return;
+  }
+  const mms = e.target.closest("[data-mmsub]");
+  if (mms) {   // Unter-Reiter aktivieren
+    const mt = mmTabs[mmActiveTab];
+    if (mt) { mt.active = Number(mms.dataset.mmsub); renderMMPanel(); }
+    return;
+  }
+  const gos = e.target.closest("[data-mmgostart]");
+  if (gos) {   // Routing-Knopf des Stations-Kopfes: Dialog mit fixierter Abholstation, Start nach Punkt-1-Regel
+    const mt = mmTabs[mmActiveTab];
+    if (!mt) return;
+    const stn = mmStationById(mt.stId);
+    openBikeDlg(null, { mmSt: stn ? { id: stn.id, name: stn.name, lat: stn.lat, lon: stn.lon } : null,
+      anchor: mmDefaultStart(), ents: [],
+      title: "🚲? Micromobility Routing" + (stn ? ": Abholstation " + stn.name : "") });
+    return;
+  }
+  const mmul = e.target.closest("[data-uumaplive]");
+  if (mmul) {   // uMap aus dem MM-Reiter: momentane GPS-Position frisch als fünfter Punkt (Berechtigung bei dieser Seite)
+    e.preventDefault();
+    const mt = mmTabs[mmActiveTab];
+    const mm = mt && mt.routes[mt.active];
+    if (!mm) return;
+    const w2c = window.open("about:blank", "_blank");
+    if (!w2c) return;
+    try { w2c.document.write("<!doctype html><meta charset=utf-8><title>uMap</title><body style=\"font-family:sans-serif;color:#333\">Karte wird geöffnet, die momentane GPS-Position wird frisch abgefragt …</body>"); } catch (e3) {}
+    mmFreshPos(8).then(p2 => { w2c.location.href = p2 ? bikeUmapURL(mmUmapFeats(mm), mm.umapCenter, p2) : mmul.href; },
+      () => { w2c.location.href = mmul.href; });
+    return;
+  }
+  const mmenu = e.target.closest("[data-rtmenubtn]");
+  if (mmenu) {   // 🧭-Routing-Menü im MM-Panel auf-/zuklappen
+    const dd = document.getElementById("rtmenu-" + mmenu.dataset.rtmenubtn);
+    if (dd) dd.style.display = dd.style.display === "none" ? "flex" : "none";
+    return;
+  }
+});
 function renderRoutePanel() {
   const show = routeTabActive && routeActiveTab >= 0 && !!routeTabs[routeActiveTab];   // aktiver paralleler Route-Reiter
   routePanel.hidden = !show;
@@ -11977,7 +12280,7 @@ function renderRoutePanel() {
   // Stationsansicht). Der Block klappt über seinen eigenen Kopf ein und aus
   // (zugeklappt bleibt er ganz weg); das ❄ neben der Route-Titelzeile friert
   // den gesamten Reiter-Inhalt auf Wunsch ein.
-  if (routeChosen.length || rt.mm) {   // v1.4.12: auch der MM-Reiter allein (ohne gewählte ÖPNV-Verbindung)
+  if (routeChosen.length) {
     h += '<div class="sechead" data-rfold="sub" title="Gewählte Route ein-/ausklappen – zugeklappt bleibt der Block ganz weg">' +
       '<span class="sarr">' + (rt.subOpen === false ? "▸" : "▾") + "</span> " +
       (routeChosen.length > 1 ? "Gewählte Routen" : "Gewählte Route") +
@@ -12004,10 +12307,9 @@ function renderRoutePanel() {
           '" title="Route: ' + escapeHtml(routeSel.start ? routeSel.start.label : "?") + " → " +
           escapeHtml(routeSel.dest ? routeSel.dest.label : "?") + '">' + st +
           ' <button class="tabx" data-rtbx="' + ri + '" title="Route-Unter-Reiter schließen">✕</button></div>';
-      }).join("") + mmTabChip(rt) + "</div>";
+      }).join("") + "</div>";
       const rc = routeChosen[routeActive] || routeChosen[0];
-      if (rt.mmOn && rt.mm) { subHTML += mmJourneyHTML(rt); }   // v1.4.12: MM-Reiter: eigener Block im Fahrverlaufs-Look
-      else if (rc) {
+      if (rc) {
         const c = rc.con;
         // Wecker-Glocke (wie im Fahrtverlauf, gelbe Glocke): Zustand über JEDE
         // Station der Gesamt-Route; öffnet den Wecker-Dialog mit der gemeinsamen
@@ -12055,9 +12357,9 @@ function renderRoutePanel() {
             const knob = '<button class="rtknob" data-rtsec="' + si + '" title="' +
               (open ? "Fahrtverlauf dieses Abschnitts einklappen" : "Fahrtverlauf dieses Abschnitts aufklappen") +
               ' (Haltestellen zwischen Linien-Zeile und Anastation)">' + (open ? "▾" : "▸") + "</button>";
-            subHTML += rtJnyHTML(sec, mmSecExtra(rt, rc, si) + knob + bikeSecBtnHTML(sec, si), ' data-rsi="' + si + '"', rail, legCls, stopsHTML);
+            subHTML += rtJnyHTML(sec, knob + bikeSecBtnHTML(sec, si), ' data-rsi="' + si + '"', rail, legCls, stopsHTML);
           } else {
-            subHTML += '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + bikeSecBtnHTML(sec, si) + mmSecExtra(rt, rc, si) + "</div>";
+            subHTML += '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + bikeSecBtnHTML(sec, si) + "</div>";
           }
         });
         subHTML += sztConnHTML(c) + "</div></div>";
@@ -12103,68 +12405,6 @@ routePanel.addEventListener("click", e => {
     }
     return;
   }
-  // v1.4.12: MM-Reiter (Micromobility Routing) und die Sprung-Links zwischen
-  // OEPNV-Route und MM-Reiter; alle drei Links sehen gleich aus (.mmlink).
-  const mmt = e.target.closest("[data-rtmmtab]");
-  if (mmt && !e.target.closest("[data-mmx]")) {
-    const rt = routeTabs[routeActiveTab];
-    if (rt && rt.mm) {
-      rt.mmOn = true;
-      renderRoutePanel();
-      const mmEl = routePanel.querySelector(".rtrail.mmrail");
-      if (mmEl && mmEl.scrollIntoView) mmEl.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-    return;
-  }
-  const mmx = e.target.closest("[data-mmx]");
-  if (mmx) {
-    const rt = routeTabs[routeActiveTab];
-    if (rt) { rt.mm = null; rt.mmOn = false; renderRoutePanel(); }
-    return;
-  }
-  const mmgo = e.target.closest("[data-mmgolink]");
-  if (mmgo) {
-    const rt = routeTabs[routeActiveTab];
-    if (rt && rt.mm) {
-      rt.mmOn = true;
-      renderRoutePanel();
-      const mmEl = routePanel.querySelector(".rtrail.mmrail");
-      if (mmEl && mmEl.scrollIntoView) mmEl.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-    return;
-  }
-  const mmback = e.target.closest("[data-mmback]");
-  if (mmback) {
-    const rt = routeTabs[routeActiveTab];
-    const mm = rt && rt.mm;
-    if (mm) {
-      rt.mmOn = false;
-      const ri = routeChosen.findIndex(r => r && r.sig === mm.rcSig);
-      if (ri >= 0) {
-        routeActive = ri;
-        renderRoutePanel();
-        const bkEl = routePanel.querySelector('.routesec[data-rsi="' + mm.linkBackSi + '"]');
-        if (bkEl && bkEl.scrollIntoView) bkEl.scrollIntoView({ behavior: "smooth", block: "center" });
-      } else {
-        renderRoutePanel();
-        setLocNote("Die ursprüngliche ÖPNV-Verbindung ist inzwischen geschlossen, die Rückkehr-Stelle ist nicht mehr erreichbar.");
-      }
-    }
-    return;
-  }
-  const mmul = e.target.closest("[data-uumaplive]");
-  if (mmul) {   // uMap aus dem MM-Reiter: momentane GPS-Position frisch als fünfter Punkt
-    e.preventDefault();
-    const rtM = routeTabs[routeActiveTab];
-    const mm = rtM && rtM.mm;
-    if (!mm) return;
-    const w2c = window.open("about:blank", "_blank");
-    if (!w2c) return;
-    try { w2c.document.write("<!doctype html><meta charset=utf-8><title>uMap</title><body style=\"font-family:sans-serif;color:#333\">Karte wird geöffnet, die momentane GPS-Position wird frisch abgefragt …</body>"); } catch (e3) {}
-    mmFreshPos(8).then(p2 => { w2c.location.href = bikeUmapURL(mmUmapFeats(mm), mm.umapCenter, p2); },
-      () => { w2c.location.href = mmul.href; });
-    return;
-  }
   const mmenu = e.target.closest("[data-rtmenubtn]");
   if (mmenu) {   // v1.4.12: 🧭-Menüs auch im Routen-Panel auf-/zuklappen
     const dd = document.getElementById("rtmenu-" + mmenu.dataset.rtmenubtn);
@@ -12179,7 +12419,7 @@ routePanel.addEventListener("click", e => {
     return;
   }
   const rtb = e.target.closest("[data-rtb]");
-  if (rtb) { routeActive = Number(rtb.dataset.rtb); const rt = routeTabs[routeActiveTab]; if (rt) rt.mmOn = false; renderRoutePanel(); return; }
+  if (rtb) { routeActive = Number(rtb.dataset.rtb); renderRoutePanel(); return; }
   const rsec = e.target.closest("[data-rtsec]");
   if (rsec) {
     const rc = routeChosen[routeActive];
@@ -12217,7 +12457,7 @@ routePanel.addEventListener("click", e => {
     return;
   }
   const rcop = e.target.closest("[data-rcopen]");
-  if (rcop) { const rt = routeTabs[routeActiveTab]; if (rt) rt.mmOn = false; openRouteCon(Number(rcop.dataset.rcopen)); return; }
+  if (rcop) { openRouteCon(Number(rcop.dataset.rcopen)); return; }
   const rbk = e.target.closest("[data-rtbike]");
   if (rbk) {   // 🚲?: Umstieg aufs Leihfahrrad (Kopf = nächste Route-Station, Block = 1:1 Anfangs-/Endpunkt)
     openBikeDlg(rbk.dataset.rtbike === "h" ? "h" : Number(rbk.dataset.rtbike));
@@ -12863,7 +13103,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.13 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.14 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
