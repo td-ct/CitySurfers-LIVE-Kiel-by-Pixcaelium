@@ -1005,6 +1005,7 @@ const STEIG_URL   = API_BASE + "/services/passageInfo/stopPassages/stopPoint";
 const FOOT_ROUTER = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
 const FOOT_TABLE = "https://routing.openstreetmap.de/routed-foot/table/v1/foot/";   // OSRM-Tabelle: viele Fußwege in einer Abfrage
 const PHOTON      = "https://photon.komoot.io/api/";
+const PHOTON_REV  = "https://photon.komoot.io/reverse?";   // Rueckwaerts-Suche: Koordinate -> Strassenadresse
 const NOMINATIM   = "https://nominatim.openstreetmap.org/search";
 const DB_GATE     = "https://nahsh.hafas.cloud/gate"; // NAH.SH-HAFAS (DB Regio Nord, Schleswig-Holstein)
 const WALK_SPEED_KMH = 5;   // Normschritt 5 km/h: Fußweg bewusst leicht konservativ ("lieber eine Minute früher los")
@@ -8914,7 +8915,7 @@ try { if (localStorage.getItem("kvg-routearr") === "1") routeArr = true; } catch
 // je 2 min Ausleihen und 2 min Zurückstellen dazu. Ohne die Option werden nur
 // Drei-Modus-Schalter fuer Zubringer-Strecken: zu Fuss / mit dem Fahrrad /
 // mit dem Roller (Leihfahrrad-Abschnitte aus NAH.SH werden umgerechnet).
-// Fahrrad: eigenes Tempo waehlbar (15/20/25 km/h), Roller faehrt 17,5 km/h.
+// Fahrrad: eigenes Tempo waehlbar (15/20/25 km/h), Roller faehrt 18 km/h (seit v1.4.4).
 // Das Haekchen "Ausleihe (+2 min)" rechnet je Strecke 2 Minuten Holen und
 // Abstellen ein (Leihfahrrad/-roller) UND blendet Verbindungen aus, deren
 // Rad-Strecke auch in 7 Gehminuten (5 km/h) zu schaffen waere - dafuer lohnt
@@ -8930,7 +8931,7 @@ try { const v = Number(localStorage.getItem("kvg-bikespeed"));
   if (v === 15 || v === 20 || v === 25) bikeSpeed = v; } catch (e) {}
 let mobAusleihe = true;   // +2 min je Strecke (Holen/Abstellen) fuer Fahrrad UND Roller
 try { if (localStorage.getItem("kvg-ausleihe") === "0") mobAusleihe = false; } catch (e) {}
-const SCOOT_SPEED_KMH = 17.5;   // Leihroller-Tempo
+const SCOOT_SPEED_KMH = 18;     // Leihroller-Tempo (seit v1.4.4, Timos Vorgabe)
 const MOB_FEET_MAX_MIN = 7;     // Strecken bis 7 Gehminuten bleiben Fussweg (bei Ausleihe)
 let routeScootMin = 5;   // Spar-Schwelle: Fahrrad-/Roller-Verbindungen nur, wenn sie so viel sparen
 try { const v = Number(localStorage.getItem("kvg-routescootmin"));
@@ -10449,7 +10450,7 @@ async function routeTripSearch() {
   out = await routeRideTrim(out);
   if (routeMob !== "walk") {   // Fahrrad-/Roller-Modus: Leihfahrrad-Abschnitte umrechnen
     // Die Dauer jeder Rad-Strecke wird aus der Strecke neu gerechnet: Fahrrad mit
-    // dem gewaehlten Tempo (15/20/25 km/h), Roller mit 17,5 km/h (statt der
+    // dem gewaehlten Tempo (15/20/25 km/h), Roller mit 18 km/h (statt der
     // NAH.SH-Zeit). Das Ausleihe-Haekchen rechnet je Strecke 2 min Holen und
     // Abstellen ein; die Deltas verschieben am ANFANG die Abfahrt (frueher los)
     // und am ENDE die Ankunft (spaeter da), MITTEN in der Verbindung keine
@@ -10471,7 +10472,7 @@ async function routeTripSearch() {
         let delta = (sc.mins || 0) - oldMins;
         if (mobAusleihe) { sc.mins += 2; delta += 2; }
         sc.kind = mobKind;
-        const mobTxt = (mobKind === "scoot" ? "Roller" : "Fahrrad") + " (" + (routeMob === "scoot" ? "17,5" : bikeSpeed) +
+        const mobTxt = (mobKind === "scoot" ? "Roller" : "Fahrrad") + " (" + (routeMob === "scoot" ? "18" : bikeSpeed) +
           " km/h" + (mobAusleihe ? "; inkl. 2 min Holen und Abstellen" : "") + ")";
         sc.sfx = sc.sfx ? mobTxt + " · " + sc.sfx : mobTxt;   // Weiterfahren-Hinweis aus routeRideTrim bleibt stehen
         if (mobAusleihe && sc.distM != null) {
@@ -10667,9 +10668,9 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
   h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
-  h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
+  h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Im Dialog oben: alle Stationen der Route in Reihenfolge (wie im Wecker-Dialog), daneben der ◎-Knopf für die erneute Umgebungssuche auf die aktuelle Position, darunter freie Suchfelder für Start und Ziel (Adresssuche). Das Ziel wählst du aus den Stationen, die noch vor dir liegen, oder frei; vorausgewählt ist die nächste Station nach dem Start. Unter der Wahl erscheinen die <b>6 nächsten Leihräder</b> (bevorzugt 3 Standardräder und 3 E-Bikes) mit Entfernung, Akkustand und Reichweite: je Zeile ein offener OSM-Fußweg zum Rad (🚶) und die Radfahrt zum Ziel (🚴, FOSSGIS-OSRM, ganz ohne Google), plus 🗺 als uMap-Karte mit diesem Rad als ★, den anderen fünf und den Rückgabe-Stationen um das Ziel. Darunter blendet ein Knopf ALLE Räder und Stationen auf einer uMap-Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
+  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Im Dialog oben: alle Stationen der Route in Reihenfolge (wie im Wecker-Dialog), daneben der ◎-Knopf für die erneute Umgebungssuche auf die aktuelle Position, darunter freie Suchfelder für Start und Ziel (Adresssuche). Das Ziel wählst du aus den Stationen, die noch vor dir liegen, oder frei; vorausgewählt ist die nächste Station nach dem Start. Seit v1.4.4 baut der Dialog eine <b>4-Punkte-Route</b>: Unter dem Start erscheint das <b>Abholrad als Pulldown</b> (6 nächste Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel die <b>Rückgabe-Station als Pulldown</b> (die 6 nächsten Donkey-Stationen ans Ziel, nach Entfernung sortiert). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß – Rad – Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Darunter bleibt die <b>6 nächsten Leihräder</b> (bevorzugt 3 Standardräder und 3 E-Bikes) mit Entfernung, Akkustand und Reichweite: je Zeile ein offener OSM-Fußweg zum Rad (🚶) und die Radfahrt zum Ziel (🚴, FOSSGIS-OSRM, ganz ohne Google), plus 🗺 als uMap-Karte mit diesem Rad als ★, den anderen fünf und den Rückgabe-Stationen um das Ziel. Darunter blendet ein Knopf ALLE Räder und Stationen auf einer uMap-Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
@@ -10698,9 +10699,45 @@ const DONKEY_PROXY = "donkeyproxy.php";
 // also mit Origin null durch); im Web (https) bleibt alles wie bisher relativ.
 const DONKEY_BASE = (location && location.protocol === "file:") ? "https://pixcaelium.timo-damm.de/apps/citysurfers/" : "";
 const DONKEY_TTL_MS = 60000;
+// Strassenadresse zu einer Station: Photon-Rueckwaerts-Suche, 30 Tage lokal gecacht
+// (die GBFS-Felder address/post_code des Anbieters sind im Kiel-Feed leer; sobald
+// der Proxy sie liefert, hat der Stations-Datensatz ad/pc und gewinnt vorab).
+const BK_ADDR_TTL = 30 * 864e5;
+let bkAddrCache = {};
+try { bkAddrCache = JSON.parse(localStorage.getItem("bk-addr") || "{}") || {}; } catch (e) { bkAddrCache = {}; }
+async function bkAddr(lat, lon) {
+  const k = Number(lat).toFixed(5) + "," + Number(lon).toFixed(5);
+  const c = bkAddrCache[k];
+  if (c && Date.now() - c.ts < BK_ADDR_TTL) return c.a;
+  try {
+    const res = await apiFetch("nom", PHOTON_REV + "lon=" + Number(lon) + "&lat=" + Number(lat) + "&limit=1");
+    if (!res.ok) return c ? c.a : "";
+    const data = await res.json();
+    const pr = (data.features && data.features[0] && data.features[0].properties) || null;
+    let a = "";
+    if (pr) {
+      const street = pr.street ? pr.street + (pr.housenumber ? " " + pr.housenumber : "") : (pr.name || "");
+      const city = [pr.postcode, pr.city].filter(Boolean).join(" ");
+      a = [street, city].filter(Boolean).join(", ");
+    }
+    bkAddrCache[k] = { a: a, ts: Date.now() };
+    if (a) { try { localStorage.setItem("bk-addr", JSON.stringify(bkAddrCache)); } catch (e2) {} }
+    return a;
+  } catch (e) { return c ? c.a : ""; }
+}
 const BIKE_ROW_N = 6;
 const OSM_ENGINE_FOOT = "fossgis_osrm_foot";   // offenes Routing via FOSSGIS-OSRM
 const OSM_ENGINE_BIKE = "fossgis_osrm_bike";
+// 4-Punkte-Leihfahrrad-Route (Start -> Abholrad -> Rueckgabestation -> Ziel), v1.4.4:
+// Radtempo per Timos Vorgabe (E-Bike 22, Standardrad 17 km/h), je Ausleihe und
+// Rueckgabe +2 Minuten; Rueckgabe-Stationen im Ziel-Pulldown: die 6 naechsten.
+const DONKEY_EBIKE_KMH = 22;
+const DONKEY_BIKE_KMH = 17;
+const DONKEY_HANDLE_MIN = 2;
+const BK_DROP_N = 6;
+const BIKE_ROUTER = "https://routing.openstreetmap.de/routed-bike/route/v1/driving/";
+function donkeyKmh(t) { return t === "ebike" ? DONKEY_EBIKE_KMH : DONKEY_BIKE_KMH; }
+function kmMin(m, kmh) { return (m == null || !kmh) ? null : Math.ceil(m / (kmh * 1000 / 60)); }
 let donkeyCache = { ts: 0, d: null };
 // Absolute URL des Proxys (fuer fetch und uMaps dataUrl-Variante)
 function donkeyProxyURL(geojson) {
@@ -10866,18 +10903,29 @@ function openBikeDlg(which, ctx) {
   wrap.innerHTML =
     '<div class="dlg">' +
       '<div class="dtitle">' + (ctx && ctx.title ? escapeHtml(ctx.title) : "🚲? Umstieg aufs Leihfahrrad") + '</div>' +
-      '<label class="dlabel">Start / Umstiegspunkt</label>' +
+      '<label class="dlabel">Start / Umstiegspunkt (1. Punkt)</label>' +
       '<div class="bkbar">' +
         '<select class="bkstop" id="bkSelFrom"></select>' +
         '<button class="achip" id="bkGps" title="Umgebungssuche auf die aktuelle GPS-Position erneuern (ohne aktives GPS: letzte bekannte Position)">◎</button>' +
       '</div>' +
       '<input class="rtq bkq" id="bkQFrom" placeholder="Start frei suchen: Adresse, Ort, POI …">' +
       '<div class="bksug" id="bkSugFrom" hidden></div>' +
-      '<label class="dlabel" style="margin-top:8px">Ziel der Radfahrt</label>' +
-      '<select class="bkstop" id="bkSelTo"></select>' +
+      '<label class="dlabel" style="margin-top:8px">Abholrad (2. Punkt)</label>' +
+      '<select class="bkstop" id="bkSelBike"></select>' +
+      '<div class="bksub" id="bkBikeInfo">–</div>' +
+      '<label class="dlabel" style="margin-top:8px">Ziel der Radfahrt (4. Punkt)</label>' +
+      '<div class="bkbar">' +
+        '<select class="bkstop" id="bkSelTo"></select>' +
+        '<button class="achip" id="bkGpsTo" title="Ziel auf die aktuelle GPS-Position setzen (ohne aktives GPS: letzte bekannte Position)">◎</button>' +
+      '</div>' +
       '<input class="rtq bkq" id="bkQTo" placeholder="Ziel frei suchen: Adresse, Ort, POI …">' +
       '<div class="bksug" id="bkSugTo" hidden></div>' +
-      '<div class="dlabel" style="margin-top:10px">Die 6 nächsten Räder um den Start</div>' +
+      '<label class="dlabel" style="margin-top:8px">Rückgabe-Station beim Ziel (3. Punkt)</label>' +
+      '<select class="bkstop" id="bkSelDrop"></select>' +
+      '<div class="bksub" id="bkDropInfo">–</div>' +
+      '<div class="dbtns" style="margin-top:10px"><button class="aok" id="bkGo">🚴 Gesamte Route abrufen (Start – Rad – Rückgabe – Ziel)</button></div>' +
+      '<div id="bkRes" style="margin-top:6px"></div>' +
+      '<div class="dlabel" style="margin-top:10px">Die 6 nächsten Räder um den Start (Einzelauswahl)</div>' +
       '<div id="bkList"></div>' +
       '<div id="bkAllWrap" style="margin-top:6px"></div>' +
       '<div class="bksrc">Leihräder: Donkey Republic / SprottenFlotte (GBFS 3.0) über donkeyproxy.php (Web: Seitenverzeichnis, App: pixcaelium.timo-damm.de) · Routing: OpenStreetMap / FOSSGIS-OSRM · Karten: uMap · ohne Google</div>' +
@@ -10925,13 +10973,13 @@ function openBikeDlg(which, ctx) {
       if (p && p.lat != null) st.anchor = { name: "📍 GPS-Position", lat: p.lat, lon: p.lon };
       if (gpsState !== "on") setLocNote("GPS ist aus, es gilt die letzte bekannte/gespeicherte Position. ◎ oben einschalten für Live-Ortung.");
     } else { st.anchor = { name: o.dataset.nm, lat: Number(o.dataset.la), lon: Number(o.dataset.lo) }; }
-    buildToSel(); renderList();
+    refreshAll();
   });
   selTo.addEventListener("change", () => {
     const o = selTo.selectedOptions[0];
     if (!o || o.value !== "st") return;
     st.dest = { name: o.dataset.nm, lat: Number(o.dataset.la), lon: Number(o.dataset.lo) };
-    renderList();
+    renderDrop(); renderList();
   });
   wrap.querySelector("#bkGps").addEventListener("click", () => {
     const p = livePos();
@@ -10940,7 +10988,7 @@ function openBikeDlg(which, ctx) {
     donkeyCache = { ts: 0, d: null };   // Suche auf den neuen Bereich: Daten neu holen
     st.anchor = { name: "📍 GPS-Position", lat: p.lat, lon: p.lon };
     st.anchorGps = true;
-    buildFromSel(); buildToSel(); renderList();
+    buildFromSel(); refreshAll();
   });
   // Freie Suche (Start und Ziel): debounced unifiedAddrSearch, Top-5-Vorschlaege
   function wireSuggest(inp, sug, apply) {
@@ -10972,11 +11020,11 @@ function openBikeDlg(which, ctx) {
   }
   wireSuggest(qFrom, sugFrom, p => {
     st.anchor = p; st.anchorGps = false;
-    buildFromSel(); buildToSel(); renderList();
+    buildFromSel(); refreshAll();
   });
   wireSuggest(qTo, sugTo, p => {
     st.dest = p;
-    buildToSel(); renderList();
+    refreshAll();
   });
   async function renderList() {
     const myseq = ++bikeDlgSeq;
@@ -11039,9 +11087,186 @@ function openBikeDlg(which, ctx) {
       allWrap.innerHTML = '<a class="achip" target="_blank" rel="noopener" href="' + bikeUmapAllURL() +
         '">Alle Räder + Stationen auf uMap-Karte</a>';
   }
+  // ---- v1.4.4: Abholrad-Pulldown, Rueckgabe-Station-Pulldown, 4-Punkte-Route ----
+  const selBike = wrap.querySelector("#bkSelBike"), selDrop = wrap.querySelector("#bkSelDrop");
+  const bikeInfoEl = wrap.querySelector("#bkBikeInfo"), dropInfoEl = wrap.querySelector("#bkDropInfo");
+  const resEl = wrap.querySelector("#bkRes");
+  const bkst = { bikeId: null, dropId: null };
+  let bikesSeq = 0, dropSeq2 = 0, bikeInfoSeq = 0, dropInfoSeq = 0, routeSeq = 0;
+  const fmtDm = dm => dm < 950 ? dm + " m" : (Math.round(dm / 100) / 10).toFixed(1).replace(".", ",") + " km";
+  const minTxt = (min, est) => min == null ? "?" : (est ? "~" + min + " min (Luftlinie x 1,3)" : min + " min");
+  function refreshAll() { buildToSel(); renderBikes(); renderDrop(); renderList(); }
+  async function renderBikes() {
+    const myseq = ++bikesSeq;
+    st.bikes = null;
+    resEl.innerHTML = "";   // Punkte geaendert: altes Ergebnis weg
+    selBike.disabled = true;
+    bikeInfoEl.textContent = "–";
+    if (!st.anchor || st.anchor.lat == null) {
+      selBike.innerHTML = '<option value="">(erst Start wählen)</option>';
+      bikeInfoEl.textContent = "Oben den Start wählen: ◎ GPS, Route-Station oder freie Suche.";
+      return;
+    }
+    const d = await donkeyData(!donkeyCache.d);
+    if (myseq !== bikesSeq) return;
+    if (!d) {
+      selBike.innerHTML = '<option value="">(Leihfahrrad-Daten nicht erreichbar)</option>';
+      bikeInfoEl.textContent = "⚠ donkeyproxy.php antwortet im Moment nicht.";
+      return;
+    }
+    const pick = donkeyPick(d.v, st.anchor.lat, st.anchor.lon, BIKE_ROW_N);
+    st.bikes = pick;
+    if (!pick.length) {
+      selBike.innerHTML = '<option value="">(keine freien Räder im Feed)</option>';
+      bikeInfoEl.textContent = "Keine freien Räder im Feed (reservierte und gesperrte bleiben draußen).";
+      return;
+    }
+    let h = "";
+    pick.forEach((v, i) => {
+      const sn = (d.s || []).find(x => x.id === v.st);
+      h += '<option value="' + i + '">' + (v.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") +
+        " · " + fmtDm(v.dm) + (sn ? " · " + escapeHtml(sn.name) : "") + '</option>';
+    });
+    selBike.innerHTML = h;
+    const cur = pick.findIndex(x => x.id === bkst.bikeId);
+    selBike.value = String(cur >= 0 ? cur : 0);
+    bkst.bikeId = pick[Number(selBike.value)].id;
+    selBike.disabled = false;
+    fillBikeInfo();
+  }
+  function fillBikeInfo() {
+    const v = (st.bikes || [])[Number(selBike.value)];
+    if (!v) { bikeInfoEl.textContent = "–"; return; }
+    const sn = ((donkeyCache.d && donkeyCache.d.s) || []).find(x => x.id === v.st);
+    bikeInfoEl.textContent = donkeyBikeText(v, sn ? "Abhol-Station: " + sn.name : "frei im öffentlichen Raum abstellbar");
+    const myseq = ++bikeInfoSeq;
+    if (sn && sn.ad) { bikeInfoEl.textContent += " · " + sn.ad; return; }
+    bkAddr(sn ? sn.lat : v.lat, sn ? sn.lon : v.lon).then(a => {
+      if (myseq !== bikeInfoSeq || !a) return;
+      bikeInfoEl.textContent += " · " + a;
+    });
+  }
+  async function renderDrop() {
+    const myseq = ++dropSeq2;
+    st.drops = null;
+    resEl.innerHTML = "";   // Ziel geaendert: altes Ergebnis weg
+    selDrop.disabled = true;
+    dropInfoEl.textContent = "–";
+    if (!st.dest || st.dest.lat == null) {
+      selDrop.innerHTML = '<option value="">(erst Ziel wählen)</option>';
+      dropInfoEl.textContent = "Nach der Zielwahl: die " + BK_DROP_N + " nächsten Rückgabe-Stationen, nach Entfernung sortiert.";
+      return;
+    }
+    const d = await donkeyData(!donkeyCache.d);
+    if (myseq !== dropSeq2) return;
+    if (!d) { selDrop.innerHTML = '<option value="">(Leihfahrrad-Daten nicht erreichbar)</option>'; return; }
+    const drop = (d.s || []).filter(s => s.lat != null && s.lon != null)
+      .map(s => ({ s: s, dm: Math.round(dist(st.dest, s)) }))
+      .sort((x, y) => x.dm - y.dm).slice(0, BK_DROP_N);
+    st.drops = drop;
+    if (!drop.length) { selDrop.innerHTML = '<option value="">(keine Stationen im Feed)</option>'; return; }
+    let h = "";
+    drop.forEach((x, i) => {
+      h += '<option value="' + i + '">' + escapeHtml(x.s.name) + " · " + fmtDm(x.dm) + " zum Ziel</option>";
+    });
+    selDrop.innerHTML = h;
+    const cur = drop.findIndex(x => x.s.id === bkst.dropId);
+    selDrop.value = String(cur >= 0 ? cur : 0);
+    bkst.dropId = drop[Number(selDrop.value)].s.id;
+    selDrop.disabled = false;
+    fillDropInfo();
+  }
+  function fillDropInfo() {
+    const x = (st.drops || [])[Number(selDrop.value)];
+    if (!x) { dropInfoEl.textContent = "–"; return; }
+    dropInfoEl.textContent = "Rückgabe: " + x.s.name + (x.s.cap != null ? " · " + x.s.cap + " Stellplätze" : "");
+    const myseq = ++dropInfoSeq;
+    if (x.s.ad) { dropInfoEl.textContent += " · " + x.s.ad; return; }
+    bkAddr(x.s.lat, x.s.lon).then(a => {
+      if (myseq !== dropInfoSeq || !a) return;
+      dropInfoEl.textContent += " · " + a;
+    });
+  }
+  async function osrmBikeM(a, b) {
+    try {
+      const url = BIKE_ROUTER + a.lon + "," + a.lat + ";" + b.lon + "," + b.lat + "?overview=false";
+      const res = await apiFetch("osrm", url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.routes && data.routes[0]) return { m: data.routes[0].distance, est: false };
+      }
+    } catch (e) {}
+    return { m: dist(a, b) * 1.3, est: true };   // Rueckfall: Luftlinie x 1,3
+  }
+  selBike.addEventListener("change", () => {
+    const v = (st.bikes || [])[Number(selBike.value)];
+    bkst.bikeId = v ? v.id : null;
+    fillBikeInfo();
+    resEl.innerHTML = "";
+  });
+  selDrop.addEventListener("change", () => {
+    const x = (st.drops || [])[Number(selDrop.value)];
+    bkst.dropId = x ? x.s.id : null;
+    fillDropInfo();
+    resEl.innerHTML = "";
+  });
+  wrap.querySelector("#bkGpsTo").addEventListener("click", () => {
+    const p = livePos();
+    if (!(p && p.lat != null)) { setLocNote("Keine Position vorhanden. GPS (◎) einschalten oder Ziel frei suchen."); return; }
+    if (gpsState !== "on") setLocNote("GPS ist aus, es gilt die letzte bekannte/gespeicherte Position. ◎ oben einschalten für Live-Ortung.");
+    st.dest = { name: "📍 GPS-Position", lat: p.lat, lon: p.lon };
+    buildToSel(); renderDrop(); renderList();
+  });
+  wrap.querySelector("#bkGo").addEventListener("click", async () => {
+    const bike = (st.bikes || [])[Number(selBike.value)];
+    const dropX = (st.drops || [])[Number(selDrop.value)];
+    if (!st.anchor || !bike || !dropX || !st.dest) {
+      setLocNote("🚲? Für die Gesamtroute Start, Abholrad, Rückgabe-Station und Ziel wählen.");
+      return;
+    }
+    resEl.innerHTML = '<div class="bksub">Berechne die 3 Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM …</div>';
+    const myseq = ++routeSeq;
+    const drop = dropX.s;
+    const leg1 = (await footRouteM(st.anchor, bike)) || { m: dist(st.anchor, bike) * 1.3, est: true };
+    const leg2 = await osrmBikeM(bike, drop);
+    const leg3 = (await footRouteM(drop, st.dest)) || { m: dist(drop, st.dest) * 1.3, est: true };
+    if (myseq !== routeSeq) return;
+    const w1 = footMin(leg1.m), rb = kmMin(leg2.m, donkeyKmh(bike.t)), w2 = footMin(leg3.m);
+    const tot = (w1 || 0) + (rb || 0) + DONKEY_HANDLE_MIN + (w2 || 0);
+    const kmh = donkeyKmh(bike.t);
+    const chip = (href, icon, ttl) => '<a class="achip" target="_blank" rel="noopener" href="' + href +
+      '" title="' + escapeHtml(ttl) + '">' + icon + "</a>";
+    const rowHtml = (icon, txt, m, min, est, href, ttl) =>
+      '<div class="bkrow"><div class="bkmeta"><div class="bkt">' + icon + " " + escapeHtml(txt) + "</div>" +
+      '<div class="bksub">' + (m == null ? "" : fmtDm(Math.round(m)) + " · ") + minTxt(min, est) + "</div></div>" +
+      (href ? chip(href, icon, ttl) : "") + "</div>";
+    let h = '<div class="bksub" style="margin-bottom:4px">Gesamtroute: ' +
+      escapeHtml(String(st.anchor.name)) + " → " + escapeHtml(bike.t === "ebike" ? "E-Bike" : "Standardrad") +
+      " → " + escapeHtml(drop.name) + " → " + escapeHtml(String(st.dest.name)) + "</div>";
+    h += rowHtml("🚶", "Start → Abholrad", leg1.m, w1, leg1.est,
+      osmDirURL(st.anchor, bike, OSM_ENGINE_FOOT), "Fußweg zum Abholrad in OpenStreetMap (FOSSGIS-OSRM-Routing)");
+    h += rowHtml("🚴", "Abholrad → Rückgabe-Station " + drop.name, leg2.m, rb, leg2.est,
+      osmDirURL(bike, drop, OSM_ENGINE_BIKE), "Radweg zur Rückgabe-Station in OpenStreetMap (FOSSGIS-OSRM-Routing)");
+    h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">🔧 Ausleihen + Zurückgeben</div>' +
+      '<div class="bksub">+' + DONKEY_HANDLE_MIN + " min (fest einkalkuliert)</div></div></div>";
+    h += rowHtml("🚶", "Rückgabe-Station " + drop.name + " → Ziel", leg3.m, w2, leg3.est,
+      osmDirURL(drop, st.dest, OSM_ENGINE_FOOT), "Fußweg zum Ziel in OpenStreetMap (FOSSGIS-OSRM-Routing)");
+    const feats = [
+      bikeFeature(st.anchor.lat, st.anchor.lon, "● Start: " + st.anchor.name, "Punkt 1 der 4-Punkte-Route"),
+      bikeFeature(bike.lat, bike.lon, "★ Abholrad (" + (bike.t === "ebike" ? "E-Bike" : "Standardrad") + ")", donkeyBikeText(bike, "")),
+      bikeFeature(drop.lat, drop.lon, "■ Rückgabe: " + drop.name, "Punkt 3 der 4-Punkte-Route"),
+      bikeFeature(st.dest.lat, st.dest.lon, "🎯 Ziel: " + st.dest.name, "Punkt 4 der 4-Punkte-Route")
+    ];
+    const center = { lat: (bike.lat + drop.lat) / 2, lon: (bike.lon + drop.lon) / 2 };
+    h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">⏱ Gesamt: ca. ' + tot + " min</div>" +
+      '<div class="bksub">Fuß 5 km/h · Rad ' + kmh + " km/h (" + (bike.t === "ebike" ? "E-Bike" : "Standardrad") +
+      ") · +2 min Ausleihe/Rückgabe</div></div>" +
+      chip(bikeUmapURL(feats, center), "🗺", "4-Punkte-Übersicht auf uMap: ● Start, ★ Abholrad, ■ Rückgabe-Station, 🎯 Ziel") + "</div>";
+    resEl.innerHTML = h;
+  });
   wrap.querySelector("#bkClose").addEventListener("click", () => wrap.remove());
   wrap.addEventListener("click", e => { if (e.target === wrap) wrap.remove(); });
-  buildFromSel(); buildToSel(); renderList();
+  buildFromSel(); refreshAll();
 }
 function renderRoutePanel() {
   const show = routeTabActive && routeActiveTab >= 0 && !!routeTabs[routeActiveTab];   // aktiver paralleler Route-Reiter
@@ -11903,7 +12128,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.3 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.4 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
