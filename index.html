@@ -666,16 +666,33 @@
   #apiStats .asdim { color: #64748b; margin-top: 6px; }
   #apiInd .ind { display: inline-flex; align-items: center; gap: 3px; font-size: 0.62rem;
     font-weight: 700; color: #94a3b8; background: #0f172ae6; border: 1px solid #334155;
-    border-radius: 999px; padding: 2px 6px 2px 5px; opacity: 0.45; transition: opacity 0.3s; }
-  #apiInd .ind::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--c, #94a3b8); flex-shrink: 0; }
-  #apiInd .ind[data-ind=db]   { --c: #EC0016; }  /* Deutsche Bahn: Rot */
-  #apiInd .ind[data-ind=kvg]  { --c: #00519E; }  /* KVG: Verkehrsblau */
-  #apiInd .ind[data-ind=nom]  { --c: #7EBC6F; }  /* Nominatim/OSM: Grün */
-  #apiInd .ind[data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
-  #apiInd .ind[data-ind=don]  { --c: #22d3ee; }  /* Donkey/SprottenFlotte: Cyan */
-  #apiInd .ind.ping { opacity: 1; animation: indPing 0.9s ease-out; }
-  @keyframes indPing {
+    border-radius: 999px; padding: 2px 6px 2px 5px; }
+  /* v1.5.0: LED-Kette: EINE Anzeige, je Datenquelle eine kleine LED nebeneinander */
+  #apiInd #ledStrip { display: inline-flex; align-items: center; background: none;
+    border: 0; padding: 2px 1px; cursor: pointer; vertical-align: middle; }
+  #apiInd .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--c, #94a3b8); margin-right: 3px; opacity: 0.45;
+    transition: opacity 0.3s; flex-shrink: 0; }
+  #apiInd [data-ind=db]   { --c: #EC0016; }  /* nah.sh-HAFAS (DB Regio Nord): Rot */
+  #apiInd [data-ind=kvg]  { --c: #00519E; }  /* KVG (Bus): Verkehrsblau */
+  #apiInd [data-ind=vbb]  { --c: #F5C500; }  /* VBB (Berlin/Brandenburg): Verbands-Gelb */
+  #apiInd [data-ind=vvs]  { --c: #A78BFA; }  /* VVS (Stuttgart): Violett */
+  #apiInd [data-ind=dvb]  { --c: #FF5CA8; }  /* DVB (Dresden): Pink */
+  #apiInd [data-ind=nom]  { --c: #7EBC6F; }  /* Photon/Nominatim (OSM): Gruen */
+  #apiInd [data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
+  #apiInd [data-ind=don]  { --c: #22d3ee; }  /* Donkey/SprottenFlotte: Cyan */
+  #apiInd .led.ping { opacity: 1; animation: indPing 0.9s ease-out; }
+  #apiInd .ind.ping { opacity: 1; }  /* alte Regel fuer Wecker-/Finde-nach-Hause-Knoepfe */
+  /* v1.5.0: Kurzzeichen-Chip des Live-Dienstes (Fern-Stationen, Stationskopf) */
+  .regsvc { display: inline-block; font-size: 0.62rem; font-weight: 700; padding: 2px 6px;
+    border-radius: 999px; border: 1px solid #334155; background: #0f172ae6; white-space: nowrap; }
+  .regsvc.dnahsh { color: #ff8a93; }
+  .regsvc.dvbb  { color: #ffd54a; }
+  .regsvc.dvvs  { color: #c9b5fd; }
+  .regsvc.ddvb  { color: #ffb0d4; }
+  /* v1.5.0: Statistik-Legende: Kurzbezeichnung fett, danach die Spezifikation */
+  #apiStats .asname b { color: #e2e8f0; }
+  #apiStats .asdesc { color: #94a3b8; }  @keyframes indPing {
     0%   { box-shadow: 0 0 0 0 var(--c); transform: scale(1); }
     60%  { box-shadow: 0 0 10px 5px transparent; transform: scale(1.15); }
     100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
@@ -688,11 +705,7 @@
   <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
   <button class="ind" id="alarmInd" title="Gestellte Wecker: Zahl = Anzahl, Klick zeigt die Weckerliste (anzeigen, deaktivieren, löschen)">⏰</button>
   <button class="ind" id="fhInd" title="Finde nach Hause: Zahl = aktive Hinweise, Klick zeigt die Hinweisliste; ausgegraut = gerade keine">🏠</button>
-  <span class="ind" data-ind="db" title="Deutsche Bahn / NAH.SH (Zugabfahrten)">DB</span>
-  <span class="ind" data-ind="kvg" title="KVG (Busabfahrten)">KVG</span>
-  <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
-  <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
-  <span class="ind" data-ind="don" title="Donkey Republic / SprottenFlotte (Leihräder über donkeyproxy.php; Klick zeigt die Übertragungs-Statistik)">🚲</span>
+  <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (nah.sh, KVG, VBB, VVS, DVB, OSM, OSRM, Donkey) und blinkt, wenn er Daten liefert. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
 </div>
 <div id="alarmList" hidden></div>
 <div id="fhList" hidden></div>
@@ -815,24 +828,66 @@
   <div class="alerts" id="alerts"></div>
 
   <footer>
-    Datenquellen: KVG (inoffizielle Schnittstelle wie kvg-kiel.de) · Fußwege: OSRM/OpenStreetMap ·
-    Adressen: Photon · Details unter „Über diese App“. Offizielle Alternative:
+    Datenquellen: KVG (inoffizielle Schnittstelle wie kvg-kiel.de) · nah.sh/HAFAS · regionale Live-Dienste
+    VBB/VVS/DVB · Leihräder: Donkey/SprottenFlotte · Fußwege: OSRM/OpenStreetMap · Adressen: Photon ·
+    Details unter „Über diese App“. Offizielle Alternative:
     <a href="https://www.nah.sh">NAH.SH</a>.
 
     <details class="legal" id="about">
       <summary>ⓘ Über diese App</summary>
       <div class="dim" id="aboutVer"></div>
+      <p><b>Zielsetzung:</b> Diese App bringt das spatio-temporale lokale Routing auf das Handy:
+      sie will die Qualität des ÖPNV- und DB-Routings durch die Integration von Micromobility
+      verbessern und damit jeden Menschen individuell bei der Suche nach der passenden Verbindung
+      unterstützen, live vor Ort, ohne Konto und ohne Tracking. Die Echtzeit-Daten dafür liefert das
+      Facelift-System: Für jede Anfrage versucht die App zunächst den regionalen Live-Dienst der
+      Region (KVG in Kiel, VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, DVB in
+      Dresden) und greift sonst auf den deutschlandweiten Fallback zurück, die NAH.SH-Auskunft mit
+      Fahrplan bundesweit und Echtzeit, soweit vorhanden; zusätzlich stehen die Leihfahrräder von
+      Donkey Republic (SprottenFlotte) direkt in der Verbindungssuche.</p>
       <div class="theses">
         <p><b>Live statt Papierfahrplan:</b> Echtzeit-Abfahrten der Kieler Verkehrsgesellschaft direkt aus derselben Quelle wie kvg-kiel.de – inklusive Ist-Zeiten und Prognosen.</p>
         <p><b>Deine Daten bleiben deine:</b> Favoriten, Wecker und Standort bleiben vollständig auf dem Gerät – kein Konto, kein Tracking, alles per ⇅ exportierbar.</p>
         <p><b>Der Bildschirm gehört den Abfahrten:</b> bewusst ohne Rahmen, Menüleisten und Login – eine einzige Seite, ein Blick auf die Abfahrten.</p>
       </div>
-      <p><b>Datenquellen im Detail:</b> Live-Abfahrten aus der inoffiziellen JSON-Schnittstelle der
-      Kieler Verkehrsgesellschaft (INIT InternetService) – dieselbe Quelle, die auch kvg-kiel.de für
-      seine Echtzeitabfahrten nutzt, CORS freigegeben, kein Scraping, aber ohne Garantien. Fußwege über
-      das OSRM-Fußprofil auf dem OpenStreetMap-Wegenetz (5 km/h). Adressen über Photon auf
-      OpenStreetMap-Basis, Fallback: Nominatim. Koordinaten, Locator und Karten-Links werden lokal
-      erkannt. Offizielle Alternative: <a href="https://www.nah.sh" rel="noopener">NAH.SH</a>.</p>
+      <p><b>Datenquellen im Detail:</b> Die LED-Kette oben rechts misst je Quelle die übertragenen
+      Bytes; jede Zeile hier nennt LED-Farbe, Kurzbezeichnung und Spezifikation (antippen zeigt
+      dieselben Angaben samt Anfrage-Zählern aufklappbar in der Statusleiste).</p>
+      <p><b>nah.sh</b> <span class="regsvc dnahsh">nah.sh</span> (rote LED): HAFAS-Auskunft der DB Regio Nord
+      (nahsh.hafas.cloud, offen per CORS): Echtzeit-Zugabfahrten rund um Kiel inklusive Fahrplan-Fallback
+      für die geplanten KVG-Fahrten, die deutschlandweite Verbindungs- und Stationssuche (TripSearch,
+      LocMatch) und die Ablaufeinheit für alle Fern-Stationen der App: Live-Daten soweit vorhanden,
+      sonst Fahrplan-Sollzeiten. Offizielle Alternative:
+      <a href="https://www.nah.sh" rel="noopener">NAH.SH</a>.</p>
+      <p><b>KVG</b> <span class="regsvc" style="color:#7fb3ff">KVG</span> (blaue LED): Kieler Verkehrsgesellschaft,
+      inoffizielle JSON-Schnittstelle (INIT InternetService), dieselbe Quelle, die auch kvg-kiel.de für
+      seine Echtzeitabfahrten nutzt: Live-Busabfahrten inklusive Ist-Zeiten, Prognosen und Bussteigen.
+      CORS freigegeben, kein Scraping, aber ohne Garantien.</p>
+      <p><b>VBB</b> <span class="regsvc dvbb">VBB</span> (gelbe LED): Live-Abfahrten in Berlin und Brandenburg
+      über v6.vbb.transport.rest, die offene Community-Fassung der Auskunft der Verkehrsbetriebe
+      (fahrinfo.vbb.de), mit Echtzeit-Verspätungen (plannedWhen/when/delay). Auflösung per
+      Koordinatenabgleich, sonst nah.sh-Fallback.</p>
+      <p><b>VVS</b> <span class="regsvc dvvs">VVS</span> (violette LED): Live-Abfahrten der Region Stuttgart über
+      die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit). Auflösung
+      per Koordinatenabgleich, sonst nah.sh-Fallback.</p>
+      <p><b>DVB</b> <span class="regsvc ddvb">DVB</span> (pinke LED): Live-Abfahrten in Dresden über die offene
+      Web-API webapi.vvo-online.de (Haltestellen-Suche und Abfahrten mit RealTime/ScheduledTime). Auflösung
+      namentlich (die API nutzt Gauss-Krüger-Koordinaten), sonst nah.sh-Fallback.</p>
+      <p><b>Donkey / SprottenFlotte</b> <span class="regsvc" style="color:#22d3ee">Donkey</span> (cyanfarbene LED):
+      GBFS-Feeds von Donkey Republic (Kiel und Umgebung, Feeds donkey_kiel und donkey_kielsmile) über
+      donkeyproxy.php, das serverseitige Skript dieser App; es lädt zusätzlich die Rad-Namen aus der
+      Donkey-Hub-API nach und cachet sie in donkeynames.json (Gültigkeit gestreut 6 bis 12 Stunden).</p>
+      <p><b>Photon / Nominatim</b> <span class="regsvc" style="color:#7EBC6F">OSM</span> (grüne LED): Adressen und
+      POIs auf OpenStreetMap-Basis (Photon zuerst, Nominatim als Fallback).</p>
+      <p><b>OSRM</b> <span class="regsvc" style="color:#FF7F2A">OSRM</span> (orange LED): Fuß- und Fahrweg-Routing
+      auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de), Fußprofil mit 5 km/h.</p>
+      <p><b>Karten-Links</b> (ohne LED): Karten- und uMap-Links öffnen externe Dienste nur mit den Koordinaten
+      in der URL (OpenStreetMap, uMap, OpenRailwayMap, Google Maps), die App fragt dabei keine Karten-Server ab.
+      Koordinaten und Locator-Texte werden lokal erkannt.</p>
+      <p class="dim">Bekannt, aber (noch) nicht integriert: der gtfs.de-Sammelstream (GTFS-Realtime als
+      Protokollpuffer, zu schwer für die reine Browser-App), DELFI-Realtime über die Mobilithek (Anmeldung
+      erforderlich), HVV Geofox GTI (Zugangsdaten), VAG Nürnberg (Token) sowie die GTFS-RT-Angebote von
+      VRS und VRR (Nutzungsvereinbarung); deren Regionen laufen vorerst über den nah.sh-Fallback.</p>
       <div class="dim" id="aboutApp"></div>
       <div class="aboutbtns">
         <button class="chip ok" id="aboutUpdate" hidden>🔃 Service Update suchen</button>
@@ -2314,7 +2369,8 @@ function footMin(m) { return m == null ? null : Math.ceil(m / (WALK_SPEED_KMH * 
 const stopChip = document.getElementById("stopChip");
 function renderStopChip() {
   const t = tabs[activeTab];
-  const s = t && stops.find(x => x.shortName === t.sn);
+  const s = t && (stops.find(x => x.shortName === t.sn) ||
+    (isRS(t.sn) ? remoteStops.get(t.sn) : null));   // v1.5.0: Chip auch für Fern-Stationen
   if (!s) { stopChip.innerHTML = ""; return; }
   stopChip.innerHTML =
     '<span class="chip mini dim2" title="Station im aktiven Reiter – ✕ am Reiterkopf schließt ihn (Wecker-Rückfrage inklusive)">🚏 ' + escapeHtml(s.name) + "</span>" +
@@ -2950,6 +3006,7 @@ function mmSugWarmDonkey() {   // Feed einmal laden und die Trefferliste dann ne
   donkeyData(true).then(ok => { if (ok && !sugBox.hidden) updateSuggestions(); });
 }
 function rowHTML(s, pos) {
+  if (s && s.rs) return rsRowHTML(s, pos);   // v1.5.0: Fern-Station (LocMatch-Treffer auswärts, eigener Reiter)
   if (s && s.dk) {   // v1.4.14: Donkey-Leihstation: eigenes Symbol, eigener Reiter (kein Haltestellen-Enrich)
     // v1.4.18: zweizeilig, zweite Zeile mit den freien Rädern der Station:
     // E-Bikes mit mindestens 40 % Akku, dahinter die freien Standardräder.
@@ -3002,6 +3059,7 @@ function sugTypeAllowed(s) {   // s: Haltestelle (shortName, DB:-Präfix = Bahn)
   const on = sugFilterOnCount();
   if (on === 3 || on === 0) return true;   // alles an oder alles aus: alles
   if (s && s.dk) return sugFilter.mm;
+  if (s && s.rs) return sugFilter.db || sugFilter.opnv;   // v1.5.0: Fern-Stationen = Bahn- UND Bus-Stationen (nur bei reinem MM-Filter weg)
   return isDB(s.shortName) ? sugFilter.db : sugFilter.opnv;
 }
 function sugDkOn() {   // Donkey-Zeilen in die Trefferliste aufnehmen?
@@ -3027,6 +3085,155 @@ SUG_FILTER_BTNS.forEach(pair => {
 });
 updateSugFilterBtns();
 /* SUGFILTER-END */
+
+/* v1.5.0 REM-START: Fern-Stationen in der Stationssuche (bundesweit über
+   NAH.SH-LocMatch) und regionale Live-Dienste (Facelift-System).
+   Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-
+   finder ab; Treffer außerhalb Kiels erscheinen als eigene Fern-Stations-
+   Zeilen (🚏-Symbol, Name, Luftlinie, Kurzzeichen des Live-Dienstes) unter
+   den Kieler Treffern. Antippen öffnet einen Stations-Reiter, dessen
+   Abfahrten zuerst den regionalen Live-Dienst der Region fragen
+   (VBB Berlin/Brandenburg, VVS Raum Stuttgart, DVB Dresden; Kiel läuft
+   wie gehabt direkt über die KVG) und sonst über den deutschlandweiten
+   Fallback (NAH.SH-HAFAS) laufen: Fahrplan bundesweit, Echtzeit, soweit
+   der Regionaldienst sie nicht selbst hergibt. */
+const RS_PREFIX = "RS:";          // Kennzeichen einer Fern-Station im Reiter-System
+const RS_MIN_CHARS = 3;           // ab so vielen Buchstaben wird LocMatch gefragt
+const RS_MAX_HITS = 6;            // höchstens so viele Fern-Stationen je Suche
+const RS_CACHE_TTL = 600000;      // LocMatch-Treffer 10 Minuten im Cache (Rate-Schutz)
+const RS_SVC_LABEL = { nahsh: "nah.sh", vbb: "VBB", vvs: "VVS", dvb: "DVB" };
+function svcForCoords(lat, lon) {   // Facelift: regionaler Live-Dienst je Grob-BBox, sonst nah.sh
+  if (lat >= 51.2 && lat <= 53.7 && lon >= 11.1 && lon <= 14.9) return "vbb";   // Berlin/Brandenburg
+  if (lat >= 47.9 && lat <= 49.5 && lon >= 8.6  && lon <= 10.4) return "vvs";   // Stuttgart-Region
+  if (lat >= 50.8 && lat <= 51.3 && lon >= 13.0 && lon <= 14.3) return "dvb";   // Raum Dresden
+  return "nahsh";
+}
+const isRS = sn => String(sn || "").indexOf(RS_PREFIX) === 0;
+const remoteStops = new Map();    // "RS:<extId>" -> Fern-Station {shortName,name,lat,lon,lid,extId,svc,rId}
+const rsSearchCache = new Map();  // Suchtext (klein) -> { hits: [Fern-Station], ts }
+let rsSearchTimer = null, rsSearchSeq = 0;
+// Kiels DB-Stationen stecken schon fest in der Liste: deren NAH.SH-ExtIds nicht doppeln
+const RS_KNOWN_EXT = new Set((DB_STOPS || []).map(d => {
+  const m = String(d.lid || "").match(/@L=(\d+)/);
+  return m ? m[1] : null;
+}).filter(Boolean));
+function rsNorm(s) {   // eingabefest normalisieren (Kleinbuchstaben, nur Buchstaben/Ziffern)
+  return String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+}
+function rsFold(s) {   // zusätzlich Umlaute/transkribierte Formen angleichen (muenchen = münchen)
+  return rsNorm(s).replace(/ü/g, "u").replace(/ö/g, "o").replace(/ä/g, "a").replace(/ß/g, "s")
+    .replace(/ue/g, "u").replace(/oe/g, "o").replace(/ae/g, "a").replace(/ss/g, "s");
+}
+function rsNormalizeHit(h) {   // LocMatch-/gespeicherter Treffer -> Station im Register (einmalig)
+  let s = remoteStops.get(h.shortName);
+  if (!s) {
+    s = { shortName: h.shortName, name: h.name || "", lat: h.lat, lon: h.lon,
+      lid: h.lid || "", extId: h.extId || "", svc: h.svc || svcForCoords(h.lat, h.lon),
+      rId: h.rId || null, rs: true };
+    remoteStops.set(h.shortName, s);
+  } else {
+    if (h.name) s.name = h.name;
+    if (h.lat != null) s.lat = h.lat;
+    if (h.lon != null) s.lon = h.lon;
+    if (h.lid) s.lid = h.lid;
+    if (h.svc) s.svc = h.svc;
+    if (h.rId) s.rId = h.rId;
+  }
+  return s;
+}
+function rsRowHTML(s, pos) {   // v1.5.0: zweizeilige Fern-Stations-Zeile mit Kurzzeichen rechts
+  const meta = [];
+  if (pos) {
+    const air = dist(pos, s) * 1.3;
+    meta.push("~" + formatDist(air) + " · ~" + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)");
+  }
+  meta.push("Fern-Station");
+  return '<div data-rs="' + escapeHtml(s.shortName) + '" title="Fern-Station öffnen: Live-Abfahrten über ' +
+    escapeHtml(RS_SVC_LABEL[s.svc] || "nah.sh") + ' (regionale Quelle zuerst, sonst nah.sh-Fallback)">' +
+    '<div class="srow"><span class="sname">🚏 ' + escapeHtml(s.name) + "</span>" +
+    '<span class="srowact">' +
+    routeIconHTML(s, "Fern-Station an eine externe Karten-App übergeben") +
+    '<span class="regsvc d' + (s.svc || "nahsh") + '" title="Live-Dienst: ' + escapeHtml(RS_SVC_LABEL[s.svc] || "nah.sh") + '">' +
+    escapeHtml(RS_SVC_LABEL[s.svc] || "nah.sh") + "</span></span></div>" +
+    '<div class="srowmeta">' + escapeHtml(meta.join(" · ")) + "</div>" +
+    "</div>";
+}
+async function rsSearch(q) {   // NAH.SH-LocMatch deutschlandweit (nur Stationen), gecached
+  q = String(q || "").trim();
+  if (q.length < RS_MIN_CHARS || listMode === "flat") return;
+  const key = q.toLowerCase();
+  const c = rsSearchCache.get(key);
+  if (c) { if (!sugBox.hidden) updateSuggestions(); return; }   // Cache (auch leer) genügt
+  const seq = ++rsSearchSeq;
+  try {
+    const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: q, type: "S" } } });
+    if (seq !== rsSearchSeq) return;
+    const hits = [], seen = new Set();
+    const qF = rsFold(q);
+    for (const x of ((res.match && res.match.locL) || [])) {
+      if (!x || x.type !== "S" || !x.lid || seen.has(x.lid)) continue;
+      seen.add(x.lid);
+      const extM = String(x.lid).match(/@L=(\d+)/);
+      const crd = x.crd || {};
+      if (!extM || !/^\d+$/.test(extM[1]) || crd.y == null || crd.x == null) continue;
+      const nm = String(x.name || "").replace(/…/g, "").trim();
+      if (!nm) continue;
+      if (qF && rsFold(nm).indexOf(qF) < 0) continue;   // nur Treffer, die zur Eingabe passen
+      const lat = crd.y / 1e6, lon = crd.x / 1e6;
+      if (RS_KNOWN_EXT.has(extM[1])) continue;   // Kiels DB-Stationen stecken schon fest in der Liste
+      let dup = false;   // Doppelung zu Kieler Haltestellen in unmittelbarer Nähe vermeiden
+      for (const st of stops) {
+        if (isRS(st.shortName) || st.lat == null || st.lon == null) continue;
+        if (dist(st, { lat: lat, lon: lon }) < 400 &&
+            rsFold(st.name).slice(0, 5) === rsFold(nm).slice(0, 5)) { dup = true; break; }
+      }
+      if (dup) continue;
+      hits.push(rsNormalizeHit({ shortName: RS_PREFIX + extM[1], name: nm, lat: lat, lon: lon,
+        lid: String(x.lid), extId: extM[1] }));
+      if (hits.length >= RS_MAX_HITS) break;
+    }
+    if (rsSearchCache.size > 40) {   // Cache begrenzen
+      const k0 = rsSearchCache.keys().next().value;
+      if (k0 != null) rsSearchCache.delete(k0);
+    }
+    rsSearchCache.set(key, { hits: hits, ts: Date.now() });
+    if (seq === rsSearchSeq && !sugBox.hidden &&
+        String(search.value || "").trim().toLowerCase() === key) updateSuggestions();
+  } catch (e) {   // LocMatch nicht erreichbar: still bleiben (Kiel-Treffer funktionieren weiter)
+    if (seq === rsSearchSeq) rsSearchCache.set(key, { hits: [], ts: Date.now() });
+  }
+}
+search.addEventListener("input", () => {   // v1.5.0: Fern-Suche entprellt hinter der lokalen Suche her
+  clearTimeout(rsSearchTimer);
+  rsSearchTimer = setTimeout(() => rsSearch((search.value || "").trim()), 400);
+});
+function openRemoteTab(s) {   // v1.5.0: Fern-Station als eigener Reiter (wie selectStop)
+  if (!s) return;
+  sugBox.hidden = true;
+  search.value = s.name;
+  updateStopClear();
+  const i = tabs.findIndex(t => t.sn === s.shortName);
+  if (i < 0) {
+    tabs.push({ sn: s.shortName, name: s.name, trips: [], activeTrip: -1,
+      uid: newTabUid(), remote: s });
+    activateTab(tabs.length - 1);
+  } else {
+    tabs[i].remote = s;
+    activateTab(i);
+  }
+}
+function rsRestoreTab(t) {   // v1.5.0: gespeicherten Fern-Stations-Reiter nach Neustart/Import wiederherstellen
+  const r = t.remote || {};
+  const sn = t.sn || r.shortName;
+  if (!sn || !isRS(sn)) return;
+  const s = rsNormalizeHit({ shortName: sn, name: r.name || t.name || "",
+    lat: r.lat, lon: r.lon, lid: r.lid || "", extId: r.extId || String(sn).slice(RS_PREFIX.length),
+    svc: r.svc, rId: r.rId || null });
+  if (!tabs.some(x => x.sn === s.shortName))
+    tabs.push({ sn: s.shortName, name: t.name || s.name, uid: t.uid || newTabUid(),
+      trips: [], activeTrip: -1, remote: s });
+}
+/* REM-END */
 function updateSuggestions() {
   searchIndex = -1;
   updateGpsBtns();   // GPS-Knöpfe stets zuerst prüfen (gelb, wenn die Position weggewandert ist)
@@ -3038,6 +3245,11 @@ function updateSuggestions() {
     : stops.map(s => ({ s: s, tier: 0 })).filter(h => sugTypeAllowed(h.s));
   if (sugDkOn())    // v1.4.18: Donkey-Zeilen nur bei freigegebenem MM-Filter (alles aus = alles an)
     hits = hits.concat(mmSugStations(q).map(s => ({ s: s, tier: s.tier })));   // v1.4.14: Donkey-Leihstationen (🚲) mit in die Trefferliste
+  if (q.length >= RS_MIN_CHARS) {   // v1.5.0: Fern-Stationen aus dem LocMatch-Cache, ganz unten in der Liste
+    const rc = rsSearchCache.get(q);
+    if (rc && rc.hits.length)
+      hits = hits.concat(rc.hits.filter(sugTypeAllowed).map(s => ({ s: s, tier: 2 })));
+  }
   if (!hits.length) { sugBox.hidden = true; return; }
   if (pos && q.length) {
     // Suchtreffer: Haltestellenfavoriten zuerst (als ⭐ markiert), danach die
@@ -3062,7 +3274,7 @@ function updateSuggestions() {
 // Tastatursteuerung der Haltestellenliste – gilt für Fokus im Suchfeld
 // oder Fokus auf einem Listeneintrag (mobiles Öffnen ohne Tastatur)
 function handleSugNav(e) {
-  const items = [...sugBox.querySelectorAll("div[data-sn], div[data-fsn], div[data-dk]")];
+  const items = [...sugBox.querySelectorAll("div[data-sn], div[data-fsn], div[data-dk], div[data-rs]")];   // v1.5.0: auch Fern-Stationen
   if (sugBox.hidden || !items.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
@@ -3082,6 +3294,7 @@ function handleSugNav(e) {
       return;
     }
     if (el && el.dataset.dk) { openMMTabById(el.dataset.dk); sugBox.hidden = true; return; }   // v1.4.14: Donkey-Leihstation
+    if (el && el.dataset.rs) { openRemoteTab(remoteStops.get(el.dataset.rs)); sugBox.hidden = true; return; }   // v1.5.0: Fern-Station
     if (el) selectStop(el.dataset.sn || el.dataset.fsn);
   } else if (e.key === "Escape") {
     sugBox.hidden = true;
@@ -3290,6 +3503,8 @@ sugBox.addEventListener("click", e => {
   }
   const dk = e.target.closest("div[data-dk]");   // v1.4.14: Donkey-Leihstation: eigener MM-Reiter
   if (dk) { openMMTabById(dk.dataset.dk); sugBox.hidden = true; return; }
+  const rsDiv = e.target.closest("div[data-rs]");   // v1.5.0: Fern-Station: eigener Stations-Reiter
+  if (rsDiv) { openRemoteTab(remoteStops.get(rsDiv.dataset.rs)); sugBox.hidden = true; return; }
   const div = e.target.closest("div[data-sn]");
   if (div) selectStop(div.dataset.sn);
 });
@@ -3412,7 +3627,8 @@ function activateTab(i, refetch) {
   helpTabActive = false;
   mmTabActive = false;
   const t = tabs[i];
-  const stop = t ? stops.find(s => s.shortName === t.sn) : null;
+  const stop = t ? (stops.find(s => s.shortName === t.sn) ||
+    (isRS(t.sn) ? remoteStops.get(t.sn) : null)) : null;   // v1.5.0: Fern-Stationen leben im selben Reiter-System
   currentStop = stop || null;
   currentBus = null; currentTrip = null;
   if (t && t.trips) {
@@ -3439,7 +3655,7 @@ function closeTab(i) {
   // Wecker dieses Reiters: Warnung, dann mitlöschen (auch aus dem Indikator)
   const tabAlarms = [...alarms].filter(([, a]) => a.tabSn === t.sn);
   if (tabAlarms.length) {
-    const nam = (stops.find(s => s.shortName === t.sn) || {}).name || t.sn;
+    const nam = (stops.find(s => s.shortName === t.sn) || remoteStops.get(t.sn) || {}).name || t.sn;   // v1.5.0: auch Fern-Stationen beim Namen
     if (!confirm("Für den Reiter „" + nam + "“ ist" +
         (tabAlarms.length > 1 ? " sind " + tabAlarms.length + " Wecker" : " ist ein Wecker") +
         " gestellt. Beim Schließen wird " + (tabAlarms.length > 1 ? "werden sie" : "wird er") +
@@ -3730,10 +3946,15 @@ function renderStationPanel() {
   // Stationsansicht (Name, Entfernung, Route-Icon, Stern, ↻) ist weg – der
   // Stationsname steht nur noch hier, dahinter Favoritenstern
   // und GPS, Aktualisieren (↻) ganz rechts.
+  const rsMeta = isRS(currentStop.shortName) ? (remoteStops.get(currentStop.shortName) || currentStop) : null;   // v1.5.0: Fern-Station
   const head = '<div class="sechead" data-ssec="1"><span class="sarr">' +
     (stationPanelOpen ? "▾" : "▸") + "</span>Abfahrten: " +
     escapeHtml(currentStop.name) +
-    starHTML(currentStop.shortName) +
+    (rsMeta   // v1.5.0: statt Stern das Kurzzeichen des Live-Dienstes (Favoriten bleiben Kieler Stationen)
+      ? '<span class="regsvc d' + (rsMeta.svc || "nahsh") + '" title="Live-Dienst dieser Fern-Station: ' +
+        escapeHtml(RS_SVC_LABEL[rsMeta.svc] || "nah.sh") + ' (regionale Quelle zuerst, sonst nah.sh-Fallback)">' +
+        escapeHtml(RS_SVC_LABEL[rsMeta.svc] || "nah.sh") + "</span>"
+      : starHTML(currentStop.shortName)) +
     tabGpsBtnHTML(currentStop.shortName) +
     '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
       '" title="Diese Haltestelle neu abfragen">↻</button>' +
@@ -3756,7 +3977,7 @@ function renderStationPanel() {
     // automatisch nachladen (NAH.SH-Fahrplan, gleiche 10-min-TTL wie „später“)
     // und eine entsprechende Anzahl sofort freischalten (erste Seite = 6 Einträge,
     // weitere über „später“). Züge haben von Hause aus ~10 h Live-Fenster.
-    if (!(v.deps && v.deps.length) && !v.error && !isDB(v.stop.shortName)) {
+    if (!(v.deps && v.deps.length) && !v.error && !isDB(v.stop.shortName) && !isRS(v.stop.shortName)) {   // v1.5.0: geplante KVG-Fahrten nur für Kiel
       if ((!v.plannedTried || Date.now() - (v.plannedTs || 0) > 600000) && !v.plannedLoading) {
         v.plannedLoading = true;
         fetchPlannedDeps(v.stop.shortName).catch(() => {}).finally(() => {
@@ -3769,7 +3990,7 @@ function renderStationPanel() {
         v.fwdShown = Math.max(v.fwdShown || 0, 6);
       }
     }
-    const lines = busLinesHTML(v, isDB(v.stop.shortName) ? 21600 : null, true);
+    const lines = busLinesHTML(v, (isDB(v.stop.shortName) || isRS(v.stop.shortName)) ? 21600 : null, true);   // v1.5.0: Fern-Stationen wie DB 6 h
     if (!lines.length && v.deps.length && Date.now() - v.fetchTs > 30000 && depsReallyGone(v)) {
       // alle Abfahrten wirklich abgefahren (länger als 3 Minuten weg): automatisch neu abfragen.
       // Vorher IMMER Kopf + Hinweis rendern: die Abfrage dauert einen Moment (und kann
@@ -5750,7 +5971,11 @@ function saveView() {
         const ab = (t.trips || [])[t.activeTrip];
         return { sn: t.sn, name: t.name || "", uid: t.uid || "",
           bus: ab ? { sn: ab.sn, tripId: ab.tripId, tripOpen: !!ab.tripOpen } : null,
-          trips: trips };
+          trips: trips,
+          remote: (t.remote ? { shortName: t.remote.shortName, name: t.remote.name,
+            lat: t.remote.lat, lon: t.remote.lon, lid: t.remote.lid || "",
+            extId: t.remote.extId || "", svc: t.remote.svc || "nahsh",
+            rId: t.remote.rId || null } : null) };   // v1.5.0: Fern-Stationen überdauern Neustart/Import
       }),
       rtabs: routeTabs.map(rt => ({ name: rt.name || "", uid: rt.uid || "", sel: rt.sel })),
       ractive: routeActiveTab, ractiveOn: routeTabActive ? 1 : 0,
@@ -6722,6 +6947,7 @@ async function getSteige() {
   } catch (e) {}
 }
 async function loadPlatforms(sn) {
+  if (isRS(sn)) return {};   // v1.5.0: Fern-Stationen ohne KVG-Steige
   if (isDB(sn)) return dbPlatformCache.get(sn) || {};
   await getSteige();
   const list = steige && steige[sn];
@@ -6755,14 +6981,31 @@ function flashAPI(kind) {
   el.classList.add("ping");
 }
 
-// ---------- API-Statistik (Anzahl + Datenmenge je Anbieter) ----------
+// ---------- API-Statistik (Anzahl + Datenmenge je Dienst, v1.5.0 mit LED-Kette) ----------
+// v1.5.0: label = Kurzbezeichnung in der LED-Legende, desc = Spezifikation (auch im
+// Über-Reiter). Neue regionale Dienste: VBB (Berlin/Brandenburg), VVS (Raum Stuttgart),
+// DVB (Dresden) für die Fern-Stationen; db bleibt der interne Schlüssel der nah.sh-HAFAS.
 const API_KINDS = {
-  db:   { label: "Deutsche Bahn / NAH.SH", color: "#EC0016" },
-  kvg:  { label: "KVG (Bus)",              color: "#00519E" },
-  nom:  { label: "Nominatim / OSM",         color: "#7EBC6F" },
-  osrm: { label: "OSRM (Fußweg)",          color: "#FF7F2A" },
-  don:  { label: "Donkey / SprottenFlotte (Leihräder)", color: "#22d3ee" }
+  db:   { label: "nah.sh", desc: "NAH.SH-HAFAS (DB Regio Nord): Echtzeit-Zugabfahrten rund um Kiel, deutschlandweite Verbindungs- und Stationssuche und Fallback aller Regionen ohne eigenen Live-Dienst (Fahrplan bundesweit, Echtzeit soweit vorhanden)", color: "#EC0016" },
+  kvg:  { label: "KVG",  desc: "Kieler Verkehrsgesellschaft: Live-Busabfahrten über die inoffizielle JSON-Schnittstelle (INIT InternetService, dieselbe Quelle wie kvg-kiel.de), inklusive Ist-Zeiten, Prognosen und Bussteigen", color: "#00519E" },
+  vbb:  { label: "VBB",  desc: "Verkehrsverbund Berlin-Brandenburg: Live-Abfahrten der Fern-Stationen in Berlin und Brandenburg über v6.vbb.transport.rest mit Echtzeit-Verspätungen", color: "#F5C500" },
+  vvs:  { label: "VVS",  desc: "Verkehrs- und Tarifverbund Stuttgart: Live-Abfahrten der Fern-Stationen in der Region Stuttgart über die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit)", color: "#A78BFA" },
+  dvb:  { label: "DVB",  desc: "Dresdner Verkehrsbetriebe: Live-Abfahrten der Fern-Stationen in Dresden über die offene Web-API webapi.vvo-online.de (haltestellen-suche und Abfahrten mit RealTime)", color: "#FF5CA8" },
+  nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
+  osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
+  don:  { label: "Donkey", desc: "Donkey Republic / SprottenFlotte: GBFS-Leihräder in Kiel und Umgebung über donkeyproxy.php (eigenes serverseitiges Skript mit Rad-Namen-Cache)", color: "#22d3ee" }
 };
+// v1.5.0: LED-Kette aufbauen: je Dienst eine kleine LED in der Leiste oben rechts
+function renderLedStrip() {
+  const el = document.getElementById("ledStrip");
+  if (!el) return;
+  let h = "";
+  for (const k in API_KINDS)
+    h += '<span class="led" data-ind="' + k + '" aria-hidden="true" title="' +
+      escapeHtml(API_KINDS[k].label + ": " + API_KINDS[k].desc) + '"></span>';
+  el.innerHTML = h;
+}
+renderLedStrip();
 let apiStats;
 try {
   const s = JSON.parse(localStorage.getItem("kvg-apistats") || "null");
@@ -6798,20 +7041,23 @@ function fmtBytes(b) {
        : b < 1048576 ? (b / 1024).toFixed(1) + " KB"
        : (b / 1048576).toFixed(1) + " MB";
 }
-function renderApiStats() {
+function renderApiStats() {   // v1.5.0 aufklappbare Legende der LED-Kette: LED + Kurzbezeichnung + Spezifikation
   const el = document.getElementById("apiStats");
   if (!el) return;
   let totN = 0, totB = 0;
-  let html = '<div class="ashdr">Übertragene Live-Daten</div>';
+  let html = '<div class="ashdr">LED-Leiste: Dienste, Anfragen und übertragene Bytes</div>';
   for (const k in API_KINDS) {
     const st = apiStats.kinds[k] || { n: 0, b: 0 };
     totN += st.n; totB += st.b;
-    html += '<div class="asrow"><span class="asdot" style="background:' + API_KINDS[k].color +
-      '"></span><span class="asname">' + API_KINDS[k].label + '</span><span class="asval">' +
+    html += '<div class="asrow" title="' + escapeHtml(API_KINDS[k].desc) +
+      '"><span class="asdot" style="background:' + API_KINDS[k].color +
+      '"></span><span class="asname"><b>' + API_KINDS[k].label + '</b> <span class="asdesc">' +
+      escapeHtml(API_KINDS[k].desc) + '</span></span><span class="asval">' +
       st.n + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
   }
   html += '<div class="asrow astot"><span class="asname">insgesamt</span><span class="asval">' +
     totN + " Anfr. · " + fmtBytes(totB) + "</span></div>";
+  html += '<div class="asdim">Facelift-System: Abfahrten fragen zuerst den regionalen Live-Dienst der Region ab (KVG in Kiel, VBB in Berlin/Brandenburg, VVS in der Region Stuttgart, DVB in Dresden), sonst den deutschlandweiten Fallback über nah.sh. Die LED oben rechts blinkt, sobald ihr Dienst Daten liefert.</div>';
   html += '<div class="asdim">Statistik seit ' + new Date(apiStats.since).toLocaleString("de-DE") + "</div>";
   html += '<button class="afbtn" id="apiStatsReset" style="width:100%;margin-top:8px;">Zähler zurücksetzen</button>';
   el.innerHTML = html;
@@ -6945,6 +7191,211 @@ async function dbDepartures(sn) {
   deps.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
   return { deps, platforms };
 }
+
+/* v1.5.0 REMDEP-START: Abfahrten der Fern-Stationen (Facelift-System).
+   Zuerst fragt der regionale Live-Dienst der Region (VBB: rest-Schnittstelle
+   v6.vbb.transport.rest, VVS: offizielle EFA XML_DM_REQUEST, DVB: offene
+   Web-API webapi.vvo-online.de). Scheitert er, liefert er nichts oder passt
+   seine Stations-Auflösung nicht (VBB/VVS koordinatenverifiziert, DVB
+   namentlich), springt der deutschlandweite Fallback über den NAH.SH-HAFAS
+   (StationBoard, Produkt-Maske 511 = Schiene und ÖPNV ohne Taxi) ein:
+   bundesweiter Fahrplan mit Echtzeit, soweit die HAFAS-Zentrale sie kennt. */
+function isoHHMM(ms) {   // Epochen-Millisekunden -> "HH:MM" (Gerätezeit, wie die gesamte App)
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+async function rsDepsNahsh(m) {   // Fallback: NAH.SH-StationBoard unter der bekannten lid
+  const { date, time } = dbNow();
+  const res = await dbFetch([{ meth: "StationBoard",
+    req: { type: "DEP", stbLoc: { lid: m.lid }, date, time,
+      jnyFltrL: [{ type: "PROD", mode: "INC", value: "511" }], maxJny: 100 } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  if (!out || !out.jnyL) return null;
+  const prodL = (out.common && out.common.prodL) || [];
+  const deps = [], seen = new Set();
+  for (const j of out.jnyL) {
+    const prod = prodL[j.prodX] || {};
+    const st = j.stbStop || {};
+    const tS = st.dTimeS, tR = st.dTimeR;
+    if (!tS && !tR) continue;
+    if (seen.has(j.jid)) continue;
+    seen.add(j.jid);
+    const rawName = String(prod.name || "").trim();
+    const deIdx = rawName.indexOf("de:");
+    const cleanName = deIdx > 0 ? rawName.slice(0, deIdx).trim() : (deIdx === 0 ? "" : rawName);
+    const line = cleanName ||
+      String((prod.prodCtx && (prod.prodCtx.catOut || prod.prodCtx.catOutS)) || prod.addId || "").trim() || "Fahrt";
+    deps.push({
+      tripId: j.jid, line: line, direction: j.dirTxt || "",
+      plannedTime: dbHHMM(tS), actualTime: dbHHMM(tR || tS),
+      actualRelativeTime: dbRelMin(tR || tS) * 60,
+      status: (tR || st.dProgType === "PROGNOSED") ? "PREDICTED" : "PLANNED",   // PROGNOSED = Prognose ohne Echtzeit
+      alerts: [], plat: st.dPlatF || st.dPlatR || ""
+    });
+  }
+  deps.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return deps.length ? deps : null;
+}
+async function rsResolveVBB(m) {   // VBB-Stop-ID über die rest-Schnittstelle, koordinatenverifiziert (bis 500 m)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("vbb", "https://v6.vbb.transport.rest/locations?query=" +
+    encodeURIComponent(m.name) + "&results=8&fuzzy=true");
+  if (!res.ok) return null;
+  const locs = await res.json();
+  for (const l of (Array.isArray(locs) ? locs : [])) {
+    if (!l || l.type !== "stop" || !l.id) continue;
+    const la = (l.location && l.location.latitude) != null ? l.location.latitude : l.latitude;
+    const lo = (l.location && l.location.longitude) != null ? l.location.longitude : l.longitude;
+    if (la != null && lo != null && dist({ lat: la, lon: lo }, m) > 500) continue;
+    m.rId = String(l.id);
+    return m.rId;
+  }
+  return null;
+}
+async function rsDepsVBB(m) {   // Berlin/Brandenburg: plannedWhen/when/delay
+  const id = await rsResolveVBB(m);
+  if (!id) return null;
+  const res = await apiFetch("vbb", "https://v6.vbb.transport.rest/stops/" + encodeURIComponent(id) +
+    "/departures?results=40&duration=90&remarks=false");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const d of (j.departures || [])) {
+    if (!d || d.cancelled) continue;
+    const w = d.when || d.plannedWhen;
+    if (!w) continue;
+    const t = Date.parse(w), tP = Date.parse(d.plannedWhen || w);
+    if (!isFinite(t)) continue;
+    out.push({
+      tripId: String(d.tripId || d.id || ((d.line && d.line.name) || "vbb") + "|" + t),
+      line: String((d.line && d.line.name) || "").trim() || "Fahrt",
+      direction: String(d.direction || d.provenance || ""),
+      plannedTime: isoHHMM(tP), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: (d.when != null && d.delay != null) ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String((d.stop && d.stop.platform) || d.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+async function rsResolveVVS(m) {   // VVS-Stop-ID über den offiziellen EFA-Stopfinder, koordinatenverifiziert (bis 600 m)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("vvs", "https://www3.vvs.de/mngvvs/XML_STOPFINDER_REQUEST?SpEncId=0&language=de" +
+    "&outputFormat=rapidJSON&coordOutputFormat=EPSG:4326&type_sf=any&name_sf=" + encodeURIComponent(m.name));
+  if (!res.ok) return null;
+  const j = await res.json();
+  for (const l of (j.locations || [])) {
+    if (!l || !l.id) continue;
+    const la = l.lat != null ? l.lat : (Array.isArray(l.coord) ? l.coord[0] : null);
+    const lo = l.lon != null ? l.lon : (Array.isArray(l.coord) ? l.coord[1] : null);
+    if (la == null || lo == null) continue;
+    if (dist({ lat: la, lon: lo }, m) > 600) continue;
+    m.rId = String(l.id);
+    return m.rId;
+  }
+  return null;
+}
+async function rsDepsVVS(m) {   // Stuttgart-Region: EFA-DM mit Echtzeit (rapidJSON)
+  const id = await rsResolveVVS(m);
+  if (!id) return null;
+  const res = await apiFetch("vvs", "https://www3.vvs.de/mngvvs/XML_DM_REQUEST?SpEncId=0&language=de" +
+    "&coordOutputFormat=EPSG:4326&outputFormat=rapidJSON&version=10.2.10&mode=direct" +
+    "&type_dm=Stop&name_dm=" + encodeURIComponent(id) + "&omitDirection=1&useRealtime=1&limit=40");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const e of (j.departures || [])) {
+    if (!e || !e.servingLine) continue;
+    const tP = Date.parse(e.departureTimePlanned || "");
+    let t = NaN, hasRT = !!(e.isRealtimeControlled && e.departureTimeEstimated);
+    if (hasRT) t = Date.parse(e.departureTimeEstimated);
+    if (!isFinite(t)) { if (!isFinite(tP)) continue; t = tP; hasRT = false; }
+    out.push({
+      tripId: "vvs|" + (e.servingLine.code || e.servingLine.number || "?") + "|" + t,
+      line: String(e.servingLine.name || e.servingLine.number || "").trim() || "Fahrt",
+      direction: String(e.servingLine.direction || ""),
+      plannedTime: isoHHMM(isFinite(tP) ? tP : t), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: hasRT ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String(e.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+function dvbDate(s) {   // .NET-JSON-Datum "/Date(1698...+60)/" -> Millisekunden
+  const m = String(s || "").match(/Date\((\d+)(?:[+-]\d+)?\)/);
+  return m ? Number(m[1]) : null;
+}
+async function rsResolveDVB(m) {   // DVB-Stop-ID über den pointfinder (namentlich, GK4 ohne Koordinatenabgleich)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("dvb", "https://webapi.vvo-online.de/tr/pointfinder?format=json&stopsOnly=true" +
+    "&assignedStops=false&limit=0&query=" + encodeURIComponent(m.name.replace(/…/g, "")) + "&dvb=true");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const pts = String(j.Points || "").split(";");
+  const want = rsFold(m.name).slice(0, 8);
+  for (const pt of pts) {
+    const f = String(pt || "").split("|");
+    if (f.length < 4 || !/^\d+$/.test(f[0])) continue;
+    let ok = false;
+    for (let i = 2; i <= 3 && i < f.length; i++) {
+      const nn = rsFold(f[i]).slice(0, 8);
+      if (nn && (nn === want || nn.indexOf(want) === 0 || want.indexOf(nn) === 0)) { ok = true; break; }
+    }
+    if (!ok) continue;
+    m.rId = f[0];
+    return m.rId;
+  }
+  return null;
+}
+async function rsDepsDVB(m) {   // Dresden: offene Web-API (RealTime/ScheduledTime als .NET-Datum)
+  const id = await rsResolveDVB(m);
+  if (!id) return null;
+  const res = await apiFetch("dvb", "https://webapi.vvo-online.de/dm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stopid: id, time: (new Date()).toISOString(), limit: 40,
+      isarrival: false, shorttermchanges: true, mentzonly: false })
+  });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const d of (j.Departures || [])) {
+    if (!d) continue;
+    const tP = dvbDate(d.ScheduledTime), tE = dvbDate(d.RealTime);
+    if (tP == null) continue;
+    const t = tE != null ? tE : tP;
+    out.push({
+      tripId: "dvb|" + (d.Id || id) + "|" + t,
+      line: String(d.LineName || d.Line || "").trim() || "Fahrt",
+      direction: String(d.Direction || ""),
+      plannedTime: isoHHMM(tP), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: tE != null ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: (d.Platform && typeof d.Platform === "object") ? String(d.Platform.Name || "") : String(d.Platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+async function rsGetDepartures(sn) {   // Facelift-System: regional zuerst, sonst nah.sh-Fallback
+  const m = remoteStops.get(sn);
+  if (!m || !m.lid) return null;
+  let rows = null;
+  try {
+    if (m.svc === "vbb") rows = await rsDepsVBB(m);
+    else if (m.svc === "vvs") rows = await rsDepsVVS(m);
+    else if (m.svc === "dvb") rows = await rsDepsDVB(m);
+  } catch (e) { rows = null; }
+  if (rows) return rows;
+  try { return await rsDepsNahsh(m); } catch (e) { return null; }
+}
+/* REMDEP-END */
 // Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
 async function dbTrip(tripId, depTime, kvgPlanned) {
   try {
@@ -7050,6 +7501,11 @@ async function dbTrip(tripId, depTime, kvgPlanned) {
 const depCache = new Map(); // sn -> deps (bis globaler Reset)
 async function getDepartures(sn) {
   if (depCache.has(sn)) return depCache.get(sn);
+  if (isRS(sn)) {   // v1.5.0: Fern-Station: regionaler Live-Dienst, sonst nah.sh-Fallback
+    const deps = await rsGetDepartures(sn);
+    if (deps) { depCache.set(sn, deps); return deps; }
+    return null;
+  }
   if (isDB(sn)) {
     try {
       const r = await dbDepartures(sn);
@@ -7084,7 +7540,8 @@ async function getDepartures(sn) {
 const stopViews = new Map(); // sn -> {stop, meters, fetchTs, deps, platforms, fetched, reloading}
 function viewOf(sn) {
   if (!stopViews.has(sn)) {
-    const stop = stops.find(s => s.shortName === sn);
+    const stop = stops.find(s => s.shortName === sn) ||
+      (isRS(sn) ? remoteStops.get(sn) : null);   // v1.5.0: Fern-Stationen im selben View-System
     if (!stop) return null;
     stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false, error: false });
   }
@@ -7417,6 +7874,7 @@ function depWindow(v, horizonSec) {
 // „früher“-Link über der Liste (zentriert): je Klick sechs abgefahrene Verbindungen
 function earlierHTML(v) {
   if (!v || !v.fetched) return "";
+  if (isRS(v.stop.shortName)) return "";   // v1.5.0: Fern-Stationen ohne „früher“-Paging (KVG-spezifisch)
   if (v.earlierExhausted || (v.earlierTried && (!v.earlier || !v.earlier.length))) return "";
   return '<div class="morewrap"><button class="morelink" data-earlier="' +
     escapeHtml(v.stop.shortName) + '" title="Die sechs vorherigen (abgefahrenen) Abfahrten nachladen">früher</button></div>';
@@ -7424,6 +7882,7 @@ function earlierHTML(v) {
 // „später“-Link unter der Liste (zentriert): je Klick sechs weitere Einträge
 function laterHTML(v) {
   if (!v || !v.fetched) return "";
+  if (isRS(v.stop.shortName)) return "";   // v1.5.0: Fern-Stationen ohne „später“-Paging (Live-Fenster reicht)
   const isdb = isDB(v.stop.shortName);
   const w = depWindow(v, isdb ? 21600 : null);
   const link = '<div class="morewrap"><button class="morelink" data-later="' +
@@ -8002,7 +8461,9 @@ try {
   };
   if (sv && Array.isArray(sv.tabs) && sv.tabs.length) {
     sv.tabs.forEach(t => {
-      if (t.sn && stops.find(s => s.shortName === t.sn)) {
+      if (t.sn && isRS(t.sn)) {   // v1.5.0: Fern-Stations-Reiter (ohne Fahrten-Unter-Reiter)
+        if (t.remote || remoteStops.get(t.sn)) rsRestoreTab(t);
+      } else if (t.sn && stops.find(s => s.shortName === t.sn)) {
         openOne(t.sn, t.bus, t.trips);
         const tb = tabs.find(x => x.sn === t.sn);
         if (tb) { if (t.name) tb.name = t.name; if (t.uid) tb.uid = t.uid; }   // Name + UID (Reihenfolge) übernehmen
@@ -11083,7 +11544,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
   h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Der 🚲?-Knopf am aktiven Standort unter dem Adressfeld ist seit v1.4.18 entfallen, weil die Leihstationen direkt über die Stationssuche erreichbar sind. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
   h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern in zwei Listen (seit v1.4.16: E-Bikes nach Akkustand absteigend, darunter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar und der Rest hinter einem Aufklapp-Knopf; jedes Rad trägt seinen von Donkey vergebenen Vornamen wie „Frieda“ mit Kurz-ID), hinter jedem Rad das kleine Esel-Symbol 🫏 als Donkey-App-Link (v1.4.16, ersetzt den früheren 📲-Chip aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung (seit v1.4.17 erscheint der 📌-Knopf nur bei übernommener Station, und unter Punkt 2 stehen Zähler und ausklappbare Rad-Liste der Station, Details im v1.4.17-Absatz). Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
-  h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
+   h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
   h += P("<b>📌 Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog (v1.4.17):</b> Der 📌-Knopf unter dem Abholrad-Pulldown ist Spezialist: Er erscheint nur noch, wenn der Dialog mit einer übernommenen Donkey-Station geöffnet wurde (🚲-Zeile der Stationssuche oder 🚲?-Knopf im MM-Reiter). Genau dann soll Punkt 2 festgehalten werden, während Punkt 1 (Start) noch frei wechselbar ist oder gerade die GPS-Position läuft; nochmal drücken löst die Fixierung, wieder drücken fixiert die Station des aktuell gewählten Rads neu. Ohne übernommene Station gibt es den Knopf gar nicht, denn dort ergibt Fixieren keinen Sinn: Punkt 2 bleibt dann die normale Räder-Suche um den Start. Bei fixierter Station steht unter Punkt 2 jetzt außerdem ein Zähler (freie E-Bikes mit mind. 40 % Akku, freie Standardräder, reservierte/gesperrte dahinter) und darunter die ausklappbare Rad-Liste der Station mit genau einem sichtbaren Eintrag: E-Bikes nach Akkustand absteigend (ohne Wert ans Ende), dahinter die Standardräder nach Namen, je mit Vorname, Akku, Reichweite und dem kleinen Esel-Symbol als Donkey-App-Link hinter dem Rad. Der Überblick ist damit schon vor der Rad-Wahl da, aufgeklappt auf Wunsch.");
   h += P("<b>🫏 Donkey-App-Link, Rad-Namen und Knopf-Breite (v1.4.16):</b> Der offizielle Miet-Link eines Rads ist jetzt ein kleines Donkey-Esel-Symbol direkt hinter dem Rad: Es verbraucht keine eigene Zeile und öffnet auf dem Handy die Donkey-App direkt beim Rad; ohne installierte App landet man auf der Download-Seite von Donkey (ältere Geräte ohne das Esel-Emoji zeigen automatisch 📲). Die Räder heißen bei Donkey richtig („Frieda“, „E-bike Fischi“); donkeyproxy.php liest diese Namen jetzt mit aus und die App zeigt sie überall: im Pulldown des Routing-Dialogs, in der Rad-Zeile des Dialogs, im MM-Reiter (dort als zwei Listen: E-Bikes nach Akkustand absteigend, dahinter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar) und im Abholrad-Weg der übernommenen MM-Route. Die Knöpfe der Hauptleiste sind alle exakt so breit wie die Knöpfe der obersten Zeile, und eine nicht ganz gefüllte Zeile steht mittig. Die Favoritenknöpfe sind komplett dynamisch: Beim ersten Start gibt es genau einen, weitere entstehen per langem Druck (bis acht), und Löschen nimmt den Knopf jetzt zuverlässig aus der Leiste, Belegungen rutschen nach, der letzte bleibt immer stehen.");
   h += P("<b>Farbige Reiter und Knopf-Umbruch (v1.4.15):</b> Die Reiter oben tragen jetzt die Farbe ihres Knopfes in der Leiste: Route-Reiter sind pink wie der 🧭 Route-Knopf, MM-Reiter blau wie 🚲 MM, Stations-Reiter bleiben beim gewohnten Stil; aktive Reiter leuchten in ihrer Farbe, inaktive bleiben dezent. Die Knöpfe der Leiste brechen früh genug um und behalten eine nutzbare Breite; seit v1.4.16 sind alle Knöpfe außerdem exakt so breit wie die der obersten Zeile, eine nicht ganz gefüllte Zeile steht mittig.");
@@ -13391,7 +13852,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.18 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.0 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
