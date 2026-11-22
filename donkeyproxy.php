@@ -67,6 +67,30 @@ function dp_feed(string $system, string $file): ?array {
     return null;
 }
 
+/* Stationsnamen: Donkey liefert GBFS 3.0 mehrsprachig als
+ * [{language: "en", text: "Rathausplatz"}, ...] – bevorzugt de, sonst en,
+ * sonst erster Text; Filter/dedupe wie bisher, Fallback 'Station <id>'.
+ * address/post_code sind im Kiel-Feed meist leer, werden aber ab v1.4.4
+ * als ad/pc durchgereicht, sobald der Anbieter sie liefert. */
+function dp_name(array $s, string $id): string {
+    $nm = $s['name'] ?? null;
+    if (is_string($nm)) { $t = trim($nm); if ($t !== '') return $t; }
+    if (is_array($nm)) {
+        foreach (['de', 'en'] as $lg)
+            foreach ($nm as $e)
+                if (is_array($e) && (string) ($e['language'] ?? '') === $lg) {
+                    $t = trim((string) ($e['text'] ?? ''));
+                    if ($t !== '') return $t;
+                }
+        foreach ($nm as $e)
+            if (is_array($e)) {
+                $t = trim((string) ($e['text'] ?? ''));
+                if ($t !== '') return $t;
+            }
+    }
+    return 'Station ' . $id;
+}
+
 /* Alle drei Systeme zusammensetzen, deduplizieren (vehicle_id / station_id). */
 function dp_collect(): ?array {
     $veh = []; $sta = []; $seenV = []; $seenS = [];
@@ -117,11 +141,14 @@ function dp_collect(): ?array {
                 if (isset($seenS[$id])) continue;
                 if (!is_numeric($lat) || !is_numeric($lon)) continue;
                 $seenS[$id] = true;
-                $cap = $s['capacity'] ?? null;
-                $nm = $s['name'] ?? ('Station ' . $id);
+                    $cap = $s['capacity'] ?? null;
+                $ad = trim((string) ($s['address'] ?? ''));
+                $pc = trim((string) ($s['post_code'] ?? ''));
                 $sta[] = [
                     'id'   => $id,
-                    'name' => is_string($nm) ? $nm : ('Station ' . $id),
+                    'name' => dp_name($s, $id),
+                    'ad'   => $ad !== '' ? $ad : null,
+                    'pc'   => $pc !== '' ? $pc : null,
                     'lat'  => round((float) $lat, 6),
                     'lon'  => round((float) $lon, 6),
                     'cap'  => is_numeric($cap) ? (int) $cap : null,
@@ -203,6 +230,7 @@ function dp_geojson(array $d): array {
     foreach ($d['s'] as $s) {
         $desc = 'Rückgabe-Station (Donkey Republic / SprottenFlotte)';
         if ($s['cap'] !== null) $desc .= ' · Kapazität ' . $s['cap'];
+        if (!empty($s['ad'])) $desc .= ' · ' . $s['ad'] . (!empty($s['pc']) ? ', ' . $s['pc'] : '');
         $feat[] = [
             'type' => 'Feature',
             'geometry' => ['type' => 'Point', 'coordinates' => [$s['lon'], $s['lat']]],
