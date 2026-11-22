@@ -916,7 +916,9 @@
       auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de), Fußprofil mit 5 km/h.</p>
       <p><b>VBB</b> <span class="regsvc dvbb">VBB</span> (gelbe LED): Live-Abfahrten in Berlin und Brandenburg
       über v6.vbb.transport.rest, die offene Community-Fassung der Auskunft der Verkehrsbetriebe
-      (fahrinfo.vbb.de), mit Echtzeit-Verspätungen (plannedWhen/when/delay). Auflösung per
+      (fahrinfo.vbb.de), mit Echtzeit-Verspätungen (plannedWhen/when/delay). Seit v1.5.5 beantwortet
+      derselbe Dienst auch die Verbindungssuche, wenn Start und Ziel beide in Berlin/Brandenburg liegen
+      (echte Fußwege, Echtzeit und Haltestellen je Abschnitt). Auflösung per
       Koordinatenabgleich, sonst nah.sh-Fallback.</p>
       <p><b>VVS</b> <span class="regsvc dvvs">VVS</span> (violette LED): Live-Abfahrten der Region Stuttgart über
       die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit). Auflösung
@@ -7049,7 +7051,7 @@ const API_KINDS = {
   gtf:  { label: "gtfs.de", desc: "Bundesweite Verspätungen aus dem freien DELFI-Sammelstream von gtfs.de (GTFS-Realtime, alle 10 Sekunden, CC BY 4.0), aufbereitet über das serverseitige gtfsproxy.php als kleine Antwort je Station und als Overlay über die geplanten Zeilen der Fern-Stationen gelegt (Schiene exakt an die Planzeit gebunden, Busse nur bei konsistenter Verspätung der Linie); im nah.sh-Gebiet ergänzt er das DELFI-Overlay, außerhalb dessen Fußabdruck ist er die einzige Verspätungsquelle", color: "#14b8a6" },
   nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
   osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
-  vbb:  { label: "VBB",  desc: "Verkehrsverbund Berlin-Brandenburg: Live-Abfahrten der Fern-Stationen in Berlin und Brandenburg über v6.vbb.transport.rest mit Echtzeit-Verspätungen", color: "#F5C500" },
+  vbb:  { label: "VBB",  desc: "Verkehrsverbund Berlin-Brandenburg: Live-Abfahrten der Fern-Stationen in Berlin und Brandenburg über v6.vbb.transport.rest mit Echtzeit-Verspätungen; seit v1.5.5 auch Router der Verbindungssuche, wenn Start und Ziel in Berlin/Brandenburg liegen", color: "#F5C500" },
   vvs:  { label: "VVS",  desc: "Verkehrs- und Tarifverbund Stuttgart: Live-Abfahrten der Fern-Stationen in der Region Stuttgart über die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit)", color: "#A78BFA" },
   mvv:  { label: "MVV",  desc: "Münchner Verkehrs- und Tarifverbund: Live-Abfahrten der Fern-Stationen in München und Umland über die offizielle EFA-Schnittstelle efa.mvv-muenchen.de (XSLT_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit)", color: "#4ADE80" },
   dvb:  { label: "DVB",  desc: "Dresdner Verkehrsbetriebe: Live-Abfahrten der Fern-Stationen in Dresden über die offene Web-API webapi.vvo-online.de (haltestellen-suche und Abfahrten mit RealTime)", color: "#FF5CA8" },
@@ -10603,6 +10605,28 @@ function rtJnyHTML(sec, tail, attrs, pre, cls, stopsHTML) {   // Bus-/Bahn-Absch
 let routeLegFullCache = new Map();   // jid -> { ts, stops }
 async function routeLegFull(sec) {
   if (!sec.jid) return null;
+  if (sec.via === "vbb") {   // v1.5.5: VBB-Abschnitte erweitern über die REST-Schnittstelle (kein NAH.SH-JourneyDetails)
+    const ck = "vbb:" + sec.jid;
+    const hit2 = routeLegFullCache.get(ck);
+    if (hit2 && Date.now() - hit2.ts < 5 * 60 * 1000) return hit2.stops;
+    try {
+      const res = await apiFetch("vbb", VBB_TRIP_URL + "/" + encodeURIComponent(sec.jid) + "?stopovers=true");
+      if (!res.ok) return null;
+      const t = await res.json();
+      const trip = t && t.trip;
+      if (!trip || !trip.stopovers) return null;
+      const stops = trip.stopovers.map(sv => {
+        const st = sv.stop || {}, sl = st.location || st;
+        return { name: st.name || "?",
+          lat: sl.latitude != null ? sl.latitude : (st.lat != null ? st.lat : null),
+          lon: sl.longitude != null ? sl.longitude : (st.lon != null ? st.lon : null),
+          dS: vbbHHMM(vbbMs(sv.plannedDeparture)), dR: vbbHHMM(vbbMs(sv.departure)),
+          aS: vbbHHMM(vbbMs(sv.plannedArrival)), aR: vbbHHMM(vbbMs(sv.arrival)) };
+      });
+      routeLegFullCache.set(ck, { ts: Date.now(), stops: stops });
+      return stops;
+    } catch (e) { return null; }
+  }
   const hit = routeLegFullCache.get(sec.jid);
   if (hit && Date.now() - hit.ts < 5 * 60 * 1000) return hit.stops;
   try {
@@ -10897,6 +10921,7 @@ async function routeHafas(meth, req) {
   if (!r) throw new Error("NAH.SH: leere Antwort");
   if (r.err && r.err !== "OK") {
     if (r.err === "H9380") throw new Error("Keine Verbindung zwischen Start und Ziel gefunden.");
+    if (r.err === "H9220") throw new Error("NAH.SH-Fehler H9220: Start und/oder Ziel liegt außerhalb des Nah.sh-Gebiets (Schleswig-Holstein).");
     throw new Error("NAH.SH-Fehler " + r.err);
   }
   return r.res;
@@ -11566,10 +11591,222 @@ function routeWalkAdopt(out) {   // Fuss-Modus: Rad-Zubringer als Fussweg rechne
   }
   return out;
 }
-async function routeTripSearch() {
+// ---------- v1.5.5: Regionen-Weiche der Verbindungssuche ----------
+// Der NAH.SH-HAFAS fährt nur Anfragen mit Start UND Ziel im eigenen Gebiet;
+// sobald EIN Endpunkt eine Adresse/Koordinate außerhalb Schleswig-Holsteins
+// ist, antwortet er H9220 (\"außerhalb des Provider-Gebiets\"), Bahnhöfe
+// dagegen kennt und routet er deutschlandweit. Seit v1.5.5 fragt die App
+// deshalb zuerst den VBB-Router (v6.vbb.transport.rest/journeys, dieselbe
+// offene Community-Schnittstelle wie bei den Berliner Live-Abfahrten), wenn
+// Start UND Ziel in Berlin/Brandenburg liegen; sonst läuft alles wie bisher
+// über NAH.SH, und erst wenn DAS mit H9220 scheitert, fällt die Suche auf
+// bundesweites Zug-Routing zwischen Bahnhöfen zurück. Die VBB-LED blinkt,
+// sobald der Router Daten liefert.
+const ROUTE_SH_BOX  = { latMin: 53.3, latMax: 55.6, lonMin: 7.8, lonMax: 11.6 };   // Nah.sh-Gebiet (SH + Umfeld; wie DELFI_SH)
+const ROUTE_VBB_BOX = { latMin: 51.2, latMax: 53.7, lonMin: 11.1, lonMax: 14.9 }; // Berlin/Brandenburg (wie svcForCoords)
+const VBB_JOURNEY_URL = "https://v6.vbb.transport.rest/journeys";
+const VBB_TRIP_URL    = "https://v6.vbb.transport.rest/trips";
+function routeCoordsOf(sel) {   // Koordinaten eines Start-/Ziel-Eintrags (Adresse, GPS, Station, Fern-Station)
+  if (!sel) return null;
+  if (sel.lat != null && sel.lon != null) return { lat: sel.lat, lon: sel.lon };
+  if (sel.sn) {
+    const st = isRS(sel.sn) ? remoteStops.get(sel.sn) : null;
+    if (st && st.lat != null) return { lat: st.lat, lon: st.lon };
+    const stop = stops.find(s => s.shortName === sel.sn);
+    if (stop && stop.lat != null) return { lat: stop.lat, lon: stop.lon };
+    const d = isDB(sel.sn) ? dbStopOf(sel.sn) : null;
+    if (d && d.lat != null) return { lat: d.lat, lon: d.lon };
+  }
+  return null;
+}
+function routeInBox(c, box) {
+  return !!c && c.lat != null && c.lon != null &&
+    c.lat >= box.latMin && c.lat <= box.latMax && c.lon >= box.lonMin && c.lon <= box.lonMax;
+}
+function vbbHHMM(ms) {   // lokale Uhrzeit aus Epoch-Millisekunden
+  if (ms == null || isNaN(ms)) return "";
+  const d = new Date(ms), p = n => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes());
+}
+const vbbMs = iso => (iso == null || iso === "") ? null : Date.parse(iso);   // ISO-8601 mit Offset -> Epoch
+function routeWhenMs() {   // gewählte Suchzeit als lokale Epoch (Abfahrt ODER Ankunft)
+  const w = routeWhen();
+  return new Date(Number(w.date.slice(0, 4)), Number(w.date.slice(4, 6)) - 1,
+    Number(w.date.slice(6, 8)), Number(w.time.slice(0, 2)), Number(w.time.slice(2, 4)), 0, 0).getTime();
+}
+function vbbJourneyURL(dc, startName, ac, destName, whenMs) {   // from/to als Adress-Koordinaten (HAFAS A-lid-artig)
+  const q = ["from.latitude=" + dc.lat, "from.longitude=" + dc.lon];
+  if (startName) q.push("from.address=" + encodeURIComponent(String(startName).slice(0, 60)));
+  q.push("to.latitude=" + ac.lat, "to.longitude=" + ac.lon);
+  if (destName) q.push("to.address=" + encodeURIComponent(String(destName).slice(0, 60)));
+  q.push("results=6", "stopovers=true", "when=" + encodeURIComponent(new Date(whenMs).toISOString()));
+  return VBB_JOURNEY_URL + "?" + q.join("&");
+}
+function parseVbbJourney(j) {   // v6-REST-Journey -> Verbindungskarte im parseRoutePage-Format
+  const secs = [];
+  let line = null, dir = "", hasBus = false, nj = 0;
+  let vWalk = true, vScoot = true;
+  for (let li = 0; li < (j.legs || []).length; li++) {
+    const leg = j.legs[li];
+    const o = leg.origin || {}, d2 = leg.destination || {};
+    if (!leg.walking) {   // Fahr-Abschnitt (Bus, S-, U-, Tram, Zug)
+      const ln = String((leg.line && (leg.line.name || leg.line.fahrtNr)) || (leg.line && leg.line.id) || "?");
+      const rail = !!(leg.line && (leg.line.mode === "train" || leg.line.product === "suburban"));
+      line = ln; dir = String(leg.direction || (leg.line && leg.line.direction) || "");
+      if (!rail) hasBus = true;
+      nj++;
+      secs.push({ kind: "jny", line: ln, dir: dir, from: o.name, to: d2.name,
+        jid: leg.tripId || "", via: "vbb",   // fuer Expand: ganzer Lauf ueber /trips/<id> ladbar
+        dep: vbbHHMM(vbbMs(leg.departure)), depP: vbbHHMM(vbbMs(leg.plannedDeparture)),
+        arr: vbbHHMM(vbbMs(leg.arrival)), arrP: vbbHHMM(vbbMs(leg.plannedArrival)),
+        depDelay: leg.departureDelay == null ? null : Math.round(leg.departureDelay / 60),
+        arrDelay: leg.arrivalDelay == null ? null : Math.round(leg.arrivalDelay / 60),
+        rail: rail,   // Schiene: groesserer GPS-Radius (250 m statt 75 m)
+        stops: (leg.stopovers || []).map(sv => {
+          const st = sv.stop || {}, sl = st.location || st;
+          return { name: st.name || "?",
+            lat: sl.latitude != null ? sl.latitude : (st.lat != null ? st.lat : null),
+            lon: sl.longitude != null ? sl.longitude : (st.lon != null ? st.lon : null),
+            dS: vbbHHMM(vbbMs(sv.plannedDeparture)), dR: vbbHHMM(vbbMs(sv.departure)),
+            aS: vbbHHMM(vbbMs(sv.plannedArrival)), aR: vbbHHMM(vbbMs(sv.arrival)) };
+        }) });
+    } else {   // Wege: Fussweg (walking), selten Fahrrad/Auto
+      const mode = leg.mode;
+      const k = mode === "bike" || mode === "cycling" ? "bike" : mode === "car" ? "car" :
+        mode === "taxi" ? "taxi" : mode === "scooter" ? "scoot" : "walk";
+      if (k !== "walk") vWalk = false;
+      if (k !== "walk" && k !== "bike" && k !== "scoot") vScoot = false;
+      const depMs = vbbMs(leg.departure), arrMs = vbbMs(leg.arrival);
+      const mins = (depMs != null && arrMs != null) ? Math.round((arrMs - depMs) / 60000) : null;
+      if (mins === 0 && String(o.name) === String(d2.name)) continue;   // 0-min-Uebergang gleiche Haltestelle: wie NAH.SH-CHG
+      const ol = o.location || {}, dl = d2.location || {};
+      const nl = (j.legs || []).length - 1;   //adresse als Start/Ziel (VBB liefert bei Adressen keinen origin/destination-Knoten)
+      secs.push({ kind: k, from: o.name || (li === 0 ? "Start" : "Zwischenhalt"),
+        to: d2.name || (li === nl ? "Ziel" : "Zwischenhalt"),
+        fromLat: ol.latitude != null ? ol.latitude : null, fromLon: ol.longitude != null ? ol.longitude : null,
+        toLat: dl.latitude != null ? dl.latitude : null, toLon: dl.longitude != null ? dl.longitude : null,
+        distM: leg.distance != null ? leg.distance : null, mins: mins });
+    }
+  }
+  if (!secs.length) return null;
+  const f0 = j.legs[0] || {}, fN = j.legs[(j.legs || []).length - 1] || {};
+  const depMs = vbbMs(f0.departure) != null ? vbbMs(f0.departure) : vbbMs(f0.plannedDeparture);
+  const depPMs = vbbMs(f0.plannedDeparture);
+  const arrMs = vbbMs(fN.arrival) != null ? vbbMs(fN.arrival) : vbbMs(fN.plannedArrival);
+  const arrPMs = vbbMs(fN.plannedArrival);
+  return { dep: vbbHHMM(depMs), depP: vbbHHMM(depPMs),
+    arr: vbbHHMM(arrMs), arrP: vbbHHMM(arrPMs),
+    depAbsMs: depMs, depAbsMsP: depPMs, arrAbsMs: arrMs, arrAbsMsP: arrPMs,
+    dur: (depMs != null && arrMs != null) ? Math.max(0, Math.round((arrMs - depMs) / 60000)) : 0,
+    chg: Math.max(0, nj - 1), line: line, dir: dir, hasBus: hasBus,
+    vWalk: vWalk, vScoot: vScoot, secs: secs, src: "vbb" };
+}
+function routeProdVbbOk(c) {   // Produktfilter (alle/Bus/Schiene) fuer VBB-Verbindungen: jeder Fahr-Abschnitt muss passen
+  if (routeProd !== "bus" && routeProd !== "rail") return true;
+  for (const s of c.secs) {
+    if (s.kind !== "jny") continue;
+    if (routeProd === "bus" && s.rail) return false;
+    if (routeProd === "rail" && !s.rail) return false;
+  }
+  return true;
+}
+async function routeVbbSearch(dc, ac, startSel, destSel) {   // v1.5.5: VBB-Router fuer Berlin/Brandenburg
+  const targetMs = routeWhenMs();
+  const arrMode = !!routeArr;
+  const seen = new Set();
+  let out = [];
+  let whenMs = arrMode ? targetMs - 120 * 60000 : targetMs;   // Ankunftssuche: erst 2 h davor suchen (Naehrung, VBB hat keine echte Rueckwaertssuche)
+  let prevMs = 0;
+  for (let page = 0; page < 10; page++) {
+    const res = await apiFetch("vbb", vbbJourneyURL(dc, startSel && startSel.name, ac, destSel && destSel.name, whenMs));
+    if (!res.ok) throw new Error("VBB nicht erreichbar (HTTP " + res.status + ")");
+    const jj = await res.json();
+    const pageCons = [];
+    let maxMs = 0, minMs = null, added = 0;
+    for (const j of (jj.journeys || [])) {
+      const c = parseVbbJourney(j);
+      if (!c) continue;
+      pageCons.push(c);
+      if (c.depAbsMsP != null && c.depAbsMsP > maxMs) maxMs = c.depAbsMsP;
+      if (c.depAbsMsP != null && (minMs == null || c.depAbsMsP < minMs)) minMs = c.depAbsMsP;
+      const sig = routeSig(c);
+      if (seen.has(sig)) continue;
+      if (arrMode && c.arrAbsMs != null && c.arrAbsMs > targetMs + 60000) continue;   // Ankunftsmodus: NUR Verbindungen, die VOR der Zielzeit ankommen
+      seen.add(sig);
+      if (!routeProdVbbOk(c)) continue;
+      if (routeMob === "walk" ? (c.vWalk || routeWalkAdoptOk(c)) : c.vScoot) { out.push(c); added++; }
+    }
+    if (!pageCons.length) break;
+    if (arrMode && out.length >= 8) break;   // genug letzte-Ankunft-Treffer gesammelt
+    if (!arrMode && out.length >= ROUTE_CONS_GOAL) break;
+    if (arrMode) {   // weiter ZURUECK (spaetere Abfahrten kommen zuerst, fruehere brauchen neue Runden)
+      if (minMs == null || minMs <= prevMs || minMs < targetMs - 6 * 3600000) break;
+      prevMs = minMs; whenMs = minMs - 60000;
+    } else {
+      if (maxMs <= prevMs) break;   // kein Fortschritt (Ende des Fahrplans)
+      prevMs = maxMs; whenMs = maxMs + 60000;   // ab der spaetesten gefundenen Abfahrt weiterblaettern
+    }
+    await new Promise(r => setTimeout(r, 400));   // kurzer Abstand zum Gate (Drosselung)
+  }
+  if (arrMode && out.length) {   // Naehrung kennzeichnen (keine echte Rueckwaertssuche im VBB-Dienst)
+    out.sort((a, b) => (b.arrAbsMs || 0) - (a.arrAbsMs || 0));
+    if (out.length > ROUTE_CONS_GOAL) out = out.slice(0, ROUTE_CONS_GOAL);
+    setLocNote("Ankunftssuche in Berlin/Brandenburg ist eine Näherung: angezeigt werden die letzten Verbindungen mit Ankunft vor der gewählten Zeit.");
+  }
+  if (routeMob === "walk") out = routeWalkAdopt(out);   // Fahrrad-Zubringer wie in NAH.SH-Verbindungen nachrechnen
+  out = await routeRideTrim(out);   // Weg-Kuerzung durch Weiterfahren funktioniert auf demselben Verbindungsmodell
+  return routeApplySort(out);
+}
+async function routeStationLid(sel, resolved, which) {   // Bahnhofs-Fallback: NAH.SH kennt Bahnhöfe deutschlandweit
+  if (resolved && resolved.locType === "S" && resolved.lid)
+    return { lid: resolved.lid, name: resolved.name || (sel && sel.name) || which };
+  const q = String((sel && (sel.name || sel.label)) || "").trim();
+  if (!q) throw new Error("Ohne Ortsangabe keine Bahnhofssuche möglich.");
+  const res = await routeHafas("LocMatch", { input: { field: "S", loc: { name: q, type: "S" } } });
+  const locs = (res && res.match && res.match.locL) || [];
+  const c = (sel && sel.lat != null) ? { lat: sel.lat, lon: sel.lon } : null;
+  let best = null, bestD = null;
+  for (const m of locs) {
+    const crd = m.crd || {};
+    if (crd.y == null) continue;
+    if (c) {
+      const d = dist(c, { lat: crd.y / 1e6, lon: crd.x / 1e6 });
+      if (bestD == null || d < bestD) { bestD = d; best = m; }
+    } else if (!best) best = m;
+  }
+  if (!best) throw new Error("NAH.SH kennt keinen Bahnhof zu \u201e" + q + "\u201c: Außerhalb Schleswig-Holsteins und Berlin/Brandenburg funktioniert die Verbindungssuche nur zwischen Bahnhöfen.");
+  return { lid: best.lid, name: best.name };
+}
+async function routeStationFallback(dep, arr) {   // v1.5.5: H9220-Heilung: Zug-Verbindung zwischen den NAH.SH-Bahnhöfen
+  const S = await routeStationLid(routeSel.start, dep, "Start");
+  const A = await routeStationLid(routeSel.dest, arr, "Ziel");
+  const out = await routeNahshLoop({ locType: "S", lid: S.lid }, { locType: "S", lid: A.lid });
+  if (!out || !out.length)
+    throw new Error("Keine Verbindung zwischen " + S.name + " und " + A.name + " gefunden.");
+  setLocNote("Start/Ziel außerhalb des Nah.sh-Gebiets: Zug-Verbindung zwischen den Bahnhöfen \u201e" + S.name + "\u201c und \u201e" + A.name + "\u201c (ÖPNV am Ort und genaue Adressen gibts in Schleswig-Holstein und Berlin/Brandenburg).");
+  return out;
+}
+async function routeTripSearch() {   // v1.5.5: Regionen-Weiche (VBB -> NAH.SH -> Bahnhofs-Fallback)
   await abgWait("start"); await abgWait("dest");
   const dep = await routeResolve(routeSel.start);
   const arr = await routeResolve(routeSel.dest);
+  const dc = routeCoordsOf(routeSel.start), ac = routeCoordsOf(routeSel.dest);
+  if (routeInBox(dc, ROUTE_VBB_BOX) && routeInBox(ac, ROUTE_VBB_BOX)) {   // komplett Berlin/Brandenburg: VBB-Router
+    try {
+      const vout = await routeVbbSearch(dc, ac, routeSel.start, routeSel.dest);
+      if (vout && vout.length) return vout;
+    } catch (e) {   // VBB gescheitert: weiter mit der NAH.SH-Kette als fallback
+    }
+  }
+  try {
+    return await routeNahshLoop(dep, arr);
+  } catch (e) {
+    const msg = String(e && e.message || e);
+    if (msg.indexOf("H9220") < 0) throw e;
+    return await routeStationFallback(dep, arr);   // wirft selbst Klartext, wenn auch Bahnhöfe nichts liefern
+  }
+}
+async function routeNahshLoop(dep, arr) {   // v1.5.5: der klassische NAH.SH-TripSearch (Start und Ziel im Nah.sh-Gebiet)
   let when = routeWhen();
   let out = []; const seen = new Set(); const pool = [];
   let prevMs = 0;
@@ -11870,7 +12107,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart wieder da; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen aus dem NAH.SH-Hafas. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.4.8 sortiert der Knopf ⏱ Frühste Ankunft ▾ die Treffer der Verbindungssuche: ein Tap klappt drei Sortierarten mit kurzer Erklärung auf, ⏱ frühste Ankunft (Standard: wer zuerst am Ziel ist, steht oben), 🚀 kürzeste Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 weniger Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt).");
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit sowie Produktfilter (alle/Bus/Schiene). Verbindungen stammen seit v1.5.5 je nach Region aus dem passenden Router: Start UND Ziel in Berlin/Brandenburg fragt der VBB-Router, alles Weitere NAH.SH; scheitert NAH.SH, weil ein Endpunkt außerhalb Schleswig-Holsteins liegt, springt die Suche auf bundesweites Zug-Routing zwischen Bahnhöfen. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.4.8 sortiert der Knopf ⏱ Frühste Ankunft ▾ die Treffer der Verbindungssuche: ein Tap klappt drei Sortierarten mit kurzer Erklärung auf, ⏱ frühste Ankunft (Standard: wer zuerst am Ziel ist, steht oben), 🚀 kürzeste Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 weniger Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt."); h += P("<b>CitySurfers LIVE – Regionale Router der Verbindungssuche (v1.5.5):</b> Der NAH.SH-HAFAS beantwortet nur Anfragen mit Start UND Ziel im eigenen Gebiet; sobald EIN Endpunkt eine Adresse oder Koordinate außerhalb Schleswig-Holsteins ist, antwortet er H9220 (außerhalb des Provider-Gebiets). Deshalb fragt die Verbindungssuche jetzt zuerst den VBB-Router, wenn Start und Ziel beide in Berlin/Brandenburg liegen: derselbe offene Dienst (v6.vbb.transport.rest), der auch die Berliner Live-Abfahrten liefert, mit echten Fußwegen, Echtzeit-Verspätungen, Bahngleisen, Haltestellen je Abschnitt und der VBB-LED oben rechts; ist die VBB-Suche leer oder gestört, läuft automatisch die bisherige NAH.SH-Kette weiter. Liegt Start oder Ziel außerhalb Schleswig-Holsteins und Berlin/Brandenburg, heilt die App den NAH.SH-Fehler H9220 selbst: Beide Endpunkte werden auf die nächstgelegenen Bahnhöfe gelegt, und die Verbindungssuche liefert die Zug-Verbindung zwischen ihnen (ÖPNV am Ort kennt NAH.SH außerhalb des eigenen Gebiets nicht); ein Hinweis unter der Suche nennt die gewählten Bahnhöfe. Die Ankunftssuche („Ankunft“ statt Abfahrt) kann der VBB-Dienst technisch nicht rückwärts – dort nähert die App an, indem sie in mehreren Abfrage-Runden die letzten Verbindungen vor der gewählten Ankunftszeit sammelt (Hinweis an der Suche, Genauigkeit circa eine Verbindung); bei NAH.SH bleibt die echte Ankunftssuche unverändert. Bahnhof-Favoriten und Fern-Stationen funktionieren in beiden Fällen wie gehabt.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
@@ -14186,7 +14423,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.5.4 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.5.5 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
