@@ -677,6 +677,7 @@
   #apiInd [data-ind=kvg]  { --c: #00519E; }  /* KVG (Bus): Verkehrsblau */
   #apiInd [data-ind=vbb]  { --c: #F5C500; }  /* VBB (Berlin/Brandenburg): Verbands-Gelb */
   #apiInd [data-ind=vvs]  { --c: #A78BFA; }  /* VVS (Stuttgart): Violett */
+  #apiInd [data-ind=mvv]  { --c: #4ADE80; }  /* MVV (Muenchen): Muencchner Gruen */
   #apiInd [data-ind=dvb]  { --c: #FF5CA8; }  /* DVB (Dresden): Pink */
   #apiInd [data-ind=nom]  { --c: #7EBC6F; }  /* Photon/Nominatim (OSM): Gruen */
   #apiInd [data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
@@ -689,6 +690,7 @@
   .regsvc.dnahsh { color: #ff8a93; }
   .regsvc.dvbb  { color: #ffd54a; }
   .regsvc.dvvs  { color: #c9b5fd; }
+  .regsvc.dmvv  { color: #86efb0; }
   .regsvc.ddvb  { color: #ffb0d4; }
   /* v1.5.0: Statistik-Legende: Kurzbezeichnung fett, danach die Spezifikation */
   #apiStats .asname b { color: #e2e8f0; }
@@ -870,6 +872,9 @@
       <p><b>VVS</b> <span class="regsvc dvvs">VVS</span> (violette LED): Live-Abfahrten der Region Stuttgart über
       die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit). Auflösung
       per Koordinatenabgleich, sonst nah.sh-Fallback.</p>
+      <p><b>MVV</b> <span class="regsvc dmvv">MVV</span> (grüne LED): Live-Abfahrten in München und Umland über die
+      offizielle EFA-Schnittstelle efa.mvv-muenchen.de (XSLT_DM_REQUEST mit Echtzeit-Flag, Ist-Zeit-Feld realDateTime
+      und Status realtimeTripStatus). Auflösung namentlich mit Koordinatenabgleich bis 600 m, sonst nah.sh-Fallback.</p>
       <p><b>DVB</b> <span class="regsvc ddvb">DVB</span> (pinke LED): Live-Abfahrten in Dresden über die offene
       Web-API webapi.vvo-online.de (Haltestellen-Suche und Abfahrten mit RealTime/ScheduledTime). Auflösung
       namentlich (die API nutzt Gauss-Krüger-Koordinaten), sonst nah.sh-Fallback.</p>
@@ -3101,10 +3106,11 @@ const RS_PREFIX = "RS:";          // Kennzeichen einer Fern-Station im Reiter-Sy
 const RS_MIN_CHARS = 3;           // ab so vielen Buchstaben wird LocMatch gefragt
 const RS_MAX_HITS = 6;            // höchstens so viele Fern-Stationen je Suche
 const RS_CACHE_TTL = 600000;      // LocMatch-Treffer 10 Minuten im Cache (Rate-Schutz)
-const RS_SVC_LABEL = { nahsh: "nah.sh", vbb: "VBB", vvs: "VVS", dvb: "DVB" };
+const RS_SVC_LABEL = { nahsh: "nah.sh", vbb: "VBB", vvs: "VVS", mvv: "MVV", dvb: "DVB" };
 function svcForCoords(lat, lon) {   // Facelift: regionaler Live-Dienst je Grob-BBox, sonst nah.sh
   if (lat >= 51.2 && lat <= 53.7 && lon >= 11.1 && lon <= 14.9) return "vbb";   // Berlin/Brandenburg
   if (lat >= 47.9 && lat <= 49.5 && lon >= 8.6  && lon <= 10.4) return "vvs";   // Stuttgart-Region
+  if (lat >= 47.75 && lat <= 48.6 && lon >= 10.95 && lon <= 12.15) return "mvv";   // München und Umland (Freising bis Ebersberg, ohne Augsburg)
   if (lat >= 50.8 && lat <= 51.3 && lon >= 13.0 && lon <= 14.3) return "dvb";   // Raum Dresden
   return "nahsh";
 }
@@ -6990,6 +6996,7 @@ const API_KINDS = {
   kvg:  { label: "KVG",  desc: "Kieler Verkehrsgesellschaft: Live-Busabfahrten über die inoffizielle JSON-Schnittstelle (INIT InternetService, dieselbe Quelle wie kvg-kiel.de), inklusive Ist-Zeiten, Prognosen und Bussteigen", color: "#00519E" },
   vbb:  { label: "VBB",  desc: "Verkehrsverbund Berlin-Brandenburg: Live-Abfahrten der Fern-Stationen in Berlin und Brandenburg über v6.vbb.transport.rest mit Echtzeit-Verspätungen", color: "#F5C500" },
   vvs:  { label: "VVS",  desc: "Verkehrs- und Tarifverbund Stuttgart: Live-Abfahrten der Fern-Stationen in der Region Stuttgart über die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit)", color: "#A78BFA" },
+  mvv:  { label: "MVV",  desc: "Münchner Verkehrs- und Tarifverbund: Live-Abfahrten der Fern-Stationen in München und Umland über die offizielle EFA-Schnittstelle efa.mvv-muenchen.de (XSLT_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit)", color: "#4ADE80" },
   dvb:  { label: "DVB",  desc: "Dresdner Verkehrsbetriebe: Live-Abfahrten der Fern-Stationen in Dresden über die offene Web-API webapi.vvo-online.de (haltestellen-suche und Abfahrten mit RealTime)", color: "#FF5CA8" },
   nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
   osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
@@ -7352,6 +7359,90 @@ async function rsResolveDVB(m) {   // DVB-Stop-ID über den pointfinder (namentl
   }
   return null;
 }
+function mvvDT(d) {   // MVV-EFA-Datum {year,month,day,hour,minute} -> ISO (Minute kann einstellig sein)
+  if (!d || !d.year || d.month == null || d.day == null || d.hour == null || d.minute == null) return "";
+  const p = n => String(n).padStart(2, "0");
+  return d.year + "-" + p(d.month) + "-" + p(d.day) + "T" + p(d.hour) + ":" + p(d.minute) + ":00";
+}
+async function rsDepsMVV(m) {   // München/Umland: offizielle MVV-EFA /ng/ mit Echtzeit, namentlich und koordinatenverifiziert
+  const base = "https://efa.mvv-muenchen.de/ng/XSLT_DM_REQUEST?outputFormat=JSON&language=de&stateless=1" +
+    "&coordOutputFormat=WGS84%5BDD.DDDDD%5D&useRealtime=1&zope_command=enquiry&type_dm=stop" +
+    "&itOptionsActive=1&ptOptionsActive=1&mergeDep=1&useAllStops=1&mode=direct&anyMaxSizeHitList=10000&name_dm=";
+  const call = async id => {
+    const res = await apiFetch("mvv", base + encodeURIComponent(id));
+    return res.ok ? await res.json() : null;
+  };
+  const parsePoints = j => {   // dm.points kann dict {point} ODER Liste sein (mehrdeutige Namen)
+    const pts = (j && j.dm && j.dm.points) || null;
+    if (!pts) return [];
+    const arr = Array.isArray(pts) ? pts : (pts.point ? [].concat(pts.point) : []);
+    return arr.filter(p => p && p.usage === "dm" && p.stateless);
+  };
+  const mvvDepsArr = j => {   // departureList ist Liste oder {departure:[...]}
+    const dl = (j && j.departureList) || null;
+    if (!dl) return [];
+    return Array.isArray(dl) ? dl : [].concat(dl.departure || []);
+  };
+  const verify = (j, wantId) => {   // eindeutige Auflösung: Punkt-Koordinaten <= 600 m, sonst raus
+    for (const p of parsePoints(j)) {
+      const co = String(((p.ref || {}).coords) || "");
+      if (!co) continue;
+      const cl = co.split(",");
+      if (cl.length < 2) continue;
+      const la = parseFloat(cl[1]), lo = parseFloat(cl[0]);
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      if (dist({ lat: la, lon: lo }, m) > 600) continue;
+      if (wantId && p.stateless !== wantId) continue;
+      m.rId = String(p.stateless);
+      return String(p.stateless);
+    }
+    return null;
+  };
+  let j = null;
+  if (m.rId) {
+    j = await call(m.rId);
+    if (!j || !verify(j, m.rId)) return null;
+  } else {
+    j = await call(m.name);
+    const pts = parsePoints(j);
+    let ok = !!(mvvDepsArr(j).length && verify(j, null));
+    if (!ok) {   // mehrdeutiger Name: Kandidaten einzeln nach-Resolve, Distanz entscheidet (max. 5 Versuche)
+      for (const p of pts.slice(0, 5)) {
+        const j2 = await call(p.stateless);
+        if (!j2) continue;
+        if (mvvDepsArr(j2).length && verify(j2, p.stateless)) { j = j2; ok = true; break; }
+      }
+    }
+    if (!ok) return null;
+  }
+  const dl = mvvDepsArr(j);
+  const now = Date.now();
+  const out = [];
+  for (const x of dl) {
+    if (!x || !x.servingLine) continue;
+    const sv = x.servingLine;
+    const isoP = mvvDT(x.dateTime);
+    if (!isoP) continue;
+    const hasRT = !!(x.realDateTime && sv.realtime === "1" && mvvDT(x.realDateTime));
+    const tP = Date.parse(isoP);
+    const tR = hasRT ? Date.parse(mvvDT(x.realDateTime)) : NaN;
+    const t = isFinite(tR) ? tR : tP;
+    if (!isFinite(t)) continue;
+    const cd = x.countdown != null ? parseInt(x.countdown, 10) : Math.round((t - now) / 60000);
+    if (!isFinite(cd) || cd < 0) continue;   // bereits abgefahrene Fahrten haben negativen Countdown
+    out.push({
+      tripId: "mvv|" + (sv.stateless || sv.code || "?") + "|" + t,
+      line: String(sv.symbol || sv.number || sv.name || "").trim() || "Fahrt",
+      direction: String(sv.direction || ""),
+      plannedTime: isoHHMM(isFinite(tP) ? tP : t), actualTime: isoHHMM(t),
+      actualRelativeTime: cd * 60,
+      status: hasRT ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String(x.platformName || x.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
 async function rsDepsDVB(m) {   // Dresden: offene Web-API (RealTime/ScheduledTime als .NET-Datum)
   const id = await rsResolveDVB(m);
   if (!id) return null;
@@ -7390,6 +7481,7 @@ async function rsGetDepartures(sn) {   // Facelift-System: regional zuerst, sons
   try {
     if (m.svc === "vbb") rows = await rsDepsVBB(m);
     else if (m.svc === "vvs") rows = await rsDepsVVS(m);
+    else if (m.svc === "mvv") rows = await rsDepsMVV(m);
     else if (m.svc === "dvb") rows = await rsDepsDVB(m);
   } catch (e) { rows = null; }
   if (rows) return rows;
@@ -11544,7 +11636,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
   h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Der 🚲?-Knopf am aktiven Standort unter dem Adressfeld ist seit v1.4.18 entfallen, weil die Leihstationen direkt über die Stationssuche erreichbar sind. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
   h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern in zwei Listen (seit v1.4.16: E-Bikes nach Akkustand absteigend, darunter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar und der Rest hinter einem Aufklapp-Knopf; jedes Rad trägt seinen von Donkey vergebenen Vornamen wie „Frieda“ mit Kurz-ID), hinter jedem Rad das kleine Esel-Symbol 🫏 als Donkey-App-Link (v1.4.16, ersetzt den früheren 📲-Chip aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung (seit v1.4.17 erscheint der 📌-Knopf nur bei übernommener Station, und unter Punkt 2 stehen Zähler und ausklappbare Rad-Liste der Station, Details im v1.4.17-Absatz). Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
-   h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
+   h += P("<b>🚉 MVV: München als Regiondienst (v1.5.1):</b> München und Umland gehören zum Facelift-System: Fern-Stationen der Region (von Starnberg über die Innenstadt bis Freising und Ebersberg) zeigen Live-Abfahrten über die offizielle MVV-EFA-Schnittstelle (efa.mvv-muenchen.de), mit Echtzeit-Ist-Zeit, Countdown und Bahnsteig; bereits abgefahrene Fahrten entfallen. Beste Echtzeit-Quote der App: Praktisch alle Abfahrten an Marienplatz (U-Bahn, Tram, Bus) und Ostbahnhof laufen mit Ist-Zeit. Die zusätzliche grüne LED blinkt als zehnte in der Kette. Scheitert die Abfrage oder liegt die aufgelöste Station weiter als 600 m von der nah.sh-Station entfernt, greift wie überall der nah.sh-Fallback. Außerhalb der Münchner Region verändert sich nichts: Berlin, Stuttgart und Dresden behalten ihre Dienste, alles Übrige läuft über nah.sh."); h += P("<b>🚏 Bundesweite Fern-Stationen und Datenquellen-LEDs (v1.5.0):</b> Ab drei Buchstaben fragt die Stationssuche zusätzlich den NAH.SH-Stations-Finder (LocMatch) ab und zeigt passende Stationen im ganzen Deutschland unter den Kieler Treffern, jeweils mit 🚏-Symbol, dem Kurzzeichen ihres Live-Dienstes (nah.sh, VBB, VVS, MVV oder DVB) und der Luftlinie; die Quellen-Filter von v1.4.18 greifen auch hier (DB und ÖPNV zusammen aus schließt Fern-Stationen aus). Ein Tipp öffnet einen eigenen Stations-Reiter mit Live-Abfahrten wie bei jeder Kieler Haltestelle, eigenes GPS je Reiter, ↻-Aktualisieren und Karte-Icon; aus Favoriten sind Fern-Stationen ausgenommen. Für die Live-Daten gilt das Facelift-System: Die App fragt zunächst den regionalen Live-Dienst der Region (VBB in Berlin und Brandenburg, VVS in der Region Stuttgart, MVV in München und Umland, DVB in Dresden; Kiel läuft wie gehabt direkt über die KVG) und greift erst aus, wenn der scheitert oder nichts liefert, auf den deutschlandweiten nah.sh-Fallback zurück: Fahrplan bundesweit, Echtzeit, soweit vorhanden. Die LED-Kette oben rechts: Je Dienst eine kleine LED in seiner Farbe (nah.sh rot, KVG blau, VBB gelb, VVS violett, MVV grün, DVB pink, OSM grün, OSRM orange, Donkey cyan), jede blinkt, wenn ihr Dienst Daten liefert; ein Tipp auf die Leiste klappt die Legende mit Kurzbezeichnung, Spezifikation, Anfragen und übertragenen Bytes auf, inklusive Zurücksetzen. Der Über-Reiter nennt zuerst die Zielsetzung der App und danach alle Datenquellen im Detail."); h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
   h += P("<b>📌 Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog (v1.4.17):</b> Der 📌-Knopf unter dem Abholrad-Pulldown ist Spezialist: Er erscheint nur noch, wenn der Dialog mit einer übernommenen Donkey-Station geöffnet wurde (🚲-Zeile der Stationssuche oder 🚲?-Knopf im MM-Reiter). Genau dann soll Punkt 2 festgehalten werden, während Punkt 1 (Start) noch frei wechselbar ist oder gerade die GPS-Position läuft; nochmal drücken löst die Fixierung, wieder drücken fixiert die Station des aktuell gewählten Rads neu. Ohne übernommene Station gibt es den Knopf gar nicht, denn dort ergibt Fixieren keinen Sinn: Punkt 2 bleibt dann die normale Räder-Suche um den Start. Bei fixierter Station steht unter Punkt 2 jetzt außerdem ein Zähler (freie E-Bikes mit mind. 40 % Akku, freie Standardräder, reservierte/gesperrte dahinter) und darunter die ausklappbare Rad-Liste der Station mit genau einem sichtbaren Eintrag: E-Bikes nach Akkustand absteigend (ohne Wert ans Ende), dahinter die Standardräder nach Namen, je mit Vorname, Akku, Reichweite und dem kleinen Esel-Symbol als Donkey-App-Link hinter dem Rad. Der Überblick ist damit schon vor der Rad-Wahl da, aufgeklappt auf Wunsch.");
   h += P("<b>🫏 Donkey-App-Link, Rad-Namen und Knopf-Breite (v1.4.16):</b> Der offizielle Miet-Link eines Rads ist jetzt ein kleines Donkey-Esel-Symbol direkt hinter dem Rad: Es verbraucht keine eigene Zeile und öffnet auf dem Handy die Donkey-App direkt beim Rad; ohne installierte App landet man auf der Download-Seite von Donkey (ältere Geräte ohne das Esel-Emoji zeigen automatisch 📲). Die Räder heißen bei Donkey richtig („Frieda“, „E-bike Fischi“); donkeyproxy.php liest diese Namen jetzt mit aus und die App zeigt sie überall: im Pulldown des Routing-Dialogs, in der Rad-Zeile des Dialogs, im MM-Reiter (dort als zwei Listen: E-Bikes nach Akkustand absteigend, dahinter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar) und im Abholrad-Weg der übernommenen MM-Route. Die Knöpfe der Hauptleiste sind alle exakt so breit wie die Knöpfe der obersten Zeile, und eine nicht ganz gefüllte Zeile steht mittig. Die Favoritenknöpfe sind komplett dynamisch: Beim ersten Start gibt es genau einen, weitere entstehen per langem Druck (bis acht), und Löschen nimmt den Knopf jetzt zuverlässig aus der Leiste, Belegungen rutschen nach, der letzte bleibt immer stehen.");
   h += P("<b>Farbige Reiter und Knopf-Umbruch (v1.4.15):</b> Die Reiter oben tragen jetzt die Farbe ihres Knopfes in der Leiste: Route-Reiter sind pink wie der 🧭 Route-Knopf, MM-Reiter blau wie 🚲 MM, Stations-Reiter bleiben beim gewohnten Stil; aktive Reiter leuchten in ihrer Farbe, inaktive bleiben dezent. Die Knöpfe der Leiste brechen früh genug um und behalten eine nutzbare Breite; seit v1.4.16 sind alle Knöpfe außerdem exakt so breit wie die der obersten Zeile, eine nicht ganz gefüllte Zeile steht mittig.");
@@ -13852,7 +13944,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.0 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.5.1 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
