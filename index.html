@@ -64,12 +64,11 @@
   .chip.mini { padding: 1px 6px; font-size: 0.72rem; border-radius: 6px; }
   .chip.mini.dim2 { background: #0b1222; border-color: #1e3a5f; color: #94a3b8; }
   .tname[data-stopopen] { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
-  .bigbtns { display: flex; gap: 8px; margin: 10px 0 2px; }
-  /* Ab einer bestimmten Textgröße (oder sehr engem Bildschirm): 2 Reihen à 3 Knöpfe,
-     damit die Knöpfe eine annähernd quadratische Form behalten */
-  .bigbtns.wrap2 { flex-wrap: wrap; }
-  .bigbtns.wrap2 .bigbtn { flex: 1 1 30%; }
-  .bigbtn { flex: 1 1 0; min-width: 0; border: none; border-radius: 12px; padding: 9px 4px 7px;
+  .bigbtns { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+  /* v1.4.15: Die Knopf-Reihe bricht frueher und sauber um: Jeder Knopf behaelt mit
+     min-width eine nutzbare Breite, statt mit jedem zusaetzlichen Knopf schmaler zu
+     werden, und fuellt die Zeile gleichmaessig aus. */
+  .bigbtn { flex: 1 1 0; min-width: 64px; border: none; border-radius: 12px; padding: 9px 4px 7px;
     font-size: 1.45rem; line-height: 1.15; color: #fff; cursor: pointer; position: relative;
     display: flex; flex-direction: column; align-items: center; gap: 2px; overflow: hidden; }
   .bigbtn small { font-size: 0.66rem; font-weight: 600; letter-spacing: 0.02em; max-width: 100%;
@@ -616,6 +615,15 @@
     border-radius: 10px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
     color: #cbd5e1; background: #0f172a; font-size: 0.85rem; user-select: none; }
   #tabsbar .tab.on { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,.12); }
+  /* v1.4.15: Reiter in der Farbe ihres Knopfes in der Leiste: Route-Reiter pink
+     (wie der Route-Knopf), MM-Reiter blau (wie der MM-Knopf). Aktive Reiter
+     deutlich, inaktive dezent, Stations-Reiter bleiben beim gewohnten Stil. */
+  #tabsbar .tab.k-r { border-color: #7c3355; color: #cf93b5; background: rgba(211,111,165,.07); }
+  #tabsbar .tab.k-r .tabx { color: #8d5a76; }
+  #tabsbar .tab.k-r.on { border-color: #e879ae; color: #f2b6d3; background: rgba(211,111,165,.16); }
+  #tabsbar .tab.k-m { border-color: #274f7e; color: #8fb8e2; background: rgba(77,143,214,.07); }
+  #tabsbar .tab.k-m .tabx { color: #54749c; }
+  #tabsbar .tab.k-m.on { border-color: #5e9fdd; color: #bfdbf4; background: rgba(77,143,214,.16); }
   #tabsbar .tab.dragging { opacity: .4; }
   #tabsbar .tabx { background: none; border: none; color: #64748b; cursor: pointer; padding: 0 0 0 2px; font-size: 0.75rem; }
   #tabsbar .tabx:hover { color: #f87171; }
@@ -744,7 +752,7 @@
     <button class="bigbtn teal" id="bbVeh" title="Ich sitze im Bus oder Zug: die gerade genutzte Linie automatisch erkennen – das Linienschild zeigt die Nummern der wahrscheinlichsten Fahrten live an"><span class="bbsym vehbadge" id="bbVehBadge">???</span><small>Fahrzeug</small></button>
     <button class="bigbtn violet" id="bbRoute" title="Route planen: Start und Ziel wählen, Abfahrtszeit festlegen – die nächsten Verbindungen erscheinen im Route-Reiter"><span class="bbsym">🧭</span><small>Route</small></button>
     <button class="bigbtn blue" id="bbMM" title="Micromobility Routing: Leihfahrrad-Route planen (Start, Abholrad, Rückgabe, Ziel) und fertig als MM-Reiter übernehmen, mit der Abholstation oben und allen Rädern dort"><span class="bbsym">🚲</span><small>MM</small></button>
-    <button class="bigbtn teal" id="bb1" title="Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen"><span class="bbsym">☆</span><small>frei</small></button>
+    <button class="bigbtn teal" id="bb1" title="Langer Druck: Favorit hier neu belegen, weiteren Favoriten-Knopf erzeugen oder diesen Knopf löschen"><span class="bbsym">☆</span><small>frei</small></button>
     <button class="bigbtn pink" id="bb2" title="Langer Druck: mit Favorit belegen"><span class="bbsym">☆</span><small>frei</small></button>
   </div>
 
@@ -847,9 +855,12 @@
       <p class="dim">Problem an support@pixcaelium.de melden: Der Knopf öffnet einen Bestätigungs-
         Dialog. Darin beschreibst du dein Problem in einem Textfeld, bestätigst ausdrücklich, dass
         App-Daten in die E-Mail übernommen werden, und wählst per Checkbox, welche Inhalte als Text
-        mitgesendet werden: Adresssuche, Stationssuche, die geöffneten Route- und Stations-Reiter
-        (inklusive ihrer Unter-Reiter mit Fahrplänen und Zeiten), Adress- und Stations-Favoriten –
-        einzeln oder alles gemeinsam. Die E-Mail öffnet sich ungesendet in deinem E-Mail-Programm
+        mitgesendet werden: Adresssuche, Stationssuche, die geöffneten Route-, Stations- und
+        MM-Reiter (inklusive ihrer Unter-Reiter mit Fahrplänen und Zeiten; MM-Reiter mit Abholstation,
+        Abholrad, Rückgabe, Ziel und geplanter Ankunft je übernommener Route), Adress- und
+        Stations-Favoriten, einzeln oder alles gemeinsam. Von jeder Reiter-Art werden alle zurzeit
+        offenen Reiter vorausgewählt mitgeschickt, der Haken ist je Reiter einzeln entfernbar.
+        Die E-Mail öffnet sich ungesendet in deinem E-Mail-Programm
         (Betreff „Bugreport CitySurfer v…“), dort ist vor dem Absenden noch jede Zeile
         bearbeitbar.</p>
       <p><button class="chip ok" id="supportBtn" title="Support-Dialog öffnen: E-Mail an support@pixcaelium.de mit Problembeschreibung und ausgewähltem App-Zustand vorbereiten">🐞 Support-Mail schreiben</button></p>
@@ -3285,7 +3296,7 @@ function renderTabs() {
     if (ri >= 0) {
       const rt = routeTabs[ri];
       const nm = defTabName("r", rt);
-      h += '<div class="tab' + (ri === routeActiveTab && routeTabActive ? " on" : "") +
+      h += '<div class="tab k-r' + (ri === routeActiveTab && routeTabActive ? " on" : "") +
         '" draggable="true" data-kind="r" data-uid="' + escapeHtml(uid) + '" data-tr="' + ri +
         '" title="🧭 Route: ' + escapeHtml(nm) + ' – lange drücken (oder Rechtsklick): umbenennen und verschieben"><span class="tico">🧭</span>' +
         '<span class="tabname">' + escapeHtml(nm) + '</span>' +
@@ -3295,7 +3306,7 @@ function renderTabs() {
     const mi = mmTabs.findIndex(x => x.uid === uid);
     if (mi >= 0) {   // v1.4.14: MM-Reiter (Micromobility): Abholstation oben, MM-Routen darunter
       const mt = mmTabs[mi];
-      h += '<div class="tab' + (mi === mmActiveTab && mmTabActive ? " on" : "") +
+      h += '<div class="tab k-m' + (mi === mmActiveTab && mmTabActive ? " on" : "") +
         '" draggable="true" data-kind="m" data-uid="' + escapeHtml(uid) + '" data-mi="' + mi +
         '" title="🚲 MM: ' + escapeHtml(mt.name) + ' · Abholstation mit allen Rädern dort und die übernommenen Leihrad-Routen"><span class="tico">🚲</span>' +
         '<span class="tabname">' + escapeHtml(mt.name) + '</span>' +
@@ -5739,8 +5750,9 @@ window.kvgImportState = function (code) {
 // Der Support-Knopf im Fuß (zwischen „⇅ Export/Import“ und „Impressum“) öffnet
 // einen Bestätigungs-Dialog: Problembeschreibung eintragen, ausdrücklich
 // bestätigen, dass App-Daten mitgesendet werden, und per Checkbox auswählen,
-// welche Inhalte als Text in die E-Mail wandern (Suchfelder, offene Reiter samt
-// Unter-Reitern mit Fahrplänen und Zeiten, Favoriten). Die E-Mail selbst geht
+// welche Inhalte als Text in die E-Mail wandern (Suchfelder, offene Route-,
+// Stations- und MM-Reiter samt Unter-Reitern mit Fahrplänen und Zeiten,
+// Favoriten; je Reiter-Art sind alle gerade offenen Reiter vorausgewählt). Die E-Mail selbst geht
 // als mailto:-Link an das installierte E-Mail-Programm (support@pixcaelium.de,
 // Betreff „Bugreport CitySurfer v…“): Sie öffnet sich UNGESENDET – im
 // E-Mail-Programm lässt sich vor dem Absenden noch jede Zeile ansehen,
@@ -5807,6 +5819,34 @@ function supportRouteTabText(idx) {
   });
   return h;
 }
+// Ein MM-Reiter als Text (v1.4.15): Abholstation und je übernommener Leihrad-
+// Route Start, Abholrad, Rückgabe, Ziel und geplante Ankunft als Zeilen.
+function supportMMTabText(idx) {
+  const mt = mmTabs[idx];
+  if (!mt) return "";
+  let h = "MM-Reiter " + (idx + 1) + ": „" + ((mt.name != null && mt.name) ? mt.name : "Leihstation") + "“ (Abholstation)";
+  const d = donkeyCache && donkeyCache.d;
+  if (mt.stId != null && d && (d.s || []).length) {
+    const stn = (d.s || []).find(x => x && x.id === mt.stId);
+    if (stn && stn.name) h += " · " + stn.name;
+  }
+  const routes = mt.routes || [];
+  h += "\n  Übernommene MM-Routen: " + routes.length;
+  routes.forEach((mm, i) => {
+    h += "\n    [" + (i + 1) + "] Start " + ((mm.from && mm.from.name) || "?") +
+      " → Ziel " + ((mm.dest && mm.dest.name) || "?") +
+      ", geplante Ankunft " + mmClockOfMs(mm.planArrMs) + " Uhr" +
+      (mm.tot != null ? ", Gesamtzeit " + mm.tot + " min" : "");
+    h += "\n      Abholrad #" + bikeShortId(mm.bike && mm.bike.id) +
+      ((mm.bike && mm.bike.t) ? " (" + (mm.bike.t === "ebike" ? "E-Bike" : "Standardrad") + ")" : "") +
+      ((mm.bike && mm.bike.fu != null) ? ", Akku " + mm.bike.fu + " %" : "");
+    h += "\n      Fußweg " + (mm.w1 != null ? mm.w1 : "?") +
+      " min · Radfahrt " + (mm.rb != null ? mm.rb : "?") +
+      " min · Rückgabe " + ((mm.drop && mm.drop.name) || "?") +
+      " · Fußweg " + (mm.w2 != null ? mm.w2 : "?") + " min";
+  });
+  return h;
+}
 // Ein Stations-Reiter als Text: Abfahrtsliste plus die geöffneten Fahrt-
 // Verläufe (Unter-Reiter) mit allen Halten und Ist-/Planzeiten.
 function supportStopTabText(idx) {
@@ -5852,7 +5892,7 @@ function supportStopFavText() {
 }
 // Assembliert den Gesamt-Zustand: cfg = { stamp, ver, appVer, gps,
 // problem, addr, addrQ, pos, addrSug, stopS, stopQ, stopSug,
-// rtabIdx, stabIdx, addrFav, stopFav }.
+// rtabIdx, stabIdx, mtabIdx, addrFav, stopFav }.
 function supportStateText(cfg) {
   let h = "CitySurfers-Zustand vom " + cfg.stamp + "\n" +
     "Service-Version: " + (cfg.ver || "?") +
@@ -5877,6 +5917,10 @@ function supportStateText(cfg) {
   if (cfg.stabIdx && cfg.stabIdx.length) {
     h += "\n\n== Stations-Reiter ==";
     cfg.stabIdx.forEach(i => { h += "\n" + supportStopTabText(i); });
+  }
+  if (cfg.mtabIdx && cfg.mtabIdx.length) {   // v1.4.15: MM-Reiter wie die anderen Reiter-Arten
+    h += "\n\n== MM-Reiter (Micromobility) ==";
+    cfg.mtabIdx.forEach(i => { h += "\n" + supportMMTabText(i); });
   }
   if (cfg.addrFav) h += "\n\n== " + supportAddrFavText();
   if (cfg.stopFav) h += "\n\n== " + supportStopFavText();
@@ -5904,6 +5948,9 @@ function openSupportDlg() {
   const stRows = tabs.map((t, i) =>
     '<label class="supsub"><input type="checkbox" data-supst="' + i + '" checked> ' +
     (i + 1) + ". „" + escapeHtml(defTabName("s", t)) + "“</label>").join("");
+  const mtRows = mmTabs.map((mt, i) =>   // v1.4.15: MM-Reiter analog zu Route- und Stations-Reitern
+    '<label class="supsub"><input type="checkbox" data-supmm="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml((mt && mt.name != null && mt.name) ? mt.name : "Leihstation") + "“</label>").join("");
   wrap.innerHTML = '<div class="dlg">' +
     '<div class="dtitle">🐞 Support / Bugreport</div>' +
     '<div class="supwarn">⚠ Deine Daten verlassen das Gerät!</div>' +
@@ -5923,12 +5970,18 @@ function openSupportDlg() {
     '<label class="supchk"><input type="checkbox" data-sup="all" checked> <b>Alle</b> (alles unten)</label>' +
     '<label class="supchk"><input type="checkbox" data-supgroup="addr"> Inhalt der Adresssuche</label>' +
     '<label class="supchk"><input type="checkbox" data-supgroup="stopS"> Inhalt der Stationssuche</label>' +
-    '<label class="supchk"><input type="checkbox" data-supgroup="rtab"> Inhalt der Route-Reiter</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="rtab"> Inhalt der Route-Reiter' +
+    ' <span class="dim">(alle zurzeit offenen Route-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
     (rtRows ? '<div class="supsubs">' + rtRows + '</div>' :
       '<div class="dim supnone">(gerade kein Route-Reiter geöffnet)</div>') +
-    '<label class="supchk"><input type="checkbox" data-supgroup="stab"> Inhalt der Stations-Reiter</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="stab"> Inhalt der Stations-Reiter' +
+    ' <span class="dim">(alle zurzeit offenen Stations-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
     (stRows ? '<div class="supsubs">' + stRows + '</div>' :
       '<div class="dim supnone">(gerade kein Stations-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="mtab"> Inhalt der MM-Reiter (Micromobility)' +
+    ' <span class="dim">(alle zurzeit offenen MM-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
+    (mtRows ? '<div class="supsubs">' + mtRows + '</div>' :
+      '<div class="dim supnone">(gerade kein MM-Reiter geöffnet)</div>') +
     '<label class="supchk"><input type="checkbox" data-supgroup="afav"> Adress-Favoriten</label>' +
     '<label class="supchk"><input type="checkbox" data-supgroup="sfav"> Stations-Favoriten</label>' +
     '<div class="dim supnote">Betreff der E-Mail: „Bugreport CitySurfer v' + escapeHtml(pageVersion() || "?") +
@@ -5939,20 +5992,22 @@ function openSupportDlg() {
   const goBtn = wrap.querySelector("#supGo");
   const allChk = wrap.querySelector('[data-sup="all"]');
   const syncAll = () => {
-    const ins = [...wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst]')];
+    const ins = [...wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst], [data-supmm]')];
     allChk.checked = ins.length > 0 && ins.every(x => x.checked);
   };
   wrap.addEventListener("change", e => {
     const t = e.target;
     if (t.id === "supConfirm") { goBtn.disabled = !t.checked; return; }
     if (t === allChk) {
-      wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst]').forEach(x => x.checked = allChk.checked);
+      wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst], [data-supmm]').forEach(x => x.checked = allChk.checked);
       return;
     }
     if (t.getAttribute("data-supgroup") === "rtab")
       wrap.querySelectorAll("[data-suprt]").forEach(x => x.checked = t.checked);
     if (t.getAttribute("data-supgroup") === "stab")
       wrap.querySelectorAll("[data-supst]").forEach(x => x.checked = t.checked);
+    if (t.getAttribute("data-supgroup") === "mtab")   // v1.4.15: MM-Reiter-Gruppe
+      wrap.querySelectorAll("[data-supmm]").forEach(x => x.checked = t.checked);
     syncAll();
   });
   wrap.addEventListener("click", e => {
@@ -5966,6 +6021,8 @@ function openSupportDlg() {
       .map(x => Number(x.getAttribute("data-suprt")));
     const stIdx = [...wrap.querySelectorAll("[data-supst]")].filter(x => x.checked)
       .map(x => Number(x.getAttribute("data-supst")));
+    const mmIdx = [...wrap.querySelectorAll("[data-supmm]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-supmm")));
     // Offene Vorschlagslisten der Suchfelder als Klartext (max. 20 Einträge)
     const sugTxt = el => (!el || el.hidden) ? "" :
       [...el.querySelectorAll("div, button, li")]
@@ -5987,6 +6044,7 @@ function openSupportDlg() {
       stopSug: sugTxt(sugBox),
       rtabIdx: rtIdx,
       stabIdx: stIdx,
+      mtabIdx: mmIdx,
       addrFav: grp("afav"),
       stopFav: grp("sfav")
     };
@@ -7799,21 +7857,14 @@ function marqueeify(container) {
 // (und damit der Slider selbst) wird gegenzoomt: Der Regler behält während
 // des Ziehens seine Größe und Position bei und zuckt nicht unter dem Finger.
 const fontSlider = document.getElementById("fontSlider");
-let curFontScale = 1;   // aktuelle Schriftgroesse (zoom), fuer Knopf-Layout
-function updateBigBtnsLayout() {
-  // Ab einer gewissen Schriftgroesse auf engem Bildschirm: die 6 Schnellknöpfe
-  // in 2 Reihen à 3 anzeigen, damit sie annähernd quadratisch bleiben.
-  const bb = document.getElementById("bigbtns");
-  if (!bb) return;
-  bb.classList.toggle("wrap2", curFontScale >= 1.2 && bb.clientWidth < 520);
-}
-window.addEventListener("resize", updateBigBtnsLayout);
+let curFontScale = 1;   // aktuelle Schriftgroesse (zoom)
+// v1.4.15: Kein separates Umschalten mehr noetig: Die Knopf-Reihe bricht ueber
+// flex-wrap + min-width (siehe .bigbtn) von selbst frueh genug und sauber um.
 const applyFontScale = v => {
   curFontScale = v;
   document.body.style.zoom = String(v);
   const h = document.querySelector(".wrap > header");
   if (h) h.style.zoom = String(1 / v);
-  updateBigBtnsLayout();
 };
 fontSlider.addEventListener("input", () => {
   applyFontScale(Number(fontSlider.value));
@@ -8085,7 +8136,7 @@ function addBigBtn() {   // weiteren Favoriten-Knopf dynamisch in die Leiste set
   saveBigAssign();
   const nb = document.createElement("button");
   nb.className = "bigbtn teal";
-  nb.title = "Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen";
+  nb.title = "Langer Druck: Favorit hier neu belegen, weiteren Favoriten-Knopf erzeugen oder diesen Knopf löschen";
   nb.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
   document.getElementById("bigbtns").appendChild(nb);
   bbBtns.push(nb);
@@ -8098,13 +8149,26 @@ function ensureBigBtns() {   // beim Start: gespeicherte Knopfzahl wiederherstel
   while (bbBtns.length < Math.min(BIGBTN_MAX, bigAssign.length - 1)) {
     const nb = document.createElement("button");
     nb.className = "bigbtn teal";
-    nb.title = "Langer Druck: Favorit hier neu belegen oder weiteren Favoriten-Knopf erzeugen";
+    nb.title = "Langer Druck: Favorit hier neu belegen, weiteren Favoriten-Knopf erzeugen oder diesen Knopf löschen";
     nb.innerHTML = '<span class="bbsym">☆</span><small>frei</small>';
     document.getElementById("bigbtns").appendChild(nb);
     bbBtns.push(nb);
     rigBigBtn(nb, bbBtns.length - 1);
   }
   renderBigBtns();
+}
+function deleteBigBtn(i) {   // v1.4.15: Favoriten-Knopf aus der Leiste entfernen (niemals der letzte)
+  if (bigAssign.length - 1 <= 1) {   // nur dieser eine Knopf übrig: in der Leiste bleibt immer einer existent
+    setLocNote("Der letzte Favoriten-Knopf bleibt in der Leiste stehen.");
+    return false;
+  }
+  bigAssign.splice(i, 1);   // Belegung (oder freier Platz) dieses Knopfs entfernen
+  saveBigAssign();
+  bbBtns.slice(2).forEach(b => { if (b) b.remove(); });   // dynamische Knöpfe aus dem DOM nehmen
+  bbBtns.length = 2;   // bb1/bb2 bleiben statisch im HTML, ihre Verdrahtung zeigt weiter auf bigAssign[1]/[2]
+  ensureBigBtns();   // dynamische Knöpfe passend zur neuen Knopfzahl frisch erzeugen und verdrahten
+  setLocNote("Favoriten-Knopf " + i + " ist aus der Leiste entfernt: Belegungen rutschen nach, mindestens einer bleibt.");
+  return true;
 }
 // v1.4.14: Langdruck-Auswahl des Favoriten-Knopfs (Belegen oder weiteren Knopf erzeugen)
 function openBigLongDlg(i) {
@@ -8113,10 +8177,13 @@ function openBigLongDlg(i) {
   const ad = document.getElementById("bigAssignDlg");
   if (ad) ad.remove();   // Belegungsdialog zu, dieser Dialog ist der Einstieg
   const full = bigAssign.length - 1 >= BIGBTN_MAX;
+  const last = bigAssign.length - 1 <= 1;   // v1.4.15: nur ein Favoriten-Knopf übrig: Löschen gesperrt
   let inner = '<div class="afshead"><span><b>Knopf ' + i + '</b>: was soll passieren?</span></div>';
   inner += '<div class="afsrow" data-bl="assign" title="Diesen Knopf mit einem Adress- oder Haltestellenfavorit belegen (einmal antippen, danach den Favoriten wählen)"><span class="afsname">⭐ Favorit hier (neu) belegen</span></div>';
   inner += '<div class="afsrow" data-bl="add"' + (full ? ' style="opacity:.55"' : ' title="Einen weiteren belegbaren Favoriten-Knopf in die Leiste setzen"') +
     '><span class="afsname">' + (full ? "➕ Kein weiterer Platz (maximal " + BIGBTN_MAX + ")" : "➕ Weiteren Favoriten-Knopf erzeugen") + "</span></div>";
+  inner += '<div class="afsrow" data-bl="del"' + (last ? ' style="opacity:.55"' : ' title="Diesen Knopf mit seiner Belegung aus der Leiste entfernen: möglich, solange mindestens ein Favoriten-Knopf übrig bleibt"') +
+    '><span class="afsname">' + (last ? "🗑 Dieser letzte Knopf bleibt stehen" : "🗑 Favoriten-Knopf löschen") + "</span></div>";
   const wrap = document.createElement("div");
   wrap.id = "bigLongDlg";
   wrap.innerHTML = inner;
@@ -8126,6 +8193,7 @@ function openBigLongDlg(i) {
     if (!row) return;
     wrap.remove();
     if (row.dataset.bl === "assign") openBigAssignDlg(i);
+    else if (row.dataset.bl === "del") deleteBigBtn(i);   // v1.4.15
     else addBigBtn();
   });
   document.body.appendChild(wrap);
@@ -10922,12 +10990,13 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
   h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
-  h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern (je Rad Typ, Akku, Reichweite und der 📲-Chip „Rad in der Donkey-App“ aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung. Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert). Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
+  h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern (je Rad Typ, Akku, Reichweite und der 📲-Chip „Rad in der Donkey-App“ aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung. Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
+  h += P("<b>Farbige Reiter und Knopf-Umbruch (v1.4.15):</b> Die Reiter oben tragen jetzt die Farbe ihres Knopfes in der Leiste: Route-Reiter sind pink wie der 🧭 Route-Knopf, MM-Reiter blau wie 🚲 MM, Stations-Reiter bleiben beim gewohnten Stil; aktive Reiter leuchten in ihrer Farbe, inaktive bleiben dezent. Die Knöpfe der Leiste brechen außerdem früher um: Jeder behält eine Mindestbreite (64 px), statt mit jedem zusätzlichen Knopf schmaler zu werden, und die Reihe füllt sich zeilenweise mit gleich breiten Knöpfen.");
   h += P("<b>🧭 Drei Wege zur Karte</b> (seit v1.4.11, überall gleich): Damit bei den vielen Karten und Routing-Apps die Übersicht bleibt, gibt es ein festes Muster mit genau drei Wegen. <b>1. Ansehen:</b> Chips mit 🗺 uMap öffnen Karten mit beliebig vielen Punkten, die Räder der Auswahl mit Akkustand-Farben (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter, Donkey-Fahrrad-Symbol), die Rückgabe-Stationen ums Ziel, alle Räder und Stationen oder die 4-Punkte-Route des Micromobility Routings; die eigene GPS-Position steht als 📍-Marker mit auf der Karte (Ausnahme „alle Räder + Stationen“, die uMap serverseitig lädt und deine Position deshalb nicht kennt); uMap kann nichts zurückmelden, deshalb stehen die Kurz-IDs der Räder in Beschriftung und Pulldown zum Abgleichen. <b>2. Navigieren:</b> Der 🧭-Knopf klappt ein Menü auf, das nur die Optionen des jeweiligen Falls zeigt: Google Maps übernimmt die echte Route mit bis zu 4 Punkten, je Bein oder als ganze Leihrad-Route; mehrere Punkte gleichzeitig kann kein herstellerneutraler Standard übergeben, geo: fasst genau einen Punkt, deshalb nennt das Menü die konkrete App. <b>3. Einzelpunkt übergeben:</b> Das Karten-Symbol übergibt einen einzelnen Ort als generellen Web-Link, der 📱-Chip daneben als geo:-Link ans Handy, wo Android die installierten Karten-Apps zur Auswahl stellt. Karten-Symbol und 📱-Chip sitzen überall nebeneinander, an Adressen, Favoriten, Stations- und Route-Panels. Die Positions-Berechtigung für die 📍-Marker fragt die App selbst ab (Browser-Standort), uMap braucht keine eigene Freigabe: Die Koordinaten stecken in der Karten-URL. Beim Öffnen der 4-Punkte-Route nach einer fertigen MM-Route fragt die App die momentane GPS-Position frisch ab und setzt sie als zusätzlichen fünften Punkt; nur die serverseitig geladene Karte „alle Räder + Stationen“ bleibt ohne eigenen Punkt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
-  h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route- und Stations-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten), Adress- und Stations-Favoriten – oder alles gemeinsam. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen – dann die App über cslk.apk aktualisieren.");
+  h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route-, Stations- und MM-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten, MM-Reiter mit Abholstation, Abholrad, Rückgabe, Ziel und geplanter Ankunft je übernommener Route), Adress- und Stations-Favoriten oder alles gemeinsam. Von jeder Reiter-Art werden alle zurzeit offenen Reiter vorausgewählt angehakt mitgeschickt, der Haken ist je Reiter einzeln entfernbar. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen: dann die App über cslk.apk aktualisieren.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE @ Kiel") + "</div>";
   return h;
 }
@@ -13103,7 +13172,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.14 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.15 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
