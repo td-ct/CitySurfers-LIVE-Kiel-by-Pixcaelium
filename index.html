@@ -10762,16 +10762,18 @@ function bikeFeature(lat, lon, name, desc) {
 }
 // uMap mit Direkt-GeoJSON: gewaehltes Rad als Stern, die anderen dazu, plus
 // Rueckgabe-Stationen um das Ziel; Karte zentriert auf das gewaehlte Rad.
+// Wichtig: data=/dataFormat= importiert uMap nur im Erstell-Modus, also /map/new/.
 function bikeUmapURL(features, center) {
   const gj = JSON.stringify({ type: "FeatureCollection", features: features });
-  let u = "https://umap.openstreetmap.fr/de/map/?data=" + encodeURIComponent(gj) + "&dataFormat=geojson";
+  let u = "https://umap.openstreetmap.fr/de/map/new/?data=" + encodeURIComponent(gj) + "&dataFormat=geojson";
   if (center && center.lat != null && center.lon != null)
     u += "#15/" + Number(center.lat).toFixed(5) + "/" + Number(center.lon).toFixed(5);
   return u;
 }
 // uMap dataUrl-Variante: uMap laedt ALLE Raeder und Stationen serverseitig vom Proxy
+// (data/dataUrl/dataFormat greifen nur im Erstell-Modus, deshalb /map/new/)
 function bikeUmapAllURL() {
-  return "https://umap.openstreetmap.fr/de/map/?dataUrl=" +
+  return "https://umap.openstreetmap.fr/de/map/new/?dataUrl=" +
     encodeURIComponent(donkeyProxyURL(true)) + "&dataFormat=geojson";
 }
 // Knopf 🚲? fuer Bloecke/Ausloeser: data-rtbike traegt "h" oder die Abschnitts-
@@ -11894,7 +11896,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.1 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.2 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
