@@ -264,6 +264,11 @@
   }
   .pname { font-weight: 700; color: #4d8fd6; }
   .smeta, .pmeta { color: #94a3b8; white-space: nowrap; font-size: 0.95rem; }
+  /* v1.4.18: zweizeilige Trefferzeilen der Stationssuche: Name und Symbole oben,
+     die wichtigen Angaben (Entfernung, freie Raeder) darunter in .srowmeta */
+  .srowmeta { display: block; color: #94a3b8; font-size: 0.88rem; line-height: 1.4;
+    margin: -1px 0 2px; overflow-wrap: anywhere; }
+  .srowact { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .rowref {
     background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 7px;
     font-size: 0.9rem; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
@@ -325,7 +330,9 @@
     border-bottom: 1px solid #1e293b; cursor: pointer; font-size: 1rem; }
   #addrFavPanel .afsrow:hover, #stopFavPanel .afsrow:hover { background: #273449; border-radius: 6px; }
   #addrFavPanel .afsave { width: 100%; margin-bottom: 6px; }
-  .favchiprow { display: flex; justify-content: flex-end; gap: 6px; margin: 6px 0 -2px; }
+  .favchiprow { display: flex; justify-content: flex-end; gap: 6px; margin: 6px 0 -2px; flex-wrap: wrap; }
+  /* v1.4.18: Quellen-Filter DB/ÖPNV/MM: aus ist durchgestrichen und gedimmt */
+  .chip.sugfilter.off { background: #0b1222; color: #64748b; border-color: #334155; text-decoration: line-through; }
   .afshead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
   .afshead .dim { font-size: 0.72rem; }
   .pagefoot .verline { margin-top: 8px; opacity: 0.75; }
@@ -781,6 +788,10 @@
   <div id="stopFavPanel" hidden></div>
   <div class="komplex stops">
     <div class="favchiprow">
+      <!-- v1.4.18: Quellen-Filter der Stationssuche, links neben dem Favoriten-Knopf; alle standardmäßig an -->
+      <button class="chip sugfilter" id="sfDb" aria-pressed="true" title="DB-Bahnhöfe (🚆) in der Trefferliste der Stationssuche ein- oder ausschließen; sind alle drei Filter aus, zählt das wie alle an">🚆 DB</button>
+      <button class="chip sugfilter" id="sfOpnv" aria-pressed="true" title="KVG-Busse (🚌) in der Trefferliste der Stationssuche ein- oder ausschließen; sind alle drei Filter aus, zählt das wie alle an">🚌 ÖPNV</button>
+      <button class="chip sugfilter" id="sfMm" aria-pressed="true" title="Donkey-Leihstationen (🚲) in der Trefferliste der Stationssuche ein- oder ausschließen; sind alle drei Filter aus, zählt das wie alle an">🚲 MM</button>
       <button class="chip" id="stopFavBtn" title="Haltestellenfavoriten öffnen">⭐ Haltestellen <span id="stopFavCount">0</span></button>
     </div>
     <div class="searchbox">
@@ -2250,14 +2261,9 @@ function renderAddrChip() {
   if (!addrPos) { addrChip.innerHTML = ""; return; }
   addrChip.innerHTML =
     '<span class="chip mini dim2" title="Aktiver Standort: diese Adresse ist als Startpunkt eingeloggte">' + escapeHtml(addrPos.label) + "</span>" +
-    bikeBtnHTML("addr", "Umstieg aufs Leihfahrrad ab dieser Adresse: Abholrad- und Rückgabe-Pulldown, offene 4-Punkte-Route über OSM und uMap") +
     routeIconHTML(addrPos, "Aktiven Standort an eine externe Karten-App übergeben (z. B. Google Maps)");
-  const bk = addrChip.querySelector("[data-rtbike]");
-  if (bk) bk.addEventListener("click", () => {
-    openBikeDlg("h", { anchor: { name: addrPos.label, lat: addrPos.lat, lon: addrPos.lon },
-      ents: [], dest: null,
-      title: "🚲? Leihfahrräder um: " + addrPos.label });
-  });
+  // v1.4.18: Der 🚲?-Knopf am Adressfeld ist entfallen – die Leihstationen sind
+  // über die Donkey-Zeilen der Stationssuche direkt erreichbar.
 }
 
 // ---------- Externe Karten-App & Fußweg zwischen zwei Punkten ----------
@@ -2922,10 +2928,17 @@ function mmSugStations(q) {
     const nm = String(s.name || "").toLowerCase();
     const tier = !ql ? 0 : nm.indexOf(ql) === 0 ? 0 : nm.indexOf(ql) >= 0 ? 1 : -1;
     if (tier < 0) continue;
-    const nBikes = (d.v || []).filter(v => v && v.st === s.id &&
-      (v.t === "bike" || v.t === "ebike") && !v.rs && !v.dis).length;
+    // v1.4.18: Zähler je Station für die zweite Trefferzeile: freie E-Bikes mit
+    // mindestens 40 % Akkustand und freie Standardräder (alle Werte nur freie Räder)
+    let nBikes = 0, nEb40 = 0, nBstd = 0;
+    for (const v of (d.v || [])) {
+      if (!v || v.st !== s.id || (v.t !== "bike" && v.t !== "ebike") || v.rs || v.dis) continue;
+      nBikes++;
+      if (v.t === "ebike") { if (v.fu != null && v.fu >= 40) nEb40++; }
+      else nBstd++;
+    }
     out.push({ dk: true, id: s.id, name: s.name || "Leihstation", lat: s.lat, lon: s.lon,
-      cap: s.cap != null ? s.cap : null, tier: tier, nBikes: nBikes });
+      cap: s.cap != null ? s.cap : null, tier: tier, nBikes: nBikes, nEb40: nEb40, nBstd: nBstd });
   }
   return out;
 }
@@ -2938,23 +2951,30 @@ function mmSugWarmDonkey() {   // Feed einmal laden und die Trefferliste dann ne
 }
 function rowHTML(s, pos) {
   if (s && s.dk) {   // v1.4.14: Donkey-Leihstation: eigenes Symbol, eigener Reiter (kein Haltestellen-Enrich)
+    // v1.4.18: zweizeilig, zweite Zeile mit den freien Rädern der Station:
+    // E-Bikes mit mindestens 40 % Akku, dahinter die freien Standardräder.
     const air = pos ? dist(pos, s) * 1.3 : 0;
-    const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
-    const nfr = s.nBikes != null ? " · " + s.nBikes + (s.nBikes === 1 ? " Rad" : " Räder") : "";
+    const walk = pos ? "~" + formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)" : "";
+    const eb40 = s.nEb40 != null ? "⚡ " + s.nEb40 + " E-Bikes ≥ 40 % Akku" : "";
+    const bstd = s.nBstd != null ? "🚲 " + s.nBstd + (s.nBstd === 1 ? " Standardrad" : " Standardräder") : "";
+    const info = [eb40, bstd, walk, "Leihstation"].filter(Boolean).join(" · ");
     return '<div data-dk="' + escapeHtml(s.id) + '">' +
-      '<div class="srow"><span class="sname">🚲 ' + escapeHtml(s.name) + "</span>" +
-      '<span class="smeta">' + meta + escapeHtml(nfr) + " · Leihstation</span></div>" +
+      '<div class="srow"><span class="sname">🚲 ' + escapeHtml(s.name) + "</span></div>" +
+      '<div class="srowmeta">' + escapeHtml(info) + "</div>" +
       "</div>";
   }
+  // v1.4.18: zweizeilig: Symbol und Name oben (rechts die Karten-, Favoriten- und
+  // Neuladen-Symbole), Entfernung samt Gehzeit darunter, Abfahrten wie gehabt darunter
   const air = pos ? dist(pos, s) * 1.3 : 0;
   const meta = pos ? "~" + escapeHtml(formatDist(air) + " · " + Math.ceil(air / (WALK_SPEED_KMH * 1000 / 60)) + " min (Luftlinie)") : "";
   return '<div data-sn="' + escapeHtml(s.shortName) + '">' +
     '<div class="srow"><span class="sname">' + (isDB(s.shortName) ? "🚆 " : "🚌 ") + escapeHtml(s.name) + "</span>" +   // v1.4.14: Symbol je Zeile (Bahn/Bus)
-    '<span class="smeta">' + meta + "</span>" +
+    '<span class="srowact">' +
     routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") +
     starHTML(s.shortName) +
     '<button class="rowref" data-ref="' + escapeHtml(s.shortName) +
-      '" title="Nur diese Haltestelle neu abfragen">↻</button></div>' +
+      '" title="Nur diese Haltestelle neu abfragen">↻</button></span></div>' +
+    (meta ? '<div class="srowmeta">' + meta + "</div>" : "") +
     '<small class="rowinfo dim" data-sn="' + escapeHtml(s.shortName) + '">Daten werden beim Sichtbarwerden geladen …</small>' +
     "</div>";
 }
@@ -2968,6 +2988,45 @@ function renderMoreRows(n) {
   sugRendered = end;
 }
 
+/* v1.4.18: Quellen-Filter DB / ÖPNV / MM der Stationssuche. Drei Knöpfe links
+   neben dem ⭐-Knopf der Haltestellenfavoriten; standardmäßig alles an. Ein
+   ausgeschalteter Knopf nimmt seine Quelle aus der aufklappenden Trefferliste
+   heraus. Sonderfall: Sind alle drei aus, zählt das wie alle an (die Liste wird
+   nie leer). SUGFILTER-START */
+const sugFilter = { db: true, opnv: true, mm: true };
+const SUG_FILTER_BTNS = [["sfDb", "db"], ["sfOpnv", "opnv"], ["sfMm", "mm"]];
+function sugFilterOnCount() {
+  return (sugFilter.db ? 1 : 0) + (sugFilter.opnv ? 1 : 0) + (sugFilter.mm ? 1 : 0);
+}
+function sugTypeAllowed(s) {   // s: Haltestelle (shortName, DB:-Präfix = Bahn) oder Donkey-Station (dk:true)
+  const on = sugFilterOnCount();
+  if (on === 3 || on === 0) return true;   // alles an oder alles aus: alles
+  if (s && s.dk) return sugFilter.mm;
+  return isDB(s.shortName) ? sugFilter.db : sugFilter.opnv;
+}
+function sugDkOn() {   // Donkey-Zeilen in die Trefferliste aufnehmen?
+  const on = sugFilterOnCount();
+  return on === 3 || on === 0 || sugFilter.mm;
+}
+function updateSugFilterBtns() {
+  SUG_FILTER_BTNS.forEach(pair => {
+    const b = document.getElementById(pair[0]);
+    if (!b) return;
+    b.classList.toggle("off", !sugFilter[pair[1]]);
+    b.setAttribute("aria-pressed", sugFilter[pair[1]] ? "true" : "false");
+  });
+}
+SUG_FILTER_BTNS.forEach(pair => {
+  const b = document.getElementById(pair[0]);
+  if (!b) return;
+  b.addEventListener("click", () => {
+    sugFilter[pair[1]] = !sugFilter[pair[1]];
+    updateSugFilterBtns();
+    if (!sugBox.hidden) updateSuggestions();   // Trefferliste sofort neu aufbauen
+  });
+});
+updateSugFilterBtns();
+/* SUGFILTER-END */
 function updateSuggestions() {
   searchIndex = -1;
   updateGpsBtns();   // GPS-Knöpfe stets zuerst prüfen (gelb, wenn die Position weggewandert ist)
@@ -2975,8 +3034,10 @@ function updateSuggestions() {
   if (listMode === "flat") { sugHits = []; sugRendered = 0; buildFlatList(); return; }
   const pos = listPos();
   const q = search.value.trim().toLowerCase();
-  let hits = q.length ? searchHits(q) : stops.map(s => ({ s: s, tier: 0 }));
-  hits = hits.concat(mmSugStations(q).map(s => ({ s: s, tier: s.tier })));   // v1.4.14: Donkey-Leihstationen (🚲) mit in die Trefferliste
+  let hits = q.length ? searchHits(q).filter(h => sugTypeAllowed(h.s))          // v1.4.18: Quellen-Filter
+    : stops.map(s => ({ s: s, tier: 0 })).filter(h => sugTypeAllowed(h.s));
+  if (sugDkOn())    // v1.4.18: Donkey-Zeilen nur bei freigegebenem MM-Filter (alles aus = alles an)
+    hits = hits.concat(mmSugStations(q).map(s => ({ s: s, tier: s.tier })));   // v1.4.14: Donkey-Leihstationen (🚲) mit in die Trefferliste
   if (!hits.length) { sugBox.hidden = true; return; }
   if (pos && q.length) {
     // Suchtreffer: Haltestellenfavoriten zuerst (als ⭐ markiert), danach die
@@ -3066,12 +3127,19 @@ async function buildFlatList() {
       return;
     }
     // Kandidaten: Luftlinie × 1.3 als Fußweg-Obergrenze, die nächsten 20
-    const cands = stops.map(s => ({ s: s, air: dist(pos, s) }))
+    const near = stops.map(s => ({ s: s, air: dist(pos, s) }))
       .filter(c => c.air * FLAT_AIR_FACTOR <= FLAT_WALK_MAX_MIN * WALK_SPEED_KMH * 1000 / 60)
       .sort((a, b) => a.air - b.air)
       .slice(0, FLAT_MAX_STOPS);
-    if (!cands.length) {
+    // v1.4.18: Quellen-Filter gilt auch im ⏱-Laufweiten-Modus (der zeigt nur Busse und Bahnen)
+    const cands = near.filter(c => sugTypeAllowed(c.s));
+    if (!near.length) {
       sugBox.innerHTML = '<div class="srow"><span class="sname dim">Keine Haltestellen in ' + FLAT_WALK_MAX_MIN + ' Minuten Laufweite.</span></div>';
+      sugBox.hidden = false;
+      return;
+    }
+    if (!cands.length) {
+      sugBox.innerHTML = '<div class="srow"><span class="sname dim">Die aktiven Filter schließen gerade alle Bus- und Bahn-Haltestellen aus; der ⏱-Modus zeigt nur Busse und Bahnen. Oben mindestens einen der Filter 🚆 DB oder 🚌 ÖPNV einschalten.</span></div>';
       sugBox.hidden = false;
       return;
     }
@@ -7715,7 +7783,7 @@ function rowFollowHTML(sn, d) {
 function renderView(sn, el) {
   const v = stopViews.get(sn);
   if (!v) return;
-  const meta = el.querySelector(".smeta");
+  const meta = el.querySelector(".srowmeta");   // v1.4.18: Klasse der zweiten Trefferzeile
   if (v.meters && meta) {
     const walkMin = Math.ceil(v.meters / (WALK_SPEED_KMH * 1000 / 60));
     const pre = isEst(sn) ? "~" : "";
@@ -11013,8 +11081,9 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
+  h += P("<b>🚲? Micromobility Routing</b> (so heißt das Leihfahrrad-Routing seit v1.4.12; Scooter von Dott, Bolt und Voi sollen später im selben Dialog laufen): Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Der 🚲?-Knopf am aktiven Standort unter dem Adressfeld ist seit v1.4.18 entfallen, weil die Leihstationen direkt über die Stationssuche erreichbar sind. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt. Seit v1.4.12 haben die beiden ◎-GPS-Knöpfe die volle Mechanik der Adressfeld-Knöpfe: Als oberster Eintrag BEIDER Pulldowns steht die 📍 GPS-Position, der Knopf übernimmt sie für sein Feld (grau, schaltet nötigenfalls das GPS ein und reicht die Position an die Räder- bzw. Rückgabe-Suche weiter), ortet bei weggewanderter Position neu (gelb, ab 200 m), zeigt die laufende Übernahme grün und beendet sie mit einem weiteren Druck nur für dieses Feld (das GPS selbst bleibt an). Nach einer fertigen Gesamtroute schaltet der Knopf ✔ Als MM-Route übernehmen frei: Die Route steht seit v1.4.14 nie mehr direkt neben der ÖPNV-Verbindung, sondern immer im eigenen MM-Reiter mit der Abholstation oben und den übernommenen Routen als Unter-Reitern darunter, mit der geplanten Ankunftszeit ganz links, der aktuellen Voraussage daneben (kursiv, aus der Raum-Zeit-Auswertung der eigenen GPS-Bewegung) und der farbigen Verspätung; der komplette Fortschritts-Strahl mit Ringen und GPS-Punkt ist dort durchgehend grün. Seit v1.4.13 sitzt an jedem Abholrad ein 📲-Chip „Rad in der Donkey-App“: Der offizielle Miet-Link des Rads (den donkeyproxy.php als Feld dl aus dem Donkey-GBFS-Feed mitliefert, dnky.bike) öffnet auf dem Handy die Donkey-App direkt beim Abholrad, ohne installierte App die Donkey-Webseite; Räder ohne Miet-Link im Feed zeigen den Chip nicht.");
   h += P("<b>🚲 MM-Reiter und Leihstationen in der Suche (v1.4.14):</b> Die Stationssuche zeigt seit v1.4.14 zwei Sorten von Treffern mit je eigenem Symbol vor dem Namen: 🚌 für Busse und 🚆 für Bahnen wie gehabt, daran die Donkey-Leihstationen des Micromobility Routing mit 🚲 samt Luftlinie und der Zahl der dort stehenden freien Räder. Eine 🚲-Zeile antippen (oder mit der Tastatur über Enter wählen) öffnet den MM-Reiter dieser Leihstation. Jeder MM-Reiter hat immer dieselbe Struktur: oben das Feld über die Abholstation mit Name, Stellplätzen, Fußweg und ALLEN dort stehenden Rädern in zwei Listen (seit v1.4.16: E-Bikes nach Akkustand absteigend, darunter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar und der Rest hinter einem Aufklapp-Knopf; jedes Rad trägt seinen von Donkey vergebenen Vornamen wie „Frieda“ mit Kurz-ID), hinter jedem Rad das kleine Esel-Symbol 🫏 als Donkey-App-Link (v1.4.16, ersetzt den früheren 📲-Chip aus v1.4.13), eine uMap-Karte mit Station und Rädern und den 🚲?-Knopf „MM Routing starten“; darunter stehen die übernommenen MM-Routen als Unter-Reiter (🚲 MM mit geplanter Ankunftszeit, analog den Fahrten eines Stationsreiters), jede mit grünem Fortschritts-Strahl und Raum-Zeit-Voraussage. Der 🚲?-Knopf im Stations-Kopf startet den Routing-Dialog mit dieser Abholstation vorausgewählt und per 📌-Knopf unter dem Abholrad-Pulldown fixiert: Fixiert zeigt das Pulldown nur die Räder dieser Station, auch wenn der Start (Punkt 1) gewechselt wird; nochmal drücken löst die Fixierung (seit v1.4.17 erscheint der 📌-Knopf nur bei übernommener Station, und unter Punkt 2 stehen Zähler und ausklappbare Rad-Liste der Station, Details im v1.4.17-Absatz). Als Start (Punkt 1) gilt die Regel: die GPS-Position des Stationssuchfelds, falls dort mit GPS gesucht wurde, sonst der Eintrag des Adressfelds, sonst die Live-Position. Der Dialog ist seit v1.4.14 fester fünfter Knopf der Leiste (🚲 MM, blau, zwischen Route und Favoriten) und lässt sich damit völlig frei öffnen, ohne Route oder Station als Vorlage. Die Favoriten-Knöpfe derselben Leiste fragen bei langem Druck jetzt erst nach der Absicht: „Favorit hier (neu) belegen“ öffnet die bekannte Belegung, „Weiteren Favoriten-Knopf erzeugen“ setzt dynamisch einen zusätzlichen belegbaren Knopf in die Leiste (insgesamt bis acht, die Zahl wird mitgespeichert), und „Favoriten-Knopf löschen“ (v1.4.15) nimmt ihn wieder heraus, sofern danach mindestens ein Favoriten-Knopf übrig bleibt, denn der letzte bleibt immer stehen. Egal von wo der Dialog übernimmt: ✔ Als MM-Route übernehmen legt die fertige Route immer in den MM-Reiter der Abholstation (fixierte oder Rad-Station), nie mehr in einen Route-Reiter.");
+  h += P("<b>🔎 Quellen-Filter und zweizeilige Trefferzeilen (v1.4.18):</b> Links neben dem ⭐-Knopf der Haltestellenfavoriten stehen drei neue Knöpfe: 🚆 DB, 🚌 ÖPNV und 🚲 MM. Alle drei sind standardmäßig aktiviert. Ein Druck schaltet seine Quelle einzeln ab (der Knopf ist dann durchgestrichen) und nimmt sie aus der aufklappenden Trefferliste der Stationssuche heraus; ein weiterer Druck schaltet sie wieder zu. Ein Sonderfall verhindert die leere Liste: Sind alle drei ausgeschaltet, zählt das wie alle drei aktiviert. Der ⏱-Laufweiten-Modus zeigt nur Busse und Bahnen; schließen die aktiven Filter beide Quellen aus, weist ein Hinweis darauf hin. Jede Trefferzeile ist seit v1.4.18 zweizeilig aufgebaut: In der ersten Zeile stehen Symbol und Name (bei Haltestellen rechts daneben die Karten-, Favoriten- und Neuladen-Symbole), in der zweiten die wichtigen Angaben, bei Haltestellen die Entfernung samt Gehzeit (die Abfahrten folgen darunter wie gehabt), bei Leihstationen wie viele freie E-Bikes mindestens 40 Prozent Akku haben, wie viele freie Standardräder dort stehen und wie weit die Station entfernt ist, damit auf engem Platz nichts mehr abgeschnitten wird. Die Zahl der Räder hinter dem 🚲?-Knopf am Adressfeld ist mit dem Knopf entfallen, derselbe Überblick steht jetzt direkt in jeder Leihstation-Zeile.");
   h += P("<b>📌 Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog (v1.4.17):</b> Der 📌-Knopf unter dem Abholrad-Pulldown ist Spezialist: Er erscheint nur noch, wenn der Dialog mit einer übernommenen Donkey-Station geöffnet wurde (🚲-Zeile der Stationssuche oder 🚲?-Knopf im MM-Reiter). Genau dann soll Punkt 2 festgehalten werden, während Punkt 1 (Start) noch frei wechselbar ist oder gerade die GPS-Position läuft; nochmal drücken löst die Fixierung, wieder drücken fixiert die Station des aktuell gewählten Rads neu. Ohne übernommene Station gibt es den Knopf gar nicht, denn dort ergibt Fixieren keinen Sinn: Punkt 2 bleibt dann die normale Räder-Suche um den Start. Bei fixierter Station steht unter Punkt 2 jetzt außerdem ein Zähler (freie E-Bikes mit mind. 40 % Akku, freie Standardräder, reservierte/gesperrte dahinter) und darunter die ausklappbare Rad-Liste der Station mit genau einem sichtbaren Eintrag: E-Bikes nach Akkustand absteigend (ohne Wert ans Ende), dahinter die Standardräder nach Namen, je mit Vorname, Akku, Reichweite und dem kleinen Esel-Symbol als Donkey-App-Link hinter dem Rad. Der Überblick ist damit schon vor der Rad-Wahl da, aufgeklappt auf Wunsch.");
   h += P("<b>🫏 Donkey-App-Link, Rad-Namen und Knopf-Breite (v1.4.16):</b> Der offizielle Miet-Link eines Rads ist jetzt ein kleines Donkey-Esel-Symbol direkt hinter dem Rad: Es verbraucht keine eigene Zeile und öffnet auf dem Handy die Donkey-App direkt beim Rad; ohne installierte App landet man auf der Download-Seite von Donkey (ältere Geräte ohne das Esel-Emoji zeigen automatisch 📲). Die Räder heißen bei Donkey richtig („Frieda“, „E-bike Fischi“); donkeyproxy.php liest diese Namen jetzt mit aus und die App zeigt sie überall: im Pulldown des Routing-Dialogs, in der Rad-Zeile des Dialogs, im MM-Reiter (dort als zwei Listen: E-Bikes nach Akkustand absteigend, dahinter die Standardräder nach Namen, je Liste die ersten drei direkt sichtbar) und im Abholrad-Weg der übernommenen MM-Route. Die Knöpfe der Hauptleiste sind alle exakt so breit wie die Knöpfe der obersten Zeile, und eine nicht ganz gefüllte Zeile steht mittig. Die Favoritenknöpfe sind komplett dynamisch: Beim ersten Start gibt es genau einen, weitere entstehen per langem Druck (bis acht), und Löschen nimmt den Knopf jetzt zuverlässig aus der Leiste, Belegungen rutschen nach, der letzte bleibt immer stehen.");
   h += P("<b>Farbige Reiter und Knopf-Umbruch (v1.4.15):</b> Die Reiter oben tragen jetzt die Farbe ihres Knopfes in der Leiste: Route-Reiter sind pink wie der 🧭 Route-Knopf, MM-Reiter blau wie 🚲 MM, Stations-Reiter bleiben beim gewohnten Stil; aktive Reiter leuchten in ihrer Farbe, inaktive bleiben dezent. Die Knöpfe der Leiste brechen früh genug um und behalten eine nutzbare Breite; seit v1.4.16 sind alle Knöpfe außerdem exakt so breit wie die der obersten Zeile, eine nicht ganz gefüllte Zeile steht mittig.");
@@ -13322,7 +13391,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.17 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.18 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
