@@ -1,6 +1,6 @@
 <?php
 /* ==========================================================================
- * delfiproxy.php - CitySurfers LIVE @ Kiel (v0.1.0)
+ * delfiproxy.php - CitySurfers LIVE @ Kiel (v0.1.1)
  * DELFI-Pool-Realtime-Partner fuer pixcaelium.timo-damm.de
  * ==========================================================================
  *  * Zweck: Abfahrtsbretter mit Echtzeitverspaetungen fuer die App, mit
@@ -84,7 +84,8 @@
  * ==========================================================================
  */
 
-const DP_V          = 'delfiproxy 0.1.0';
+const DP_V          = 'delfiproxy 0.1.1';
+const DP_SCHEMA     = 'delfiproxy-stimes-2';   // v0.1.1: Weicht der Stempel ab, baut der Proxy den Tagesbau neu auf
 const DP_NAHSH_URL  = 'https://opendata.schleswig-holstein.de/dataset/5e0652d8-7f59-42fc-92ab-a6358f800e1d/resource/f0eff75f-88de-411c-8bdc-0a55bb67d9fd/download/fahrplandaten';
 const DP_SUB_URL    = 'https://mobilithek.info:8443/mobilithek/api/v1.0/container/subscription?subscriptionID=1061368693622788096';
 const DP_POOL_TTL   = 60;        // DELFI-Pool: Anbieter-Rhythmus 1 Minute
@@ -108,6 +109,7 @@ define('DP_PB',    DP_DIR . '/pool.pb');     // roher DELFI-Strom
 define('DP_OVL',   DP_DIR . '/overlay.json.gz'); // verarbeitete Verspaetungen
 define('DP_OVL_STAMP', DP_DIR . '/ovl.stamp');
 define('DP_STATE', DP_DIR . '/state.json');  // Phasen des Tagesbaus
+define('DP_SCHEMA_F', DP_DIR . '/schema.txt'); // v0.1.1: Schema-Stempel des stimes-Baus
 define('DP_DAY',   DP_DIR . '/day.txt');     // YYYYMMDD des fertigen Baus
 define('DP_CERT_DIR', __DIR__ . '/delficerts');
 
@@ -458,6 +460,24 @@ function dp_build_round(&$budget): bool {
         dp_state_save($s);
     }
 
+    // v0.1.1: Schema-Stempel des stimes-Baus. Weicht er ab (z. B. nach dem
+    // Austausch dieser Datei gegen eine neuere Proxy-Version oder nach einem
+    // unvollstaendigen Bau aehnlich dem Resume-Sprung-Bug von v0.1.0), baut
+    // der Proxy die Stop-Buckets des Tages sauber neu auf; das nah.sh-Zip
+    // bleibt liegen, solange es frisch ist, und firstdep/tmap werden neu
+    // erzeugt. So heilt sich ein Bilderbuch-Deploy per ?warm=1 selbst.
+    if (trim((string)@file_get_contents(DP_SCHEMA_F)) !== DP_SCHEMA) {
+        @rename(DP_BK, DP_BK . '.old');
+        @mkdir(DP_BK, 0775, true);
+        dp_rrmdir(DP_BK . '.old');
+        @unlink(DP_DIR . '/firstdep.idx');
+        @unlink(DP_DIR . '/firstdep.part');
+        @unlink(DP_DIR . '/tmap.ser');
+        dp_atomic_put(DP_SCHEMA_F, DP_SCHEMA);
+        $s = ['phase' => 'zip', 'off' => 0, 'seen' => 0, 'done' => [], 'today' => $today];
+        dp_state_save($s);
+    }
+
     $zipOk = is_file(DP_ZIP) && dp_file_age(DP_ZIP) < DP_STAT_TTL;
     if (!$zipOk) {
         if (microtime(true) + 1.0 > $budget) return false;
@@ -583,19 +603,18 @@ function dp_build_round(&$budget): bool {
                 }
             }
             $off = (int)$s['off'];
-            $seen = (int)$s['seen'];
+            $seen = 0;        // v0.1.1: nur Zeilen-Zaehler DIESES Aufrufs, Resume laeuft ausschliesslich ueber $off
+            $proc = 0;        // v0.1.1: in diesem Aufruf verarbeitete Zeilen (Basis fuer den Resume-Offset)
             $firstCnt = (int)$s['first'];
             $rowsCnt = (int)$s['rows'];
             $handles = [];
-            $fdh = @fopen(DP_DIR . '/firstdep.part', ($off === 0 && $seen === 0) ? 'w' : 'a');
+            $fdh = @fopen(DP_DIR . '/firstdep.part', $off === 0 ? 'w' : 'a');
             $done = false;
-            dp_zip_member_lines(DP_ZIP, 'stop_times.txt', function ($ln) use (&$off, &$seen, &$firstCnt, &$rowsCnt, &$tmap, &$routes, &$handles, &$fdh, &$budget, &$done, $t0) {
-                if ($seen < $off) { $seen++; return; }
+            dp_zip_member_lines(DP_ZIP, 'stop_times.txt', function ($ln) use (&$seen, &$proc, &$off, &$firstCnt, &$rowsCnt, &$tmap, &$routes, &$handles, &$fdh, &$budget, &$done) {
+                if ($seen < $off) { $seen++; return; }   // fruehere Runden: Zeile nur ueberspringen
                 $seen++;
-                if ($seen % 20000 === 0) {
-                    if (microtime(true) > $budget) { $done = true; }
-                }
-                if ($done) return;
+                if ($done) return;                       // Budget durch: Rest nur zaehlen, verarbeitet bleibt verarbeitet
+                $proc++;
                 $c = dp_csv($ln);
                 if (count($c) < 4) return;
                 if ($c[0] === 'trip_id') return;
@@ -619,11 +638,17 @@ function dp_build_round(&$budget): bool {
                     fwrite($fdh, dp_norm_route($tmap[$trip]) . '|' . $depS . "\t" . $trip . "\n");
                     $firstCnt++;
                 }
+                /* v0.1.1: Budget-Check NACH dem Schreiben. Wichtig ist der
+                 * Resume-Offset: Er darf nur um VERARBEITETE Zeilen wachsen,
+                 * nicht ans Dateiende springen, sonst verschluckt der naechste
+                 * Lauf den Rest und der Bau gilt falsch als fertig (v0.1.0
+                 * hatte dadurch nur ca. 1000 statt 7600 Haltestellen-Buckets). */
+                if ($proc % 20000 === 0 && microtime(true) > $budget) { $done = true; }
             });
             foreach ($handles as $h) if (is_resource($h)) @fclose($h);
             if ($fdh) @fclose($fdh);
-            $s['off'] = $seen;
-            $s['seen'] = $seen;
+            $s['off'] = $off + $proc;           // v0.1.1: genau hier macht der naechste Aufruf weiter
+            $s['seen'] = $off + $seen;          // Zeilen, die mindestens einmal konsumiert sind (nur Diagnose)
             $s['first'] = $firstCnt;
             $s['rows'] = $rowsCnt;
             if (!$done) $s['phase'] = 'fin';
@@ -656,7 +681,8 @@ function dp_rrmdir(string $d): void {
 
 function dp_static_ready(): bool {
     return is_file(DP_DAY) && (int)@file_get_contents(DP_DAY) === dp_today_int()
-        && is_file(DP_DIR . '/firstdep.idx');
+        && is_file(DP_DIR . '/firstdep.idx')
+        && trim((string)@file_get_contents(DP_SCHEMA_F)) === DP_SCHEMA;   // v0.1.1: Schema-Stempel, sonst Neubau
 }
 
 /* Baut in Schritten bis das Tagesbrett steht; Rueckgabe: fertig? */
