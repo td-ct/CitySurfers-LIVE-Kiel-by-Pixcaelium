@@ -1,5 +1,5 @@
 <?php
-/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6)
+/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6, Rad-Namen v1.4.16)
  * ---------------------------------------------------------------------------
  * Zweck: Die öffentlichen GBFS-3.0-Feeds von Donkey Republic / SprottenFlotte
  * (Kiel: Systeme donkey_kiel, donkey_kielsmile und donkey_schleswig) senden
@@ -19,8 +19,23 @@
  *   fu (current_fuel_percent, 0-100, kann null sein; Donkey liefert 0..1, wird
  *   v1.4.6 vor dem Runden auf Prozent gehoben), rm (current_range_meters),
  *   rs (is_reserved), dis (is_disabled), st (station_id, wenn bekannt),
- *   dl (miet-deeplink aus rental_uris.android/ios/web, wenn vorhanden).
+ *   dl (miet-deeplink aus rental_uris.android/ios/web, wenn vorhanden),
+ *   n (Vorname des Rads aus der Donkey-Hub-API, v1.4.16; null, wenn die
+ *   Hub-API gerade keinen Namen liefert; app-seitig optional).
  * Stations-Objekt (s): id, name, lat, lon, cap (capacity, kann null sein).
+ *
+ * v1.4.16 Rad-Namen: Donkey vergibt jedem Rad einen Namen, der GBFS-Feed kennt
+ * sie aber nicht. Die undokumentierte Hub-API
+ *   https://stables.donkey.bike/api/public/hubs/hub_{STATION_ID}/vehicles
+ *   (Header: Accept: application/com.donkeyrepublic.v7)
+ * liefert je Hub alle Fahrzeuge mit name, latitude, longitude (Strings),
+ * battery_level, state. hub-ID == GBFS-station_id. Der Proxy fragt nach dem
+ * Feed-Sammeln alle Stationen mit mindestens einem Rad parallel via curl_multi
+ * ab (Fallback ohne curl: sequenziell, begrenzt) und ordnet die Namen per
+ * Position zu (lat/lon auf 5 Dezimalstellen gerundet, ca. 1 m Toleranz),
+ * weil die Hub-API andere IDs als GBFS hat. Findet die Hub-API zu einer
+ * Position keinen Namen, bleibt n null; das Befüllen ist Best Effort und
+ * darf den Feed-Lauf niemals scheitern lassen.
  *
  * Cache: Datei donkeycache.json neben diesem Skript, 60 Sekunden, mit flock
  * gesichert; bei Upstream-Fehlern wird ein alter Cache-Stand noch gnädig
@@ -38,7 +53,7 @@ const DP_SYSTEMS   = ['donkey_kiel', 'donkey_kielsmile', 'donkey_schleswig'];
 const DP_FEEDBASE  = 'https://stables.donkey.bike/api/public/gbfs/3.0/';
 const DP_TTL_S     = 60;          // Sekunden Cache-Haltbarkeit (Feeds haben TTL 60 s)
 const DP_TIMEOUT_S = 7;           // Socket-Timeout je Upstream-Abfrage
-const DP_UA        = 'CitySurfersLIVE-Kiel/1.3 (+https://pixcaelium.timo-damm.de/apps/citysurfers/)';
+const DP_UA        = 'CitySurfersLIVE-Kiel/1.4.16 (+https://pixcaelium.timo-damm.de/apps/citysurfers/)';
 
 /* HTTP-GET mit Timeout, gibt dekodiertes JSON oder null zurück. */
 function dp_fetch_json(string $url): ?array {
@@ -92,9 +107,79 @@ function dp_name(array $s, string $id): string {
     return 'Station ' . $id;
 }
 
+/* v1.4.16: Vornamen der Räder aus der Donkey-Hub-API. Donkey nennt seine
+ * Räder bei Namen ("Frieda", "E-bike Fischi", ...), der GBFS-Feed führt sie
+ * nicht; die Hub-API tut es (Accept-Header zwingend, sonst 406). Rückgabe:
+ * Map "lat5,lon5" -> Name (Position gerundet auf 5 Dezimalstellen). */
+function dp_hub_names(array $stIds): array {
+    $out = [];
+    $stIds = array_values(array_unique(array_filter(array_map('strval', $stIds), 'strlen')));
+    if (!$stIds) return $out;
+    if (function_exists('curl_multi_init')) {
+        $mh = curl_multi_init();
+        $hs = [];
+        foreach ($stIds as $id) {
+            $ch = curl_init('https://stables.donkey.bike/api/public/hubs/hub_' . rawurlencode($id) . '/vehicles');
+            if (!$ch) continue;
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER   => true,
+                CURLOPT_FOLLOWLOCATION   => true,
+                CURLOPT_CONNECTTIMEOUT   => 5,
+                CURLOPT_TIMEOUT          => 12,
+                CURLOPT_HTTPHEADER       => ['Accept: application/com.donkeyrepublic.v7'],
+                CURLOPT_USERAGENT        => DP_UA,
+            ]);
+            curl_multi_add_handle($mh, $ch);
+            $hs[] = $ch;
+        }
+        if ($hs) {
+            $run = 0;
+            do {                       // bis alle Handles fertig sind
+                curl_multi_exec($mh, $run);
+                if ($run > 0) curl_multi_select($mh, 0.2);
+            } while ($run > 0);
+            foreach ($hs as $ch) {
+                dp_hub_parse((string) curl_multi_getcontent($ch), $out);
+                curl_multi_remove_handle($mh, $ch);
+                curl_close($ch);
+            }
+        }
+        curl_multi_close($mh);
+    } else {
+        // Fallback ohne curl: sequenziell, begrenzt, kurzer Timeout
+        $ctx = stream_context_create(['http' => [
+            'timeout'    => 4,
+            'user_agent' => DP_UA,
+            'header'     => "Accept: application/com.donkeyrepublic.v7\r\n",
+        ]]);
+        foreach (array_slice($stIds, 0, 60) as $id) {
+            $raw = @file_get_contents('https://stables.donkey.bike/api/public/hubs/hub_'
+                . rawurlencode($id) . '/vehicles', false, $ctx);
+            if (is_string($raw)) dp_hub_parse($raw, $out);
+        }
+    }
+    return $out;
+}
+
+/* Einen Hub-API-Ausdruck in die Namens-Map einarbeiten (Best Effort). */
+function dp_hub_parse(string $raw, array &$out): void {
+    if ($raw === '') return;
+    $j = json_decode($raw, true);
+    if (!is_array($j)) return;
+    foreach ($j as $v) {
+        if (!is_array($v)) continue;
+        $nm = trim((string) ($v['name'] ?? ''));
+        if ($nm === '') continue;
+        $lat = $v['latitude'] ?? null; $lon = $v['longitude'] ?? null;
+        if (!is_numeric($lat) || !is_numeric($lon)) continue;
+        $k = round((float) $lat, 5) . ',' . round((float) $lon, 5);
+        if (!isset($out[$k])) $out[$k] = $nm;   // erste Position gewinnt
+    }
+}
+
 /* Alle drei Systeme zusammensetzen, deduplizieren (vehicle_id / station_id). */
 function dp_collect(): ?array {
-    $veh = []; $sta = []; $seenV = []; $seenS = [];
+    $veh = []; $sta = []; $seenV = []; $seenS = []; $idx5 = [];
     $any = false;
     foreach (DP_SYSTEMS as $sys) {
         $vs = dp_feed($sys, 'vehicle_status.json');
@@ -122,6 +207,7 @@ function dp_collect(): ?array {
                     $ru = $v['rental_uris'];
                     $dl = $ru['android'] ?? $ru['ios'] ?? $ru['web'] ?? null;
                 }
+                $idx5[] = round((float) $lat, 5) . ',' . round((float) $lon, 5);
                 $veh[] = [
                     'id'  => $id,
                     't'   => is_string($v['vehicle_type_id'] ?? null) ? $v['vehicle_type_id'] : 'bike',
@@ -164,6 +250,17 @@ function dp_collect(): ?array {
         }
     }
     if (!$any) return null;          // alle Feeds tot → Cache-grace statt leere Welt
+
+    /* v1.4.16: Rad-Namen aus der Hub-API nachladen, nur für Stationen mit
+     * mindestens einem Rad. Scheitert die komplette Abfrage, bleiben alle
+     * n einfach null und der Feed ist trotzdem gültig. */
+    $stWith = [];
+    foreach ($veh as $v)
+        if (is_string($v['st'])) $stWith[$v['st']] = true;
+    $names = dp_hub_names(array_keys($stWith));
+    foreach ($idx5 as $i => $k5)
+        $veh[$i]['n'] = $names[$k5] ?? null;
+
     return ['v' => $veh, 's' => $sta];
 }
 
@@ -221,6 +318,7 @@ function dp_geojson(array $d): array {
     foreach ($d['v'] as $v) {
         $ty = $v['t'] === 'ebike' ? '⚡ E-Bike' : (($v['t'] === 'cargo' || $v['t'] === 'ecargo') ? '🚲 Lastenrad' : '🚲 Standardrad');
         $desc = 'Donkey Republic / SprottenFlotte';
+        if (is_string($v['n'] ?? null) && $v['n'] !== '') $desc = '"' . $v['n'] . '" · ' . $desc;
         if ($v['fu'] !== null) $desc .= ' · Akku ' . $v['fu'] . ' %';
         if ($v['rm'] !== null) $desc .= ' · ca. ' . max(1, (int) round($v['rm'] / 1000)) . ' km Reichweite';
         if (!empty($v['rs'])) $desc .= ' · gerade reserviert';
