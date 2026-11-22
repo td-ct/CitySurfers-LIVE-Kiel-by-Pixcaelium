@@ -1,5 +1,5 @@
 <?php
-/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6, Rad-Namen v1.4.16)
+/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6, Rad-Namen v1.4.16, Namen-Cache v1.4.18)
  * ---------------------------------------------------------------------------
  * Zweck: Die öffentlichen GBFS-3.0-Feeds von Donkey Republic / SprottenFlotte
  * (Kiel: Systeme donkey_kiel, donkey_kielsmile und donkey_schleswig) senden
@@ -36,6 +36,12 @@
  * weil die Hub-API andere IDs als GBFS hat. Findet die Hub-API zu einer
  * Position keinen Namen, bleibt n null; das Befüllen ist Best Effort und
  * darf den Feed-Lauf niemals scheitern lassen.
+ * v1.4.18: Die Hub-Abfrage schlägt auf dem Webserver für einzelne Stationen
+ * gelegentlich fehl (Timeout, ~170 parallele Abfragen). Die Namen werden deshalb
+ * je Station in donkeynames.json gecacht (Ablauf gestreut 6 bis 12 Stunden,
+ * flock beim Schreiben); fehlgeschlagene Stationen bleiben ohne Cache-Eintrag
+ * und werden beim nächsten Aufruf erneut probiert, bis alle Namen stehen. Die
+ * Hub-Last sinkt damit auf einen Bruchteil.
  *
  * Cache: Datei donkeycache.json neben diesem Skript, 60 Sekunden, mit flock
  * gesichert; bei Upstream-Fehlern wird ein alter Cache-Stand noch gnädig
@@ -111,52 +117,95 @@ function dp_name(array $s, string $id): string {
  * Räder bei Namen ("Frieda", "E-bike Fischi", ...), der GBFS-Feed führt sie
  * nicht; die Hub-API tut es (Accept-Header zwingend, sonst 406). Rückgabe:
  * Map "lat5,lon5" -> Name (Position gerundet auf 5 Dezimalstellen). */
+define('DP_NAMES_FILE', __DIR__ . '/donkeynames.json');
+define('DP_NAMES_TTL', 21600);   // Basis 6 h, gestreut bis 12 h
+
+/* v1.4.18: Namens-Cache je Station (donkeynames.json, flock beim Schreiben).
+ * Erfolgreich abgefragte Stationen landen mit gestreuter Ablaufzeit im Cache,
+ * fehlgeschlagene bleiben ohne Eintrag und werden beim nächsten Aufruf erneut
+ * probiert. Beim Schreiben werden nur Stationen mit Rädern behalten. */
+function dp_names_read(): array {
+    if (!is_file(DP_NAMES_FILE)) return [];
+    $raw = @file_get_contents(DP_NAMES_FILE);
+    $j = is_string($raw) ? json_decode($raw, true) : null;
+    return is_array($j) ? $j : [];
+}
+function dp_names_write(array $cache, array $keepIds): void {
+    $keep = [];
+    foreach ($keepIds as $id)
+        if (isset($cache[$id]['n']) && is_array($cache[$id]['n']))
+            $keep[$id] = ['e' => $cache[$id]['e'], 'n' => $cache[$id]['n']];
+    @file_put_contents(DP_NAMES_FILE, json_encode($keep), LOCK_EX);
+}
 function dp_hub_names(array $stIds): array {
     $out = [];
     $stIds = array_values(array_unique(array_filter(array_map('strval', $stIds), 'strlen')));
     if (!$stIds) return $out;
-    if (function_exists('curl_multi_init')) {
-        $mh = curl_multi_init();
-        $hs = [];
-        foreach ($stIds as $id) {
-            $ch = curl_init('https://stables.donkey.bike/api/public/hubs/hub_' . rawurlencode($id) . '/vehicles');
-            if (!$ch) continue;
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER   => true,
-                CURLOPT_FOLLOWLOCATION   => true,
-                CURLOPT_CONNECTTIMEOUT   => 5,
-                CURLOPT_TIMEOUT          => 12,
-                CURLOPT_HTTPHEADER       => ['Accept: application/com.donkeyrepublic.v7'],
-                CURLOPT_USERAGENT        => DP_UA,
-            ]);
-            curl_multi_add_handle($mh, $ch);
-            $hs[] = $ch;
-        }
-        if ($hs) {
-            $run = 0;
-            do {                       // bis alle Handles fertig sind
-                curl_multi_exec($mh, $run);
-                if ($run > 0) curl_multi_select($mh, 0.2);
-            } while ($run > 0);
-            foreach ($hs as $ch) {
-                dp_hub_parse((string) curl_multi_getcontent($ch), $out);
-                curl_multi_remove_handle($mh, $ch);
-                curl_close($ch);
+    $cache = dp_names_read();
+    $now = time();
+    $todo = [];                       // Stationen ohne frischen Cache-Eintrag
+    foreach ($stIds as $id) {
+        $e = $cache[$id]['e'] ?? 0;
+        if (!is_numeric($e) || $now > (int)$e) $todo[] = $id;
+    }
+    if ($todo) {
+        $fresh = [];                  // stId => Map "lat5,lon5" -> Name
+        if (function_exists('curl_multi_init')) {
+            $mh = curl_multi_init();
+            $hs = []; $hIds = [];
+            foreach ($todo as $id) {
+                $ch = curl_init('https://stables.donkey.bike/api/public/hubs/hub_' . rawurlencode($id) . '/vehicles');
+                if (!$ch) continue;
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER   => true,
+                    CURLOPT_FOLLOWLOCATION   => true,
+                    CURLOPT_CONNECTTIMEOUT   => 5,
+                    CURLOPT_TIMEOUT          => 12,
+                    CURLOPT_HTTPHEADER       => ['Accept: application/com.donkeyrepublic.v7'],
+                    CURLOPT_USERAGENT        => DP_UA,
+                ]);
+                curl_multi_add_handle($mh, $ch);
+                $hs[] = $ch; $hIds[] = $id;
+            }
+            if ($hs) {
+                $run = 0;
+                do {                   // bis alle Handles fertig sind
+                    curl_multi_exec($mh, $run);
+                    if ($run > 0) curl_multi_select($mh, 0.2);
+                } while ($run > 0);
+                foreach ($hs as $i => $ch) {
+                    $one = [];
+                    dp_hub_parse((string) curl_multi_getcontent($ch), $one);
+                    if ($one) $fresh[$hIds[$i]] = $one;   // nur Treffer cachen, Fehler erneut probieren
+                    curl_multi_remove_handle($mh, $ch);
+                    curl_close($ch);
+                }
+            }
+            curl_multi_close($mh);
+        } else {
+            // Fallback ohne curl: sequenziell, begrenzt, kurzer Timeout
+            $ctx = stream_context_create(['http' => [
+                'timeout'    => 4,
+                'user_agent' => DP_UA,
+                'header'     => "Accept: application/com.donkeyrepublic.v7\r\n",
+            ]]);
+            foreach (array_slice($todo, 0, 60) as $id) {
+                $raw = @file_get_contents('https://stables.donkey.bike/api/public/hubs/hub_'
+                    . rawurlencode($id) . '/vehicles', false, $ctx);
+                $one = [];
+                if (is_string($raw)) dp_hub_parse($raw, $one);
+                if ($one) $fresh[$id] = $one;
             }
         }
-        curl_multi_close($mh);
-    } else {
-        // Fallback ohne curl: sequenziell, begrenzt, kurzer Timeout
-        $ctx = stream_context_create(['http' => [
-            'timeout'    => 4,
-            'user_agent' => DP_UA,
-            'header'     => "Accept: application/com.donkeyrepublic.v7\r\n",
-        ]]);
-        foreach (array_slice($stIds, 0, 60) as $id) {
-            $raw = @file_get_contents('https://stables.donkey.bike/api/public/hubs/hub_'
-                . rawurlencode($id) . '/vehicles', false, $ctx);
-            if (is_string($raw)) dp_hub_parse($raw, $out);
-        }
+        foreach ($fresh as $id => $one)
+            $cache[$id] = ['e' => $now + DP_NAMES_TTL + mt_rand(0, DP_NAMES_TTL), 'n' => $one];
+        if ($fresh) dp_names_write($cache, $stIds);
+    }
+    foreach ($stIds as $id) {         // gemergtes Ergebnis der gewünschten Stationen
+        $ent = $cache[$id]['n'] ?? null;
+        if (!is_array($ent)) continue;
+        foreach ($ent as $k => $nm)
+            if (!isset($out[$k])) $out[$k] = $nm;   // erste Position gewinnt
     }
     return $out;
 }
