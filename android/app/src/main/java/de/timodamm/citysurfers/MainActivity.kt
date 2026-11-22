@@ -87,6 +87,13 @@ class MainActivity : Activity() {
                     // mailto:-Links (Support/Bugreport, Impressum) an das installierte
                     // E-Mail-Programm weiterreichen; ohne Mail-App bleibt alles wie vorher.
                     try { startActivity(Intent(Intent.ACTION_SENDTO, u)); true } catch (e: Exception) { false }
+                } else if (u.scheme == "geo" || u.scheme == "om" || u.scheme == "organicmaps" ||
+                    u.scheme == "osmand" || u.scheme == "ge0") {
+                    // v1.4.6: Karten-/Navigations-Links des Leihfahrrad-Dialogs
+                    // (geo:-Zieluebergabe, Organic Maps om://) an das System
+                    // weiterreichen: Android bietet die installierten Apps an; ohne
+                    // passende App bleibt alles wie vorher.
+                    try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
                 } else false
             }
             // Laesst sich die uebernommene Seite nicht laden (unlesbar, entfernt,

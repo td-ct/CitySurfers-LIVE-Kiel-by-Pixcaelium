@@ -1,5 +1,5 @@
 <?php
-/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+)
+/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6)
  * ---------------------------------------------------------------------------
  * Zweck: Die öffentlichen GBFS-3.0-Feeds von Donkey Republic / SprottenFlotte
  * (Kiel: Systeme donkey_kiel, donkey_kielsmile und donkey_schleswig) senden
@@ -16,7 +16,8 @@
  *   donkeyproxy.php?geojson=1 → GeoJSON FeatureCollection (Fahrzeuge + Stationen)
  *
  * Fahrzeug-Objekt (v): id, t ("bike"|"ebike"|"cargo"|"ecargo"|...), lat, lon,
- *   fu (current_fuel_percent, 0-100, kann null sein), rm (current_range_meters),
+ *   fu (current_fuel_percent, 0-100, kann null sein; Donkey liefert 0..1, wird
+ *   v1.4.6 vor dem Runden auf Prozent gehoben), rm (current_range_meters),
  *   rs (is_reserved), dis (is_disabled), st (station_id, wenn bekannt),
  *   dl (miet-deeplink aus rental_uris.android/ios/web, wenn vorhanden).
  * Stations-Objekt (s): id, name, lat, lon, cap (capacity, kann null sein).
@@ -109,6 +110,12 @@ function dp_collect(): ?array {
                 if (!is_numeric($lat) || !is_numeric($lon)) continue;   // nur verortbare Räder
                 $seenV[$id] = true;
                 $fu = $v['current_fuel_percent'] ?? null;
+                // v1.4.6: Donkey liefert current_fuel_percent als Bruch 0..1
+                // (GBFS schreibt 0..100 vor, der Feed haelt sich nicht daran);
+                // vorher rundete der Proxy den Bruch auf 0/1 Prozent. Werte <= 1
+                // werden vor dem Runden auf Prozent gehoben (0 bleibt 0, 1 wird 100).
+                if (is_numeric($fu) && (float) $fu >= 0 && (float) $fu <= 1)
+                    $fu = (float) $fu * 100;
                 $rm = $v['current_range_meters'] ?? null;
                 $dl = null;
                 if (isset($v['rental_uris']) && is_array($v['rental_uris'])) {
