@@ -10743,8 +10743,8 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad und unter der Rückgabe-Station sowie an jeder Teilstrecke stehen Routing-Chips: OSM öffnet das Bein in OpenStreetMap, Google und Organic Maps nehmen die Route in der installierten App (die ganze 4-Punkte-Route als Start · Abholrad · Rückgabe · Ziel; Organic Maps läuft über die offizielle omaps.app-Weiterleitung: Ist die App installiert, öffnet sie sich, sonst erscheint deren Seite mit Install-Hinweis statt einer Schema-Fehlermeldung), OsmAnd startet die Turn-Navigation, und das Karten-Symbol plus 📱-Chip dahinter übergeben das Bein-Ziel so wie überall: Karten-Symbol als genereller Web-Link, 📱 ans Handy, auf dem Android die installierten Karten-Apps zur Wahl stellt (die Android-App reicht geo:-Links und die Organic-Maps-Links ab v1.4.6 nach draußen). Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
-  h += P("<b>🧭 Drei Wege zur Karte</b> (seit v1.4.8, überall gleich): Damit bei den vielen Karten und Routing-Apps die Übersicht bleibt, gibt es ein festes Muster mit genau drei Wegen. <b>1. Ansehen:</b> Chips mit 🗺 uMap öffnen Karten mit beliebig vielen Punkten (alle Räder und Stationen, die Räder der Auswahl oder die 4-Punkte-Route der Leihrad-Tour); uMap kann nichts zurückmelden, deshalb stehen die Kurz-IDs der Räder in Beschriftung und Pulldown zum Abgleichen. <b>2. Navigieren:</b> Die Routing-Chips (OpenStreetMap, Google, OsmAnd, Organic Maps) übernehmen eine echte Route mit bis zu 4 Punkten, je Bein oder als ganze Leihrad-Route. <b>3. Einzelpunkt übergeben:</b> Das Karten-Symbol übergibt einen einzelnen Ort als generellen Web-Link, der 📱-Chip daneben als geo:-Link ans Handy, wo Android die installierten Karten-Apps zur Auswahl stellt. Karten-Symbol und 📱-Chip sitzen überall nebeneinander, an Adressen, Favoriten, Stations- und Route-Panels und seit v1.4.9 auch am Ende jeder Routing-Chip-Reihe, auch je Bein der Leihrad-Route: Für einen Weg zwischen zwei Punkten reicht die Übergabe des Ziels, die installierte App baut die Route selbst; der OSM-Chip je Bein bleibt das freie Browser-Angebot ohne installierte App.");
+  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und setzen seit v1.4.10 als Standard 1:1 den Anfangspunkt des Blocks als Start und seinen Endpunkt als Ziel ein (vorher stand die Anastation als Start und irgendeine folgende Station als Ziel). In den Pulldowns „Ausgewählte Stationen“ steht seit v1.4.10 zusätzlich am Anfang der echte Startpunkt der Route und am Ende das echte Routen-Ziel, auch wenn beides Adressen oder GPS-Punkte statt Stationen sind. Seit v1.4.5 nutzt der Dialog die Feld-Mechanik des allgemeinen Routing-Dialogs: Vorangestellt steht über jedem Feld das Pulldown <b>Ausgewählte Stationen</b> (alle Stationen der Tour in Reihenfolge bzw. als Ziel nur die noch vor dir liegenden, je nach Aufruf-Knopf vorausgewählt), dahinter die bekannten Tasten: 🔍 Adresse, ⭐ Adresse, 🚏 Station, ⭐ Station und ◎ GPS, alles derselbe Auswahldialog wie im Route-Dialog, mit GPS-sortierten Treffern. Zwischen Start und Ziel legt das <b>Abholrad-Pulldown</b> Punkt 2 der Route fest (die 6 nächsten Räder, mit Typ, Entfernung und Abhol-Station samt Straßenadresse, die per Photon-Rückwärts-Suche ermittelt und 30 Tage lokal gecacht wird), unter dem Ziel das <b>Rückgabe-Station-Pulldown</b> Punkt 3 (die 6 nächsten Donkey-Stationen ans Ziel). Der Knopf <b>🚴 Gesamte Route abrufen</b> berechnet die drei Teilstrecken (Fuß, Rad, Fuß) mit FOSSGIS-OSRM und zeigt die Zeitaufschlüsselung: Fußwege zu 5 km/h, die Radfahrt mit E-Bike 22 bzw. Standardrad 17 km/h, je Ausleihe und Rückgabe +2 Minuten; jede Teilstrecke lässt sich einzeln in OpenStreetMap öffnen, die 4-Punkt-Übersicht als uMap-Karte. Seit v1.4.6 zeigt das Abholrad-Pulldown Akkustand und Kurz-ID je Rad und lässt sich am Listenende um jeweils 6 weitere Räder erweitern; die Karte „uMap: Räder der Auswahl“ zeigt dieselben Räder mit derselben Kurz-ID und dem Akkustand, seit v1.4.11 in Markerfarben nach Akkustand (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter) mit Donkey-Fahrrad-Symbol und der eigenen GPS-Position als 📍-Marker; das auf der Karte gefundene Rad wählst du über seine ID im Pulldown (uMap kann nichts zurückmelden). Seit v1.4.7 zoomt jede uMap-Karte automatisch so weit, dass alle Punkte (auch Start und Ziel der 4-Punkte-Route) gemeinsam sichtbar sind, seit v1.4.11 mit 1,5-fachem Rand um die äußeren Punkte, und ein eigener Start oder ein eigenes Ziel steht im Pulldown klar als „Gewählter Start/Gewähltes Ziel“ direkt hinter der GPS-Option am Listenanfang (die Route-Stationen enden wieder mit der Endstation der Route). Unter dem Abholrad, unter der Rückgabe-Station und an jeder Teilstrecke sitzt seit v1.4.11 EIN 🧭-Knopf, der sein Routing-Menü aufklappt: Google Maps übernimmt die echte Route (je Bein oder, in der Ganze-Route-Zeile, alle 4 Punkte als Rad-Route), und 📱 übergibt das Bein-Ziel ans Handy, wo Android die installierten Karten-Apps zur Wahl stellt und die gewählte App die Route selbst baut (die Android-App reicht geo:-Links nach draußen). Die freien Alternativen OSM, OsmAnd und Organic Maps sind entfallen: Ihr Platz hat das 🧭-Menü, und Organic Maps hatte die übergebenen Punkte auf manchen Geräten falsch interpretiert (unsere omaps.app-Weiterleitung gab sie korrekt weiter). Als Ausnahme bleiben die uMap-Chips direkt sichtbar: „Räder der Auswahl“ mit Akku-Farben, „Rückgabe-Stationen“ (neu seit v1.4.11: die 6 Rückgabe-Stationen um das Ziel samt 🎯 Ziel und 📍 eigener Position) und die 4-Punkte-Route. Darunter blendet der Knopf „uMap: alle Räder + Stationen“ sämtliche Räder und Stationen auf einer Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy; deshalb kann diese eine Karte die eigene GPS-Position nicht zeigen). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php: Auf der Webseite liegt er im selben Verzeichnis wie die Seite, in der Android-App greift der Dialog direkt auf pixcaelium.timo-damm.de/apps/citysurfers/ zu (die Feeds selbst erlauben keine Browser-Abfrage). Ist der Proxy nicht erreichbar, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
+  h += P("<b>🧭 Drei Wege zur Karte</b> (seit v1.4.11, überall gleich): Damit bei den vielen Karten und Routing-Apps die Übersicht bleibt, gibt es ein festes Muster mit genau drei Wegen. <b>1. Ansehen:</b> Chips mit 🗺 uMap öffnen Karten mit beliebig vielen Punkten, die Räder der Auswahl mit Akkustand-Farben (grün ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter, Donkey-Fahrrad-Symbol), die Rückgabe-Stationen ums Ziel, alle Räder und Stationen oder die 4-Punkte-Route der Leihrad-Tour; die eigene GPS-Position steht als 📍-Marker mit auf der Karte (Ausnahme „alle Räder + Stationen“, die uMap serverseitig lädt und deine Position deshalb nicht kennt); uMap kann nichts zurückmelden, deshalb stehen die Kurz-IDs der Räder in Beschriftung und Pulldown zum Abgleichen. <b>2. Navigieren:</b> Der 🧭-Knopf klappt ein Menü auf, das nur die Optionen des jeweiligen Falls zeigt: Google Maps übernimmt die echte Route mit bis zu 4 Punkten, je Bein oder als ganze Leihrad-Route; mehrere Punkte gleichzeitig kann kein herstellerneutraler Standard übergeben, geo: fasst genau einen Punkt, deshalb nennt das Menü die konkrete App. <b>3. Einzelpunkt übergeben:</b> Das Karten-Symbol übergibt einen einzelnen Ort als generellen Web-Link, der 📱-Chip daneben als geo:-Link ans Handy, wo Android die installierten Karten-Apps zur Auswahl stellt. Karten-Symbol und 📱-Chip sitzen überall nebeneinander, an Adressen, Favoriten, Stations- und Route-Panels.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
@@ -10800,8 +10800,6 @@ async function bkAddr(lat, lon) {
   } catch (e) { return c ? c.a : ""; }
 }
 const BIKE_ROW_N = 6;
-const OSM_ENGINE_FOOT = "fossgis_osrm_foot";   // offenes Routing via FOSSGIS-OSRM
-const OSM_ENGINE_BIKE = "fossgis_osrm_bike";
 // 4-Punkte-Leihfahrrad-Route (Start -> Abholrad -> Rueckgabestation -> Ziel), v1.4.4:
 // Radtempo per Timos Vorgabe (E-Bike 22, Standardrad 17 km/h), je Ausleihe und
 // Rueckgabe +2 Minuten; Rueckgabe-Stationen im Ziel-Pulldown: die 6 naechsten.
@@ -10861,11 +10859,22 @@ function donkeyBikeText(v, stationName) {
   if (stationName) s += " · " + stationName;
   return s;
 }
-// Offenes Routing: OpenStreetMap-Directions (FOSSGIS-OSRM), exakt zwei Punkte
-function osmDirURL(a, b, engine) {
-  const p = x => Number(x.lat).toFixed(6) + "%2C" + Number(x.lon).toFixed(6);
-  return "https://www.openstreetmap.org/directions?engine=" + engine + "&route=" +
-    p(a) + "%3B" + p(b);
+// v1.4.11: Akkustand-Schwellenwerte als uMap-Markerfarbe (Timo-Vorgabe):
+// gruen ab 80 %, gelb ab 60 %, orange ab 40 %, rot darunter, ohne Wert dunkelblau.
+// uMap (3.8.1, am ausgerollten Bundle verifiziert) wertet beim data=-Import die
+// per-Feature-Optionen in properties._umap_options aus (iconClass, color,
+// iconUrl) und setzt die Farbe direkt als CSS-Hintergrund des Markers.
+const UMAP_BIKE_ICON = "https://umap.openstreetmap.fr/uploads/pictogram/bicycle-share.svg";
+const UMAP_STATION_ICON = "https://umap.openstreetmap.fr/uploads/pictogram/parking-bicycle.svg";
+function bikeFuColor(pct) {
+  if (pct == null) return { c: "MidnightBlue", e: "🔋" };
+  if (pct >= 80) return { c: "Green", e: "🟢" };
+  if (pct >= 60) return { c: "Yellow", e: "🟡" };
+  if (pct >= 40) return { c: "Orange", e: "🟴" };
+  return { c: "Red", e: "🔴" };
+}
+function bikeBikeUmOpt(v) {   // Leihrrad-Marker: Akkufarbe + Donkey-Fahrrad-Symbol
+  return { _umap_options: { iconClass: "Drop", color: bikeFuColor(bikeFuPct(v && v.fu)).c, iconUrl: UMAP_BIKE_ICON } };
 }
 // Akkustand robust lesen (v1.4.6): Donkey liefert current_fuel_percent als
 // Bruch 0..1 (GBFS schreibt eigentlich 0..100 vor, der Feed haelt sich nicht
@@ -10878,11 +10887,15 @@ function bikeFuPct(fu) {
   return Math.round(fu);
 }
 function bikeShortId(id) { return String(id || "").split("-").pop(); }
-// Routing-Apps (v1.4.6): fuegt bis zu 4 Punkte (Start + bis zu 3 Ziele) an
-// Google Maps und Organic Maps weiter, OsmAnd startet die Turn-Navigation
-// zwischen zwei Punkten, geo: uebergibt den Zielpunkt ans Handy, auf dem
-// Android die installierten Karten-Apps zur Auswahl stellt. OSM-Web kann
-// per URL nur zwei Punkte, es bleibt je Bein der klassische OSM-Link.
+// Routing (v1.4.11): Google Maps ist DIE Routing-Verbindung und fuegt bis zu
+// 4 Punkte (Start + bis zu 3 Ziele) als echte Route weiter; geo: uebergibt
+// EINEN Punkt ans Handy, wo Android die installierten Karten-Apps zur
+// Auswahl stellt (geo: ist herstellerneutral und fasst bewusst nur einen
+// Punkt, einen App-uebergreifenden Standard fuer Mehrfach-Routen gibt es
+// nicht). Beides sitzt seit v1.4.11 hinter einem 🧭-Knopf je Zeile, der das
+// Menue mit den Optionen des jeweiligen Falls aufklappt; die Chip-Reihe
+// OSM/OsmAnd/Organic entfaellt (Organic Maps interpretierte die Punkte
+// zudem teils falsch, siehe v1.4.11-Merker).
 function rtLL(p) { return Number(p.lat).toFixed(6) + "," + Number(p.lon).toFixed(6); }
 function googleDirURL(pts, mode) {
   const last = pts[pts.length - 1];
@@ -10892,26 +10905,6 @@ function googleDirURL(pts, mode) {
   if (wps.length) u += "&waypoints=" + encodeURIComponent(wps.join("|"));
   return u;
 }
-function osmandNavURL(from, to, mode) {
-  return "https://osmand.net/map/?start=" + rtLL(from) + "&finish=" + rtLL(to) +
-    "&profile=" + (mode === "bike" ? "bicycle" : "pedestrian");
-}
-// Organic Maps (v1.4.7): offizielle HTTPS-Variante von omaps.app statt des
-// om://-Schemas: Der Worker dort leitet im Browser selbst auf om:// weiter
-// (installierte App oeffnet sich), ohne App erscheint die omaps.app-Seite mit
-// Install-Hinweis statt net::ERR_UNKNOWN_URL_SCHEME. In der Android-App laeuft
-// der https-Link ueber die normale http-Weiterleitung nach draussen.
-function organicDirURL(pts, mode) {
-  const t = mode === "bike" ? "bicycle" : "pedestrian";
-  const nm = p => encodeURIComponent(p && p.name ? p.name : rtLL(p));
-  if (pts.length === 2)
-    return "https://omaps.app/route?sll=" + rtLL(pts[0]) + "&saddr=" + nm(pts[0]) +
-      "&dll=" + rtLL(pts[1]) + "&daddr=" + nm(pts[1]) + "&type=" + t;
-  return "https://omaps.app/v2/dir?origin=" + rtLL(pts[0]) + "&origin_name=" + nm(pts[0]) +
-    "&destination=" + rtLL(pts[pts.length - 1]) + "&destination_name=" + nm(pts[pts.length - 1]) +
-    "&waypoints=" + encodeURIComponent(pts.slice(1, -1).map(rtLL).join("|")) +
-    "&waypoint_names=" + encodeURIComponent(pts.slice(1, -1).map(p => (p && p.name) ? p.name : rtLL(p)).join("|")) + "&mode=" + t;
-}
 function geoTargetURL(to, label) {
   const ll = rtLL(to);
   return "geo:" + ll + "?q=" + ll + (label ? "(" + encodeURIComponent(label) + ")" : "");
@@ -10920,27 +10913,45 @@ function rtChip(href, label, ttl) {
   return '<a class="achip" target="_blank" rel="noopener" href="' + href +
     '" title="' + escapeHtml(ttl) + '">' + label + "</a>";
 }
-function rtAppChipsHTML(pts, mode, withOsm) {
+let rtMenuSeq = 0;   // v1.4.11: laufende Nummer fuer eindeutige Menue-IDs je Render-Durchlauf
+// v1.4.11: Routing hinter EINEM 🧭-Symbol je Zeile statt einer Chip-Reihe: Der
+// Knopf klappt das Menue auf, die Eintraege sind gewoehnliche Links (Google,
+// geo:) und brauchen deshalb keinen eigenen Klick-Handler.
+function rtMenuHTML(id, items) {
+  if (!items || !items.length) return "";
+  let h = ' <button class="achip" data-rtmenubtn="' + id +
+    '" title="Routing-Optionen aufklappen: Google-Route und Ziel-Übergabe ans Handy">🧭</button>' +
+    '<span class="rtmenudd" id="rtmenu-' + id + '" style="display:none;flex-direction:column;gap:4px;margin:4px 0 2px;width:100%">';
+  items.forEach(it => {
+    h += '<a class="achip" target="_blank" rel="noopener" href="' + it.href +
+      '" title="' + escapeHtml(it.title || it.label) + '">' + it.label + "</a>";
+  });
+  return h + "</span>";
+}
+function rtAppChipsHTML(pts, mode, withOsm) {   // v1.4.11: gibt jetzt EIN 🧭-Menue statt der Chip-Reihe aus
   if (!pts || pts.length < 2 || pts.some(x => !x || x.lat == null)) return "";
   const last = pts[pts.length - 1];
-  let h = withOsm ? rtChip(osmDirURL(pts[0], last, mode === "bike" ? OSM_ENGINE_BIKE : OSM_ENGINE_FOOT),
-    "OSM", "Route in OpenStreetMap öffnen (FOSSGIS-OSRM-Routing)") : "";
-  h += rtChip(googleDirURL(pts, mode), "Google", "Route in Google Maps öffnen (installierte App oder Web" +
-    (pts.length > 2 ? ", alle " + pts.length + " Punkte als Zwischenstopps" : "") + ")");
-  h += rtChip(osmandNavURL(pts[0], last, mode), "OsmAnd", "Turn-Navigation in OsmAnd starten (App muss installiert sein), Profil " +
-    (mode === "bike" ? "Fahrrad" : "zu Fuß"));
-  h += rtChip(organicDirURL(pts, mode), "Organic Maps", "Route in Organic Maps öffnen (App muss installiert sein)" +
-    (pts.length > 2 ? ", alle Punkte als Zwischenstopps" : ""));
-  // v1.4.9: Weg 3 wie ueberall: Karten-Symbol (genereller Web-Link) + 📱 (geo:-Chooser
-  // der installierten Apps) statt des alten "App …"-Einzelchips. Fuer einen Weg zwischen
-  // zwei Punkten reicht die Uebergabe des Ziels, die installierte App baut die Route selbst.
-  h += routeIconHTML(last, last.name || "Ziel des Beins");
-  return h;
+  return rtMenuHTML("bk" + (++rtMenuSeq), [
+    { href: googleDirURL(pts, mode), label: "Google Maps: Route",
+      title: "Route in Google Maps öffnen (installierte App oder Web" +
+        (pts.length > 2 ? ", alle " + pts.length + " Punkte als Zwischenstopps" : "") + ")" },
+    { href: geoTargetURL(last, last.name || "Ziel des Beins"), label: "📱 Ziel ans Handy",
+      title: "Ziel als geo:-Link ans Handy übergeben: Android stellt die installierten Karten-Apps zur Auswahl, die gewählte App baut die Route selbst (geo: fasst genau einen Punkt)" }
+  ]);
 }
-function bikeFeature(lat, lon, name, desc) {
+function bikeFeature(lat, lon, name, desc, opt) {   // opt (v1.4.11): per-Feature-uMap-Optionen (_umap_options)
   return { type: "Feature",
     geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
-    properties: { name: String(name), description: String(desc || "") } };
+    properties: Object.assign({ name: String(name), description: String(desc || "") }, opt || {}) };
+}
+// v1.4.11: eigene GPS-Position als 📍-Marker mit auf jede clientseitige uMap-
+// Karte (bikeUmapURL haengt sie selbst an). Die dataUrl-Variante (alle Räder +
+// Stationen) laedt uMap serverseitig, dort kann die Position nicht mit rein.
+function bikeUmapGPSFeat() {
+  const p = livePos();
+  if (!(p && p.lat != null)) return null;
+  return bikeFeature(p.lat, p.lon, "📍 Meine GPS-Position", "Eigene Position (Live)",
+    { _umap_options: { iconClass: "Drop", color: "Blue" } });
 }
 // uMap mit Direkt-GeoJSON: gewaehltes Rad als Stern, die anderen dazu, plus
 // Rueckgabe-Stationen um das Ziel; Karte auf ALLE Punkte gezoomt (v1.4.7:
@@ -10954,13 +10965,18 @@ function bikeFeature(lat, lon, name, desc) {
 // einmaliges Dekodieren zurueck, kommt ein harmloses %25 im Text an).
 function bikeUmapDataParam(s) { return encodeURIComponent(s).replace(/%25/g, "%2525"); }
 function bikeUmapURL(features, center) {
-  const gj = JSON.stringify({ type: "FeatureCollection", features: features });
+  const feats = (features || []).slice();
+  const gfeat = bikeUmapGPSFeat();   // v1.4.11: 📍 eigene Position mit auf der Karte
+  if (gfeat) feats.push(gfeat);
+  const gj = JSON.stringify({ type: "FeatureCollection", features: feats });
   let u = "https://umap.openstreetmap.fr/de/map/new/?data=" + bikeUmapDataParam(gj) + "&dataFormat=geojson";
   // v1.4.7: Zoom so, dass die aeussersten Punkte (Start bis Ziel, bis zu 4
   // Punkte) gemeinsam auf die Karte passen. Web-Mercator, angenommene nutzbare
   // Handy-Karte ~340x480 px zu 82 % gefuellt; Einzelpunkt faellt auf Zoom 15.
+  // v1.4.11 (Timo): 1,5-facher Rand um die Ausdehnung, damit alle Punkte samt
+  // GPS-Punkt komfortabel Platz haben (Faktor 1,5 auf beide Spannen).
   const pts = [];
-  (features || []).forEach(f => {
+  feats.forEach(f => {
     const c = f && f.geometry && f.geometry.coordinates;
     if (c && isFinite(Number(c[0])) && isFinite(Number(c[1]))) pts.push([Number(c[0]), Number(c[1])]);
   });
@@ -10976,7 +10992,7 @@ function bikeUmapURL(features, center) {
     const my = la => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));   // Mercator-y
     const spanY = Math.max(my(maxLat) - my(minLat), 1e-5);
     const z = Math.max(3, Math.min(16,
-      Math.floor(Math.min(Math.log2(392 / spanLon), Math.log2(9.66 / spanY)))));
+      Math.floor(Math.min(Math.log2(392 / (spanLon * 1.5)), Math.log2(9.66 / (spanY * 1.5))))));
     u += "#" + z + "/" + ((minLat + maxLat) / 2).toFixed(5) + "/" + ((minLon + maxLon) / 2).toFixed(5);
   } else if (center && center.lat != null && center.lon != null)
     u += "#15/" + Number(center.lat).toFixed(5) + "/" + Number(center.lon).toFixed(5);
@@ -11310,12 +11326,14 @@ function openBikeDlg(which, ctx) {
       '<div style="margin-top:4px">' + rtChip(
         bikeUmapURL((st.bikes || []).map(x => {
           const s2 = ((donkeyCache.d && donkeyCache.d.s) || []).find(y => y.id === x.st);
+          const fc = bikeFuColor(bikeFuPct(x.fu));   // v1.4.11: Akku-Emoji + Markerfarbe
           return bikeFeature(x.lat, x.lon,
-            "#" + bikeShortId(x.id) + " " + (x.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") +
+            fc.e + " #" + bikeShortId(x.id) + " " + (x.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") +
             (x.fu != null ? " · Akku " + x.fu + " %" : ""),
-            fmtDm(x.dm) + " vom Start" + (s2 ? " · bei Station " + s2.name : " · frei abstellbar"));
+            fmtDm(x.dm) + " vom Start" + (s2 ? " · bei Station " + s2.name : " · frei abstellbar"),
+            bikeBikeUmOpt(x));
         }), st.anchor),
-        "🗺 uMap: Räder der Auswahl", "Alle Räder der Auswahl auf einer uMap-Karte, beschriftet mit derselben Kurz-ID und dem Akkustand wie im Pulldown: Das Rad auf der Karte finden und seine ID hier auswählen (uMap kann nichts zurückmelden)") +
+        "🗺 uMap: Räder der Auswahl", "Alle Räder der Auswahl auf einer uMap-Karte, beschriftet mit derselben Kurz-ID und dem Akkustand wie im Pulldown; Markerfarbe nach Akkustand: 🟢 ab 80 %, 🟡 ab 60 %, 🟴 ab 40 %, 🔴 darunter; 📍 ist die eigene GPS-Position. Das Rad auf der Karte finden und seine ID hier auswählen (uMap kann nichts zurückmelden)") +
       rtAppChipsHTML([st.anchor, bikePt], "foot", true) + "</div>";
     const myseq = ++bikeInfoSeq;
     if (sn && sn.ad) { const e1 = bikeInfoEl.querySelector(".bkadr"); if (e1) e1.textContent = " · " + sn.ad; return; }
@@ -11367,7 +11385,16 @@ function openBikeDlg(which, ctx) {
         { lat: x.s.lat, lon: x.s.lon, name: x.s.name }], "bike", true);
     else if (st.anchor && st.anchor.lat != null)   // ohne Rad: zu Fuß vom Start dorthin
       chips = rtAppChipsHTML([st.anchor, { lat: x.s.lat, lon: x.s.lon, name: x.s.name }], "foot", true);
-    if (chips) dropInfoEl.innerHTML += '<div style="margin-top:4px">' + chips + "</div>";
+    // v1.4.11: Rückgabe-Stationen-Ansicht (Ausnahme-Chip, bleibt sichtbar): alle
+    // Stationen des Pulldowns plus 🎯 Ziel und (in bikeUmapURL) 📍 eigene Position.
+    const dfeats = (st.drops || []).map(d => bikeFeature(d.s.lat, d.s.lon, "■ Rückgabe: " + d.s.name,
+      fmtDm(d.dm) + " zum Ziel", { _umap_options: { iconClass: "Drop", color: "Teal", iconUrl: UMAP_STATION_ICON } }));
+    if (st.dest && st.dest.lat != null)
+      dfeats.push(bikeFeature(st.dest.lat, st.dest.lon, "🎯 Ziel: " + st.dest.name, "Ziel der Leihrad-Tour",
+        { _umap_options: { iconClass: "Drop", color: "Crimson" } }));
+    chips += rtChip(bikeUmapURL(dfeats, st.dest), "🗺 uMap: Rückgabe-Stationen",
+      "Die " + BK_DROP_N + " Rückgabe-Stationen um das Ziel auf einer uMap-Karte: Name und Entfernung zum Ziel in der Beschreibung, je Station ein Fahrrad-Piktogramm, 🎯 ist das Ziel, 📍 ist die eigene GPS-Position (uMap kann nichts zurückmelden)");
+    dropInfoEl.innerHTML += '<div style="margin-top:4px">' + chips + "</div>";
     const myseq = ++dropInfoSeq;
     if (x.s.ad) { const e1 = dropInfoEl.querySelector(".bkadr"); if (e1) e1.textContent = " · " + x.s.ad; return; }
     bkAddr(x.s.lat, x.s.lon).then(a => {
@@ -11392,7 +11419,7 @@ function openBikeDlg(which, ctx) {
     const v = (st.bikes || [])[Number(selBike.value)];
     bkst.bikeId = v ? v.id : null;
     fillBikeInfo();
-    fillDropInfo();   // Routing-Chips: die Rückgabe-Route startet am Rad
+    fillDropInfo();   // 🧭-Menüs: die Rückgabe-Route startet am Rad
     resEl.innerHTML = "";
   });
   selDrop.addEventListener("change", () => {
@@ -11442,26 +11469,34 @@ function openBikeDlg(which, ctx) {
     h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">🔧 Ausleihen + Zurückgeben</div>' +
       '<div class="bksub">+' + DONKEY_HANDLE_MIN + " min (fest einkalkuliert)</div></div></div>";
     h += rowHtml("🚶", "Rückgabe-Station " + drop.name + " → Ziel", leg3.m, w2, leg3.est, drop, st.dest, "foot");
-    const feats = [
-      bikeFeature(st.anchor.lat, st.anchor.lon, "● Start: " + st.anchor.name, "Punkt 1 der 4-Punkte-Route"),
-      bikeFeature(bike.lat, bike.lon, "★ Abholrad (" + (bike.t === "ebike" ? "E-Bike" : "Standardrad") + ") #" + bikeShortId(bike.id),
-        donkeyBikeText(bike, "") + " · ID #" + bikeShortId(bike.id)),
-      bikeFeature(drop.lat, drop.lon, "■ Rückgabe: " + drop.name, "Punkt 3 der 4-Punkte-Route"),
-      bikeFeature(st.dest.lat, st.dest.lon, "🎯 Ziel: " + st.dest.name, "Punkt 4 der 4-Punkte-Route")
+    const feats = [   // v1.4.11: Markerfarben (Abholrad nach Akkustand) statt Einheitsmarkern
+      bikeFeature(st.anchor.lat, st.anchor.lon, "● Start: " + st.anchor.name, "Punkt 1 der 4-Punkte-Route",
+        { _umap_options: { iconClass: "Drop", color: "DarkBlue" } }),
+      bikeFeature(bike.lat, bike.lon, bikeFuColor(bikeFuPct(bike.fu)).e + " ★ Abholrad (" +
+        (bike.t === "ebike" ? "E-Bike" : "Standardrad") + ") #" + bikeShortId(bike.id),
+        donkeyBikeText(bike, "") + " · ID #" + bikeShortId(bike.id), bikeBikeUmOpt(bike)),
+      bikeFeature(drop.lat, drop.lon, "■ Rückgabe: " + drop.name, "Punkt 3 der 4-Punkte-Route",
+        { _umap_options: { iconClass: "Drop", color: "Teal", iconUrl: UMAP_STATION_ICON } }),
+      bikeFeature(st.dest.lat, st.dest.lon, "🎯 Ziel: " + st.dest.name, "Punkt 4 der 4-Punkte-Route",
+        { _umap_options: { iconClass: "Drop", color: "Crimson" } })
     ];
     const center = { lat: (bike.lat + drop.lat) / 2, lon: (bike.lon + drop.lon) / 2 };
     h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">⏱ Gesamt: ca. ' + tot + " min</div>" +
       '<div class="bksub">Fuß 5 km/h · Rad ' + kmh + " km/h (" + (bike.t === "ebike" ? "E-Bike" : "Standardrad") +
       ") · +2 min Ausleihe/Rückgabe</div></div>" +
-      chip(bikeUmapURL(feats, center), "🗺 uMap: 4-Punkte-Route", "4-Punkte-Übersicht auf uMap: ● Start, ★ Abholrad, ■ Rückgabe-Station, 🎯 Ziel") + "</div>";
+      chip(bikeUmapURL(feats, center), "🗺 uMap: 4-Punkte-Route", "4-Punkte-Übersicht auf uMap: ● Start, ★ Abholrad (Markerfarbe nach Akkustand), ■ Rückgabe-Station, 🎯 Ziel, 📍 ist deine GPS-Position") + "</div>";
     h += '<div class="bkrow"><div class="bkmeta"><div class="bkt">📲 Ganze Route in einer App (Start · Abholrad · Rückgabe · Ziel)</div>' +
-      '<div class="bksub">Google verbindet alle Punkte im Rad-Modus, Organic Maps als Zwischenstopps (Modus dort wählbar)</div></div>' +
-      rtChip(googleDirURL([st.anchor, bikePt4, drop, st.dest], "bike"), "Google",
-        "Alle 4 Punkte als Route in Google Maps öffnen (Rad-Modus, in der App laufen die Fußabschnitte als Radweg)") +
-      rtChip(organicDirURL([st.anchor, bikePt4, drop, st.dest], "bike"), "Organic Maps",
-        "Alle 4 Punkte an Organic Maps übergeben (Zwischenstopps, dort Modus wählen; ohne installierte App öffnet die omaps.app-Seite mit Install-Hinweis)") +
-      routeIconHTML(st.dest, "Ziel") + "</div>";
+      '<div class="bksub">🧭 klappt die Optionen auf: Google verbindet alle 4 Punkte im Rad-Modus, 📱 übergibt das Ziel ans Handy</div></div>' +
+      rtAppChipsHTML([st.anchor, bikePt4, drop, st.dest], "bike") + "</div>";
     resEl.innerHTML = h;
+  });
+  // v1.4.11: 🧭-Menue-Knöpfe in diesem Dialog auf-/zuklappen (ein Knopf je
+  // Zeile, das Menue steckt dahinter; Delegation fuer alle Menues im Dialog).
+  wrap.addEventListener("click", e => {
+    const mb = e.target.closest("[data-rtmenubtn]");
+    if (!mb) return;
+    const dd = document.getElementById("rtmenu-" + mb.dataset.rtmenubtn);
+    if (dd) dd.style.display = dd.style.display === "none" ? "flex" : "none";
   });
   wrap.querySelector("#bkClose").addEventListener("click", () => wrap.remove());
   wrap.addEventListener("click", e => { if (e.target === wrap) wrap.remove(); });
@@ -12359,7 +12394,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.10 · Build: 22.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.11 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
