@@ -1,5 +1,5 @@
 <?php
-/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6, Rad-Namen v1.4.16, Namen-Cache v1.4.18)
+/* donkeyproxy.php – Mini-Proxy für CitySurfers LIVE @ Kiel (v1.3.17+, Akku-Fix v1.4.6, Rad-Namen v1.4.16, Namen-Cache v1.4.18, Datenverzeichnis v1.4.19)
  * ---------------------------------------------------------------------------
  * Zweck: Die öffentlichen GBFS-3.0-Feeds von Donkey Republic / SprottenFlotte
  * (Kiel: Systeme donkey_kiel, donkey_kielsmile und donkey_schleswig) senden
@@ -38,19 +38,26 @@
  * darf den Feed-Lauf niemals scheitern lassen.
  * v1.4.18: Die Hub-Abfrage schlägt auf dem Webserver für einzelne Stationen
  * gelegentlich fehl (Timeout, ~170 parallele Abfragen). Die Namen werden deshalb
- * je Station in donkeynames.json gecacht (Ablauf gestreut 6 bis 12 Stunden,
- * flock beim Schreiben); fehlgeschlagene Stationen bleiben ohne Cache-Eintrag
- * und werden beim nächsten Aufruf erneut probiert, bis alle Namen stehen. Die
- * Hub-Last sinkt damit auf einen Bruchteil.
+ * je Station in donkeydata/donkeynames.json gecacht (Ablauf gestreut 6 bis 12
+ * Stunden, flock beim Schreiben); fehlgeschlagene Stationen bleiben ohne Cache-
+ * Eintrag und werden beim nächsten Aufruf erneut probiert, bis alle Namen
+ * stehen. Die Hub-Last sinkt damit auf einen Bruchteil.
+ * v1.4.19: Einheitliche Datenverzeichnisse wie bei gtfsproxy (gtfsdata/) und
+ * delfiproxy (delfidata/): alle Cache-Dateien liegen jetzt in donkeydata/
+ * neben diesem Skript. Der Proxy legt das Verzeichnis SELBST an, falls es
+ * fehlt; existieren noch alte Cache-Dateien direkt neben dem Skript, werden
+ * sie beim ersten Aufruf automatisch dorthin verschoben (Bestand bleibt
+ * erhalten). Ist das Verzeichnis nicht beschreibbar, entfällt wie bisher nur
+ * der Cache-Mechanismus und jede Anfrage fragt die Upstream-Feeds direkt ab.
  *
- * Cache: Datei donkeycache.json neben diesem Skript, 60 Sekunden, mit flock
- * gesichert; bei Upstream-Fehlern wird ein alter Cache-Stand noch gnädig
- * ausgeliefert (grace), damit die App kurzzeitige Feed-Störungen nicht merkt.
+ * Cache: Datei donkeydata/donkeycache.json, 60 Sekunden, mit flock gesichert;
+ * bei Upstream-Fehlern wird ein alter Cache-Stand noch gnädig ausgeliefert
+ * (grace), damit die App kurzzeitige Feed-Störungen nicht merkt.
  *
  * Empfehlung Deployment: https://pixcaelium.timo-damm.de/apps/citysurfers/
- * (ins selbe Verzeichnis wie die index.html); das Verzeichnis muss für PHP
- * schreibbar sein (Cache-Datei), sonst entfällt nur der Cache-Mechanismus und
- * jede Anfrage fragt die Upstream-Feeds direkt ab.
+ * (ins selbe Verzeichnis wie die index.html); donkeydata/ muss für PHP
+ * schreibbar sein (wird sonst selbst angelegt), sonst entfällt nur der
+ * Cache-Mechanismus und jede Anfrage fragt die Upstream-Feeds direkt ab.
  */
 
 declare(strict_types=1);
@@ -113,11 +120,32 @@ function dp_name(array $s, string $id): string {
     return 'Station ' . $id;
 }
 
+/* v1.4.19: Einheitliches Datenverzeichnis donkeydata/ (wie gtfsdata/ beim
+ * gtfsproxy und delfidata/ beim delfiproxy). Der Proxy legt es selbst an;
+ * alte Cache-Dateien von direkt neben dem Skript wandern beim ersten Aufruf
+ * automatisch hinein. Bei unbeschreibbarem Verzeichnis greifen wie bisher die
+ * stillen @-Fehlschläge: ohne Cache, direkte Upstream-Abfragen, Feed trotzdem
+ * gültig. Rückgabe: true, wenn donkeydata/ nutzbar ist. */
+define('DP_DIR',              __DIR__ . '/donkeydata');
+define('DP_NAMES_FILE',       DP_DIR . '/donkeynames.json');
+define('DP_CACHE_FILE',        DP_DIR . '/donkeycache.json');
+define('DP_NAMES_FILE_LEGACY', __DIR__ . '/donkeynames.json');
+define('DP_CACHE_FILE_LEGACY', __DIR__ . '/donkeycache.json');
+
+function dp_dir_ready(): bool {
+    if (!is_dir(DP_DIR)) @mkdir(DP_DIR, 0775, true);
+    if (!(is_dir(DP_DIR) && is_writable(DP_DIR))) return false;
+    /* Migration: einmalige Übernahme der Alt-Dateien neben dem Skript. */
+    foreach ([['f' => DP_NAMES_FILE_LEGACY, 't' => DP_NAMES_FILE],
+              ['f' => DP_CACHE_FILE_LEGACY,  't' => DP_CACHE_FILE]] as $m)
+        if (is_file($m['f']) && !is_file($m['t'])) @rename($m['f'], $m['t']);
+    return true;
+}
+
 /* v1.4.16: Vornamen der Räder aus der Donkey-Hub-API. Donkey nennt seine
  * Räder bei Namen ("Frieda", "E-bike Fischi", ...), der GBFS-Feed führt sie
  * nicht; die Hub-API tut es (Accept-Header zwingend, sonst 406). Rückgabe:
  * Map "lat5,lon5" -> Name (Position gerundet auf 5 Dezimalstellen). */
-define('DP_NAMES_FILE', __DIR__ . '/donkeynames.json');
 define('DP_NAMES_TTL', 21600);   // Basis 6 h, gestreut bis 12 h
 
 /* v1.4.18: Namens-Cache je Station (donkeynames.json, flock beim Schreiben).
@@ -315,7 +343,7 @@ function dp_collect(): ?array {
 
 /* Cache lesen/schreiben (flock, 60 s); bei Upstream-Ausfall letzten Stand liefern. */
 function dp_cached(): ?array {
-    $cacheFile = __DIR__ . '/donkeycache.json';
+    $cacheFile = DP_CACHE_FILE;
     // 1) frischen Cache sofort zurückgeben
     if (is_file($cacheFile)) {
         $fp = @fopen($cacheFile, 'r');
@@ -395,6 +423,7 @@ function dp_geojson(array $d): array {
 }
 
 /* ---- Hauptprogramm -------------------------------------------------------- */
+dp_dir_ready();   // v1.4.19: donkeydata/ selbst anlegen + Alt-Caches übernehmen
 $d = dp_cached();
 if ($d === null) {
     http_response_code(503);
