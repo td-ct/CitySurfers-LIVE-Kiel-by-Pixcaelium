@@ -54,6 +54,7 @@
     #apiInd .gpsbtn { padding: 2px 7px; font-size: 0.85rem; }
     #apiInd .accbar { gap: 1px; }
     #apiInd .accbar i { width: 4px; height: 8px; }
+    #apiInd .ind { font-size: 0.58rem; padding: 2px 5px 2px 4px; }
     #alarmList, #fhList, #addrFavPanel, #stopFavPanel { top: 42px; right: 6px; }
   }
   /* Adresssuche: Knöpfe wie in der Haltestellensuche im Eingabefeld (gleiche Größe und Position) */
@@ -629,15 +630,16 @@
   #apiStats .astot { border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px;
     color: #e2e8f0; font-weight: 600; }
   #apiStats .asdim { color: #64748b; margin-top: 6px; }
-  #apiInd .ind { display: inline-flex; align-items: center; gap: 4px; font-size: 0.62rem;
+  #apiInd .ind { display: inline-flex; align-items: center; gap: 3px; font-size: 0.62rem;
     font-weight: 700; color: #94a3b8; background: #0f172ae6; border: 1px solid #334155;
-    border-radius: 999px; padding: 2px 7px 2px 6px; opacity: 0.45; transition: opacity 0.3s; }
+    border-radius: 999px; padding: 2px 6px 2px 5px; opacity: 0.45; transition: opacity 0.3s; }
   #apiInd .ind::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
     background: var(--c, #94a3b8); flex-shrink: 0; }
   #apiInd .ind[data-ind=db]   { --c: #EC0016; }  /* Deutsche Bahn: Rot */
   #apiInd .ind[data-ind=kvg]  { --c: #00519E; }  /* KVG: Verkehrsblau */
   #apiInd .ind[data-ind=nom]  { --c: #7EBC6F; }  /* Nominatim/OSM: Grün */
   #apiInd .ind[data-ind=osrm] { --c: #FF7F2A; }  /* OSRM-Routing: Orange */
+  #apiInd .ind[data-ind=don]  { --c: #22d3ee; }  /* Donkey/SprottenFlotte: Cyan */
   #apiInd .ind.ping { opacity: 1; animation: indPing 0.9s ease-out; }
   @keyframes indPing {
     0%   { box-shadow: 0 0 0 0 var(--c); transform: scale(1); }
@@ -656,6 +658,7 @@
   <span class="ind" data-ind="kvg" title="KVG (Busabfahrten)">KVG</span>
   <span class="ind" data-ind="nom" title="Nominatim (OpenStreetMap, Adresssuche)">NOM</span>
   <span class="ind" data-ind="osrm" title="OSRM (OpenStreetMap, Fußweg-Routing)">RM</span>
+  <span class="ind" data-ind="don" title="Donkey Republic / SprottenFlotte (Leihräder über donkeyproxy.php; Klick zeigt die Übertragungs-Statistik)">🚲</span>
 </div>
 <div id="alarmList" hidden></div>
 <div id="fhList" hidden></div>
@@ -6528,7 +6531,8 @@ const API_KINDS = {
   db:   { label: "Deutsche Bahn / NAH.SH", color: "#EC0016" },
   kvg:  { label: "KVG (Bus)",              color: "#00519E" },
   nom:  { label: "Nominatim / OSM",         color: "#7EBC6F" },
-  osrm: { label: "OSRM (Fußweg)",          color: "#FF7F2A" }
+  osrm: { label: "OSRM (Fußweg)",          color: "#FF7F2A" },
+  don:  { label: "Donkey / SprottenFlotte (Leihräder)", color: "#22d3ee" }
 };
 let apiStats;
 try {
@@ -6539,6 +6543,7 @@ if (!apiStats) {
   apiStats = { since: Date.now(), kinds: {} };
   for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0 };
 }
+for (const k in API_KINDS) if (!apiStats.kinds[k]) apiStats.kinds[k] = { n: 0, b: 0 };   // alte Zaehler um neue Quellen ergaenzen
 function saveApiStats() {
   try { localStorage.setItem("kvg-apistats", JSON.stringify(apiStats)); } catch (e) {}
 }
@@ -6548,6 +6553,7 @@ async function apiFetch(kind, url, opts) {
   const res = await fetch(url, opts);
   if (res.ok) {
     try {
+      if (!apiStats.kinds[kind]) apiStats.kinds[kind] = { n: 0, b: 0 };
       const c = res.clone();
       const txt = await c.text();
       apiStats.kinds[kind].n++;
@@ -10663,7 +10669,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (17,5 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Der kleine <b>lila Kreis im Verlaufsstrahl</b> unter der Linien-Zeile klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft ein pinke Fortschritts-Balken je Abschnitt mit: Kreise markieren Start-, Umsteige- und Endpunkt; Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; ein pink leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch und färbt sich dort blau, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert. Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
-  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Im Dialog oben: alle Stationen der Route in Reihenfolge (wie im Wecker-Dialog), daneben der ◎-Knopf für die erneute Umgebungssuche auf die aktuelle Position, darunter freie Suchfelder für Start und Ziel (Adresssuche). Das Ziel wählst du aus den Stationen, die noch vor dir liegen, oder frei; vorausgewählt ist die nächste Station nach dem Start. Unter der Wahl erscheinen die <b>6 nächsten Leihräder</b> (bevorzugt 3 Standardräder und 3 E-Bikes) mit Entfernung, Akkustand und Reichweite: je Zeile ein offener OSM-Fußweg zum Rad (🚶) und die Radfahrt zum Ziel (🚴, FOSSGIS-OSRM, ganz ohne Google), plus 🗺 als uMap-Karte mit diesem Rad als ★, den anderen fünf und den Rückgabe-Stationen um das Ziel. Darunter blendet ein Knopf ALLE Räder und Stationen auf einer uMap-Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php im Seitenverzeichnis (die Feeds selbst erlauben keine Browser-Abfrage): Fehlt der Proxy, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen.");
+  h += P("<b>🚲? Umstieg aufs Leihfahrrad:</b> Der Knopf 🚲? in der Kopfzeile der gewählten Route (neben der Wecker-Glocke) öffnet den Leihfahrrad-Dialog und wählt als Start die Route-Station vor, die deiner GPS-Position am nächsten liegt. Dieselben Knöpfe sitzen an jedem Abschnitt der Route, auch an Fuß- und Rad-Wegen, und wählen dort die Endstation des Blocks vor. Im Dialog oben: alle Stationen der Route in Reihenfolge (wie im Wecker-Dialog), daneben der ◎-Knopf für die erneute Umgebungssuche auf die aktuelle Position, darunter freie Suchfelder für Start und Ziel (Adresssuche). Das Ziel wählst du aus den Stationen, die noch vor dir liegen, oder frei; vorausgewählt ist die nächste Station nach dem Start. Unter der Wahl erscheinen die <b>6 nächsten Leihräder</b> (bevorzugt 3 Standardräder und 3 E-Bikes) mit Entfernung, Akkustand und Reichweite: je Zeile ein offener OSM-Fußweg zum Rad (🚶) und die Radfahrt zum Ziel (🚴, FOSSGIS-OSRM, ganz ohne Google), plus 🗺 als uMap-Karte mit diesem Rad als ★, den anderen fünf und den Rückgabe-Stationen um das Ziel. Darunter blendet ein Knopf ALLE Räder und Stationen auf einer uMap-Karte ein (uMap lädt die Daten serverseitig direkt vom Proxy). Daselbe 🚲? steht auch links neben dem Karten-Symbol am aktiven Standort der Adresssuche und an der Station des Stationsreiters sowie neben der Wecker-Glocke im Kopf jedes Fahrtverlaufs: Dort listet der Dialog die Halte dieser Fahrt in Reihenfolge und wählt die GPS-nächste als Start vor. Die Räder stammen von Donkey Republic/SprottenFlotte über den Mini-Proxy donkeyproxy.php im Seitenverzeichnis (die Feeds selbst erlauben keine Browser-Abfrage): Fehlt der Proxy, zeigt der Dialog das ehrlich an. Scooter von Dott, Bolt und Voi ziehen später in denselben Dialog, sobald die Anbieter API-Zugänge bereitstellen. Seit v1.4.0 haben die Leihräder oben rechts in der Statusleiste eine eigene Anzeige 🚲: Sie leuchtet bei jeder Donkey-Abfrage kurz auf, und ein Tippen auf die Anzeigen zeigt die Übertragungs-Statistik, die Anfragen und Datenmenge je Anbieter (auch die Leihräder, mit Zurücksetzen) mitzählt.");
   h += sec("🔧 Die Schwellen und warum");
   h += P("<b>50 m</b> gilt als „Stations erreicht“ im Verlauf — eng genug, dass Nachbarhalte nicht fälschlich auslösen, weit genug fürs GSM-Stadt-GPS. <b>75 m</b> (Bus) / <b>250 m</b> (Bahnhof) heißt lockeres „GPS steht an der Haltestelle“, etwa bei der Wecker-Vorauswahl. <b>3 Minuten</b> ist die gemeinsame Kante aus Gelb-Schwelle, Countdown-Fenster und ETA-Projektions-Cap: alles Ernstzunehmende passiert nach dieser Kante zusammen. <b>−3 Minuten</b> nach der Abfahrt bleiben Listen-Zeilen grau durchgestrichen stehen, dann verschwinden sie (Ruhe in der Liste), <b>−3/+5 Minuten</b> Plausibilitätsfenster, <b>300/240 m</b> Ausblend-/Rückkehr-Schwelle der Verlaufs-Leuchtpunkte, <b>120 m</b> Kleberei des Route-Punkts am laufenden Abschnitt gegen Kreis-Sprünge am Umstieg, <b>1,6-fache Weglänge plus 250 m</b> Ellipse um Zubringer-Wege für die Strang-Position des Route-Punkts auf Fuß-, Fahrrad- und Roller-Abschnitten (Abseits-Maß der Auswahl, vorwärts wie rückwärts), <b>+60 Sekunden</b> hinter der letzten Live-Abfahrt erscheinen geplante Doppel. Datenfrische: Listen rechnen alle <b>15 s</b>, Countdown-Spans ticken jede <b>1 s</b>, Refetch alle <b>45 s</b> — oder <b>20 s</b>, wenn ein Countdown steht. <b>25 Minuten</b> Toleranz im Planzeit-Fallback und <b>6 Stunden</b> Zug-Horizont runden das Bild ab.");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
@@ -10697,7 +10703,7 @@ function donkeyProxyURL(geojson) {
 async function donkeyData(force) {
   if (!force && donkeyCache.d && Date.now() - donkeyCache.ts < DONKEY_TTL_MS) return donkeyCache.d;
   try {
-    const res = await fetch(donkeyProxyURL(false) + "?t=" + Date.now(), { cache: "no-store" });
+    const res = await apiFetch("don", donkeyProxyURL(false) + "?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) return null;
     const d = await res.json();
     if (!d || !Array.isArray(d.v) || !Array.isArray(d.s)) return null;
@@ -11881,7 +11887,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.3.17 · Build: 23.11.2026</div>
+  <div class="verline">CitySurfers LIVE @ Kiel · Version 1.4.0 · Build: 22.11.2026</div>
 </div>
 </body>
 </html>
