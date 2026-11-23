@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.1
+ * delfirouting.php - v0.2.2
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -68,7 +68,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.1';
+const DFR_V          = 'delfirouting 0.2.2';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -88,6 +88,7 @@ const DFR_ROUNDS    = 8;       /* Wellen der Routing-Engine */
 const DFR_SCAN_MIN  = 240;     /* Abfahrtsfenster je Stop (Minuten) */
 const DFR_RESULTS   = 6;       /* max. Verbindungen */
 const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle */
+const DFR_GRID_FH   = 512;     /* max. offene Grid-Zellen-Dateien (ulimit-Schutz) */
 const DFR_MT_TTL    = 60;      /* Echtzeit-Cache (Sekunden) */
 const DFR_ACC_MAX   = 32;      /* Zubringerstops je Endpunkt */
 const DFR_MEM       = '512M';
@@ -361,6 +362,20 @@ function dfr_maps_reload(string $idir, array &$stopmap, array &$tripmap): void {
     }
 }
 
+/** Grid-Zellen-Schreiber: haelt max. DFR_GRID_FH Handles offen, sonst
+ *  schliesst er alle und oeffnet neu (GTFS-Stops sind regional gebuundelt,
+ *  deshalb wenige, lokale Batches). 0.2.2-Fix gegen 'Too many open files'. */
+function dfr_grid_put(array &$fhC, string $idir, string $k, string $line): void {
+    if (!isset($fhC[$k])) {
+        if (count($fhC) >= DFR_GRID_FH) {
+            foreach ($fhC as $h) { if (is_resource($h)) fclose($h); }
+            $fhC = [];
+        }
+        $fhC[$k] = @fopen($idir . '/gridb_' . $k . '.tsv', 'ab');
+    }
+    if (is_resource($fhC[$k])) fwrite($fhC[$k], $line);
+}
+
 /** Die Phasen tabs/stimes1/stimes2/stimes3/trans/fin des Tagesindex-Baus. */
 function dfr_build(int $budgetS): array {
     if (!class_exists('ZipArchive')) {
@@ -445,16 +460,14 @@ function dfr_build(int $budgetS): array {
                 fwrite($fNidx, pack('Vvxx', $off, $lbnb <= 65535 ? $lbnb : 65535));
                 fwrite($fLL, pack('gg', $laF, $loF));
                 $k = ((int)floor($laF * 10)) . '_' . ((int)floor($loF * 10));
-                if (!isset($gridFh[$k])) {
-                    $gridFh[$k] = fopen($idir . '/gridb_' . $k . '.tsv', 'ab');
-                }
-                fwrite($gridFh[$k], $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
+                dfr_grid_put($gridFh, $idir, $k,
+                    $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
                 $stopmap[$sid] = $nr;
                 $nNew++;
             }
             fclose($fh);
         }
-        foreach ($gridFh as $h) fclose($h);
+        foreach ($gridFh as $h) { if (is_resource($h)) fclose($h); }
         fclose($fStops); fclose($fNms); fclose($fNidx); fclose($fLL);
         /* routes */
         $fRoutes = fopen($idir . '/routes.tsv', 'ab');
@@ -1042,12 +1055,12 @@ function dfr_build_dodp(string $zipPath, int $zipMtime, int $tEnd): array {
             fwrite($fNidx, pack('Vvxx', $off, $lbnb <= 65535 ? $lbnb : 65535));
             fwrite($fLL, pack('gg', $laF, $loF));
             $k = ((int)floor($laF * 10)) . '_' . ((int)floor($loF * 10));
-            if (!isset($gridFh[$k])) $gridFh[$k] = fopen($idir . '/gridb_' . $k . '.tsv', 'ab');
-            fwrite($gridFh[$k], $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
+            dfr_grid_put($gridFh, $idir, $k,
+                $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
             $nStops++;
         }
         fclose($fh);
-        foreach ($gridFh as $h) fclose($h);
+        foreach ($gridFh as $h) { if (is_resource($h)) fclose($h); }
         fclose($fStops); fclose($fNms); fclose($fNidx); fclose($fLL);
         /* routes */
         $fRoutes = fopen($idir . '/routes.tsv', 'ab');
