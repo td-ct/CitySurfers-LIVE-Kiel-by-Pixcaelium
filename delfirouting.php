@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.7
+ * delfirouting.php - v0.2.8
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,27 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.8 ZWEIFTE Wurzelursache des leeren Index (diag v0.2.7: dprof/tprof
+ *   gefuellt, Querys trotzdem walk-only/noconns in unter 200 ms; tprof
+ *   cnt:1, dprof ueberall seq:0, tidx_000 447656 B trotz nur 3,2 Mio Trips):
+ *   Die Event-SCHREIBER in stimes1 (free UND DODP) packten
+ *   pack('VvvvV', stop, dep, arr, trip, seq) - fuenf Formatcodes V,v,v,v,V
+ *   ordnen sich ARGUMENTWEISE zu, nicht nach Namen: trip fiel auf v
+ *   (2 Byte, mod 65536!) und seq auf V (4 Byte). Der Lexer las mit
+ *   erwartetem V,v,v,V,v: 'trip' war trip-Low16 inkl. der zwei ersten
+ *   Seq-Bytes als Muell (Werte bis > 14 Mio, daher tidx bis Slot 55956),
+ *   'seq' waren die High-16-Bits der echten Seq (fast immer 0). Je Stop
+ *   einer Fahrt variierte der Muell-Trip, also kollabierte JEDE Fahrt im
+ *   tprof auf einen Eintrag (cnt:1) und die Engine konnte keine Fahrt
+ *   je weiterverfolgen. Gleiche PHP-Bugklasse wie v0.2.6 (Formatcodes
+ *   iterieren unabhaengig von Argument-/Feldnamen), diesmal beim packen:
+ *   Schreiber jetzt pack('VvvVv', stop, dep, arr, trip, seq) = 14 B in der
+ *   dokumentierten Reihenfolge; der tp-Bucket-Schreiber (V,v,v,v,V mit
+ *   Argumenten trip,seq,dep,arr,stop) war dagegen korrekt und bleibt.
+ *   Alle uebrigen pack/unpack-Paare (nidx, sll, dprof-, tprof-, trans-,
+ *   trx-Bloecke, Slots, tp-Files, x-Files) verifiziert und konsistent.
+ *   repair erweitert: raeumt jetzt auch tmp/dodp_<day0> komplett weg
+ *   (Stunden-mix alter/neuer Eventformate in Resume-Anhaengen waere fatal).
  * v0.2.7 Repair-Crash-Fix (erster echter repair-Lauf 23.11.): TypeError
  *   dfr_day_diff(): Argument #1 ($from) must be of type string, int given.
  *   URSACHE: dfr_dodp_dirs() liefert day0 als Array-SCHLUESSEL, und PHP
@@ -130,7 +151,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.7';
+const DFR_V          = 'delfirouting 0.2.8';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -660,7 +681,7 @@ function dfr_build(int $budgetS): array {
                 if ($dep === null || $arr === null || $sq < 0 || $sq > 65535) $miss++;
                 else {
                     $sp = $stopmap[$sid];
-                    $rec = pack('VvvvV', $sp, $dep, $arr, $tripmap[$ti], $sq);
+                    $rec = pack('VvvVv', $sp, $dep, $arr, $tripmap[$ti], $sq);
                     $b = $sp & 255;
                     if ($buckets === null) $buckets = [];
                     if (!isset($buckets[$b]))
@@ -1061,6 +1082,17 @@ function dfr_repair(): void {
     foreach (['dprof_*.bin', 'didx_*.bin', 'tprof_*.bin', 'tidx_*.bin',
               'trans_*.bin', 'trx_*.bin'] as $g)
         foreach (glob($dir . '/' . $g) ?: [] as $p2) @unlink($p2);
+    /* v0.2.8: tmp-Buckets des Tages komplett weg - die b-Files (Events),
+     * tp-Files und x-Files stammen evtl. noch aus einem Abbruch mit dem
+     * ALTEN Eventformat; stimes1 haengt im 'ab'-Modus an und vermischte
+     * Zeilen liessen sich per Dedupe nicht mehr trennen. Der Bau mkdir-t
+     * das tmp-Verzeichnis selbst neu. */
+    $t2 = dfr_base() . '/tmp/dodp_' . $day0;
+    if (is_dir($t2)) {
+        foreach (scandir($t2) ?: [] as $f2)
+            if ($f2 !== '.' && $f2 !== '..') @unlink($t2 . '/' . $f2);
+        @rmdir($t2);
+    }
     dfr_state_put(['src' => 'dodp', 'phase' => 'stimes', 'day0' => $day0,
         'doff' => 0, 'st2next' => 0, 'st3next' => 0, 'transnext' => 0,
         'b_trips' => 0, 'b_pairs' => 0, 'ts' => time()]);
@@ -1281,7 +1313,7 @@ function dfr_build_dodp(string $zipPath, int $zipMtime, int $tEnd): array {
                 if ($dep === null || $arr === null || $sq < 0 || $sq > 65535) $miss++;
                 else {
                     $sp = $stopmap[$sid];
-                    $rec = pack('VvvvV', $sp, $dep, $arr, $tripmap[$ti], $sq);
+                    $rec = pack('VvvVv', $sp, $dep, $arr, $tripmap[$ti], $sq);
                     $b = $sp & 255;
                     if ($buckets === null) $buckets = [];
                     if (!isset($buckets[$b]))
