@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.4
+ * delfirouting.php - v0.2.5
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,13 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.5 Diagnose-Modus ?diag=1: Nach dem v0.2.4-Fix liefen die Web-Modi
+ *   fehlerfrei, aber Querys fanden NUR reine Fussweg-Verbindungen bzw.
+ *   noconns, alle in unter 100 ms (zu schnell fuer echte Wellen-Suche).
+ *   Ohne Shell-Zugriff braucht es Beweise aus dem Index: diag zaehlt die
+ *   heute aktiven Fahrten im tripday-Bitmap, sampelt die ersten nicht-leeren
+ *   dprof- (Abfahrten), tprof- (Fahrtprofil) und trans-Bloecke (Umstiege)
+ *   mit Labels und Aktiv-Bits und nennt die Dateigroessen der Kern-Indizes.
  * v0.2.4 Query-Fehlerfix: dfr_route() bekam als zehnten Parameter das
  *   Zeitlimit als FLOAT (microtime(true) + DFR_TIMEOUT_S), der Signatur-
  *   Parameter ist aber int und mit strict_types=1 warf PHP einen TypeError
@@ -40,6 +47,7 @@ declare(strict_types=1);
  *   HTTP: ?from=lat,lon&to=lat,lon&dep=HH:MM[&walk=200..5000][&limit=1..8]
  *         Antwort JSON, Fehler als {"ok":false,...} mit HTTP 200.
  *         ?probe=1   Status/Index-Info
+ *         ?diag=1    Tiefen-Diagnose des Index (Bitmap/dprof/tprof/trans)
  *         ?warm=1    eine Bau-Runde (18 s Budget, Cron-tauglich, resume-faehig)
  *   CLI : php delfirouting.php import=1            (Cron-Slot, 900 s Budget)
  *         php delfirouting.php import=1 budget=0   (Langlaeufer ohne Limit,
@@ -90,7 +98,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.4';
+const DFR_V          = 'delfirouting 0.2.5';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -1886,6 +1894,113 @@ function dfr_probe(): array {
         'sapi' => PHP_SAPI, 'mem' => @ini_get('memory_limit')];
 }
 
+/** v0.2.5: Tiefen-Diagnose des Tagesindex (?diag=1). Liefert Beweise aus dem
+ *  fertigen Index, wenn Suchanfragen keine Fahrten finden: (1) wie viele
+ *  Fahrten im tripday-Bitmap fuer DEN heutigen dayIdx aktiv sind (Strom in
+ *  1-MiB-Bloecken statt Riesen-Array), (2) der erste nicht-leere dprof-Block
+ *  (Abfahrten eines Stops) mit Stichproben-Eintraegen samt Aktiv-Bit und
+ *  Linien-Label, (3) erster nicht-leerer tprof-Block (Fahrtprofil), (4)
+ *  erster nicht-leerer Transfer-Block, (5) Dateigroessen der Kern-Indizes.
+ *  Deckt leer oder falsch gelaufene Bau-Phasen ohne Shell-Zugriff auf. */
+function dfr_diag(): array {
+    $ix = dfr_idx();
+    if ($ix->dir === '')
+        return ['ok' => false, 'code' => 'nodata', 'v' => DFR_V,
+            'msg' => 'Kein Tagesindex.'];
+    $out = ['ok' => true, 'v' => DFR_V, 'src' => $ix->src, 'day' => $ix->day,
+        'day0' => $ix->day0, 'dayIdx' => $ix->dayIdx,
+        'valid_until' => $ix->validUntil];
+
+    /* (1) tripday-Bitmap heute: aktive Fahrten als Strom zaehlen */
+    $act = 0; $rows = 0;
+    $fh = @fopen($ix->dir . '/tripday.bin', 'rb');
+    if ($fh === false) {
+        $out['tripday'] = 'missing';
+    } else {
+        $byte = $ix->dayIdx >> 3; $bit = $ix->dayIdx & 7;
+        $rows = intdiv((int)@filesize($ix->dir . '/tripday.bin'), 16);
+        for ($t0 = 0; $t0 < $rows; $t0 += 65536) {
+            $ct = min(65536, $rows - $t0);
+            @fseek($fh, $t0 * 16);
+            $c = (string)@fread($fh, $ct * 16);
+            $cl = strlen($c);
+            for ($i = 0; $i < $ct; $i++) {
+                $p = $i * 16 + $byte;
+                if ($p >= $cl) break;
+                if ((ord($c[$p]) >> $bit) & 1) $act++;
+            }
+        }
+        @fclose($fh);
+        $out['trip_rows'] = $rows;
+        $out['trip_active_today'] = $act;
+    }
+
+    /* (2) erster nicht-leerer dprof-Block (Stop-Abfahrten) */
+    $sd = null;
+    for ($s = 0; $s < 30000; $s++) {
+        if (dfr_dprof($ix, $s) !== null) { $sd = $s; break; }
+    }
+    if ($sd === null) {
+        $out['dprof'] = 'none in stopNr 0..29999';
+    } else {
+        $d = dfr_dprof($ix, $sd);
+        $first = [];
+        for ($i = 0; $i < min(3, $d[0]); $i++) {
+            $u = unpack('vdep/Vtrip/vseq', substr($d[1], $i * 8, 8));
+            $first[] = ['dep' => $u['dep'], 'trip' => $u['trip'],
+                'seq' => $u['seq'],
+                'active' => dfr_trip_active($ix, $u['trip']),
+                'label' => dfr_trip_label($ix, $u['trip'])];
+        }
+        $out['dprof'] = ['stopNr' => $sd,
+            'name' => dfr_stop_name($ix, $sd),
+            'll' => dfr_stop_ll($ix, $sd),
+            'cnt' => $d[0], 'first' => $first];
+    }
+
+    /* (3) erster nicht-leerer tprof-Block (Fahrtprofil) */
+    $tt = null; $td = null;
+    for ($t = 0; $t < 30000; $t++) {
+        $d = dfr_tprof($ix, $t);
+        if ($d !== null) { $tt = $t; $td = $d; break; }
+    }
+    if ($tt === null) {
+        $out['tprof'] = 'none in tripNr 0..29999';
+    } else {
+        $first = [];
+        for ($i = 0; $i < min(3, $td[0]); $i++) {
+            $u = unpack('vseq/vdep/varr/Vstop', substr($td[1], $i * 10, 10));
+            $first[] = ['seq' => $u['seq'], 'dep' => $u['dep'],
+                'arr' => $u['arr'], 'stopNr' => $u['stop'],
+                'stop' => dfr_stop_name($ix, $u['stop'])];
+        }
+        $out['tprof'] = ['tripNr' => $tt,
+            'label' => dfr_trip_label($ix, $tt),
+            'active' => dfr_trip_active($ix, $tt),
+            'cnt' => $td[0], 'first' => $first];
+    }
+
+    /* (4) erster nicht-leerer Transfer-Block */
+    $tr = null;
+    for ($s = 0; $s < 30000; $s++) {
+        $b = dfr_trans_block($ix, $s);
+        if (!empty($b)) { $tr = $s; break; }
+    }
+    $out['trans'] = $tr === null ? 'none in stopNr 0..29999'
+        : ['stopNr' => $tr, 'name' => dfr_stop_name($ix, $tr),
+            'pairs' => array_slice(dfr_trans_block($ix, $tr), 0, 3)];
+
+    /* (5) Dateigroessen der Kern-Indexdateien */
+    $out['sizes'] = [];
+    foreach (['nidx.bin','nms.bin','sll.bin','trline.bin','didx_000.bin',
+        'dprof_000.bin','tidx_000.bin','tprof_000.bin','trx_000.bin',
+        'trans_000.bin'] as $f) {
+        $p = $ix->dir . '/' . $f;
+        $out['sizes'][$f] = is_file($p) ? (int)@filesize($p) : -1;
+    }
+    return $out;
+}
+
 function dfr_query_run(array $q): void {
     $t0 = microtime(true);
     $ix = dfr_idx();
@@ -1978,6 +2093,7 @@ function dfr_query_run(array $q): void {
     if (isset($q['import'])) $mode = 'import';
     elseif (isset($q['warm'])) $mode = 'warm';
     elseif (isset($q['probe'])) $mode = 'probe';
+    elseif (isset($q['diag'])) $mode = 'diag';
 
     /* v0.2.3: Fatale Fehler (TypeError/ValueError/Exception usw.) vorher wurden
      * zum leeren HTTP 500 (display_errors aus); sie kommen jetzt als JSON
@@ -2008,6 +2124,9 @@ function dfr_query_run(array $q): void {
         case 'probe':
             @set_time_limit(90);   /* v0.2.3: Strom-Zaehlung von bis zu 3,2 Mio Zeilen */
             dfr_out(dfr_probe());
+        case 'diag':
+            @set_time_limit(60);   /* v0.2.5: Bitmap-Strom + Block-Samples */
+            dfr_out(dfr_diag());
         default:
             if (isset($q['from']) && isset($q['to'])) {
                 @ini_set('memory_limit', DFR_MEM);
