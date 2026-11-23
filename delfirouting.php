@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.6
+ * delfirouting.php - v0.2.7
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,17 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.7 Repair-Crash-Fix (erster echter repair-Lauf 23.11.): TypeError
+ *   dfr_day_diff(): Argument #1 ($from) must be of type string, int given.
+ *   URSACHE: dfr_dodp_dirs() liefert day0 als Array-SCHLUESSEL, und PHP
+ *   castet rein numerische String-Schluessel ('20261123') automatisch zu
+ *   int; unter strict_types=1 lehnt dfr_day_diff(string $from, ...) den
+ *   int dann ab. Der Fehler traf repair (dfr_repair-Loop) UND lauerte
+ *   genauso in der Frueh-Fertig-Rueckkehr von dfr_build_dodp (kam beim
+ *   Erstbau nie zum Zug, weil dfr_dodp_dirs nur DONE-Verzeichnisse
+ *   liefert und vor dem ersten DONE kein Eintrag existierte). Fix an der
+ *   Wurzel: dfr_day_diff akzeptiert jetzt int|string und normalisiert auf
+ *   string; dfr_repair schreibt day0 als String in den State.
  * v0.2.6 Ursaechlicher Fix des leeren Index (diag v0.2.5 brachte es ans
  *   Licht: tripday 867.589 aktive Fahrten OK, aber dprof/tprof NUR je
  *   12 Byte, didx/tidx je 8 Byte, trans-Paare null): DREI Fixes.
@@ -119,7 +130,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.6';
+const DFR_V          = 'delfirouting 0.2.7';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -905,8 +916,12 @@ function dfr_phase_buckets(string $idir, string $tdir, array &$st, int $tEnd): ?
 
 /* ============================================================ DODP-VOLLBAU */
 
-/** Tagesdifferenz zwischen zwei Ymd-Daten (to minus from). */
-function dfr_day_diff(string $from, string $to): int {
+/** Tagesdifferenz zwischen zwei Ymd-Daten (to minus from).
+ *  v0.2.7: Parameter int ODER string, weil numerische Array-Schluessel
+ *  (day0 aus dfr_dodp_dirs, z. B. '20261123') in PHP automatisch int
+ *  werden und strict_types=1 den expliziten string-Typ dann abweist. */
+function dfr_day_diff(int|string $from, int|string $to): int {
+    $from = (string)$from; $to = (string)$to;
     if (strlen($from) !== 8 || strlen($to) !== 8) return PHP_INT_MIN;
     $d = (new DateTimeImmutable($from))->diff(new DateTimeImmutable($to));
     return (int)$d->format('%r%a');
@@ -1036,7 +1051,7 @@ function dfr_repair(): void {
     $dir = null; $day0 = '';
     foreach (dfr_dodp_dirs() as $d0 => $p) {
         $u = dfr_day_diff($d0, $today);
-        if ($u >= 0 && $u < DFR_SVC_DAYS) { $day0 = $d0; $dir = $p; break; }
+        if ($u >= 0 && $u < DFR_SVC_DAYS) { $day0 = (string)$d0; $dir = $p; break; }
     }
     if ($dir === null) {
         echo "repair: kein gueltiges DODP-Index-Verzeichnis gefunden.\n";
