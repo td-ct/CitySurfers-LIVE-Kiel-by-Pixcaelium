@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.9
+ * delfirouting.php - v0.2.10
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,22 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.10 fgets-Schutz (Timo-Report 23.11.2026 nachmittag: manuelle
+ *   delfirouting-Wahl in der App warf fatal "TypeError: fgets(): Argument
+ *   #1 ($stream) must be of type resource, false given"): (1) Im Query-Pfad
+ *   waren die Grid-Zellen-Leser (dfr_near, dfr_cell_band) nur per is_file
+ *   vor fopen gesichert; laeuft der Deskriptor-Vorrat des Prozesses
+ *   mitten in der Suche leer (fd-Limit des Webspace), liefert fopen false
+ *   und fgets(false) wirft genau diesen TypeError als fatal-JSON. Beide
+ *   Leser ueberspringen jetzt nicht mehr lesbare Zellen (dfr_log, kein
+ *   Fatal). (2) Mitursache angegriffen: dfr_fopen legte Handles nur an
+ *   und schloss nie (bis zu 6 Dateifamilien x 256 Buckets + Rest = ~1540
+ *   offene Handles je Request moeglich); der Handle-Cache schliesst ab
+ *   400 Eintraegen ALLE gecachten Handles und baut sich neu auf - sicher,
+ *   weil jeder Leser vor jedem fread explizit fseek setzt (kein
+ *   Lesezeiger-Zustand noetig). (3) dfr_maps_reload (Build-Resume) hat
+ *   ebenso einen fopen-Guard bekommen. Kein Format-, kein Rebuild-Aufwand,
+ *   Deploy reicht.
  * v0.2.9 App-Anbindung (CitySurfers v1.6.0): delfirouting wird als waehlbares
  *   und als dritte Stufe des Auto-Routers eingebunden. Damit die App weiss, ob
  *   der Server wirklich nutzbaere Profile hat: (1) probe=1 liefert jetzt
@@ -161,7 +177,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.9';
+const DFR_V          = 'delfirouting 0.2.10';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -435,23 +451,27 @@ function dfr_maps_reload(string $idir, array &$stopmap, array &$tripmap): void {
     if (is_file($p)) {
         $fh = fopen($p, 'rb');
         $i = 0;
-        while (($ln = fgets($fh, 4096)) !== false) {
-            $t = explode("\t", rtrim($ln, "\n"));
-            if (count($t) >= 2) $stopmap[$t[1]] = $i;
-            $i++;
+        if ($fh !== false) {   /* v0.2.10: fopen-Schutz */
+            while (($ln = fgets($fh, 4096)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) >= 2) $stopmap[$t[1]] = $i;
+                $i++;
+            }
+            fclose($fh);
         }
-        fclose($fh);
     }
     $p = $idir . '/trips.tsv';
     if (is_file($p)) {
         $fh = fopen($p, 'rb');
         $i = 0;
-        while (($ln = fgets($fh, 4096)) !== false) {
-            $t = explode("\t", rtrim($ln, "\n"));
-            if (count($t) >= 2) $tripmap[$t[1]] = $i;
-            $i++;
+        if ($fh !== false) {   /* v0.2.10: fopen-Schutz */
+            while (($ln = fgets($fh, 4096)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) >= 2) $tripmap[$t[1]] = $i;
+                $i++;
+            }
+            fclose($fh);
         }
-        fclose($fh);
     }
 }
 
@@ -1472,6 +1492,15 @@ function dfr_fopen(string $path) {
     global $_dfr_handles;
     if (!isset($_dfr_handles)) $_dfr_handles = [];
     if (!array_key_exists($path, $_dfr_handles)) {
+        /* v0.2.10: fd-Limit-Schutz. Ohne Cap koennen bis zu ~1540 Handles
+         * je Request offen bleiben (6 Familien x 256 Buckets + fixe Dateien);
+         * am nofile-Limit des Webspace lief fopen false. 400 ist sicher unter
+         * ueblichen Limits; Schliessen ist gefahrlos, da JEDEr Leser vor
+         * fread/fgets explizit fseek setzt (kein Zeiger-Zustand im Cache). */
+        if (count($_dfr_handles) >= 400) {
+            foreach ($_dfr_handles as $h) { if (is_resource($h)) @fclose($h); }
+            $_dfr_handles = [];
+        }
         $_dfr_handles[$path] = @fopen($path, 'rb');
         if ($_dfr_handles[$path] === false) $_dfr_handles[$path] = null;
     }
@@ -1601,6 +1630,10 @@ function dfr_near_stops(DfrIdx $ix, float $lat, float $lon, int $radius, int $ma
             $p = $ix->dir . sprintf('/gridb_%d_%d.tsv', $cla + $dla, $clo + $dlo);
             if (!is_file($p)) continue;
             $fh = fopen($p, 'rb');
+            if ($fh === false) {   /* v0.2.10: fd-Limit/race statt fgets-TypeError */
+                dfr_log('near: fopen failed ' . basename($p));
+                continue;
+            }
             while (($ln = fgets($fh, 512)) !== false) {
                 $t = explode("\t", rtrim($ln, "\n"));
                 if (count($t) < 4) continue;
@@ -1628,6 +1661,10 @@ function dfr_cell_band(DfrIdx $ix, int $la, int $lo): array {
             $p = $ix->dir . sprintf('/gridb_%d_%d.tsv', $la + $dla, $lo + $dlo);
             if (!is_file($p)) continue;
             $fh = fopen($p, 'rb');
+            if ($fh === false) {   /* v0.2.10: fd-Limit/race statt fgets-TypeError */
+                dfr_log('band: fopen failed ' . basename($p));
+                continue;
+            }
             while (($ln = fgets($fh, 512)) !== false) {
                 $t = explode("\t", rtrim($ln, "\n"));
                 if (count($t) < 4) continue;
