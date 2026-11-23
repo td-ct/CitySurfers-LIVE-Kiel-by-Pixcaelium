@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.5
+ * delfirouting.php - v0.2.6
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,27 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.6 Ursaechlicher Fix des leeren Index (diag v0.2.5 brachte es ans
+ *   Licht: tripday 867.589 aktive Fahrten OK, aber dprof/tprof NUR je
+ *   12 Byte, didx/tidx je 8 Byte, trans-Paare null): DREI Fixes.
+ *   (1) stimes2 las die 14-Byte-Events mit unpack('Vstop/dep/varr/...').
+ *       In PHP ist 'd' der DOUBLE-Code (8 Byte): das Format parst
+ *       V+d+v+V+v = 20 Byte statt 14, unpack liefert false und $rows
+ *       kollabierte je Bucket auf EINE Null-Zeile (alle Schluessel
+ *       identisch). Korrekt: 'Vstop/vdep/varr/Vtrip/vseq'.
+ *   (2) dfr_trans_block las 5-Byte-Records (alter 5-B-Entwurf 'Vv' in
+ *       der Doku), der Bau schreibt aber pack('Vv') = 6 Byte pro Paar:
+ *       Stride 5 -> 6, sonst Lesefehler und null-Paare.
+ *   (3) dfr_build_dodp behandelte jede dodp_*-Verzeichnis existenz als
+ *       "fertig"; fehlt DONE (Abbruch oder repair), kam der falsche
+ *       Frueh-Rueckruf "Index bereits fertig". Jetzt greift das nur
+ *       noch mit vorhandener DONE-Datei.
+ *   NEU repair-Bootstrap: "import=1 repair=1" (CLI) entfernt DONE/
+ *   stimes_done und die kollabierten dprof/didx/tprof/tidx/trans/trx,
+ *   setzt den State auf Phase stimes zurueck und laesst den Bau dann
+ *   NUR die Phasen ab stop_times neu laufen (svc/tabs mit svcday.tsv,
+ *   stops/trips.tsv, tripday.bin, gridb, nidx/nms/sll, trline bleiben
+ *   erhalten und werden geskippt).
  * v0.2.5 Diagnose-Modus ?diag=1: Nach dem v0.2.4-Fix liefen die Web-Modi
  *   fehlerfrei, aber Querys fanden NUR reine Fussweg-Verbindungen bzw.
  *   noconns, alle in unter 100 ms (zu schnell fuer echte Wellen-Suche).
@@ -98,7 +119,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.5';
+const DFR_V          = 'delfirouting 0.2.6';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -701,7 +722,11 @@ function dfr_phase_buckets(string $idir, string $tdir, array &$st, int $tEnd): ?
             $left = (int)floor(filesize($bf) / 14);
             while ($left-- > 0) {
                 $raw = fread($fh, 14);
-                $u = unpack('Vstop/dep/varr/Vtrip/vseq', $raw);
+                /* v0.2.6: 'vdep' statt '/dep'! In PHP ist 'd' der
+                 * DOUBLE-Code (8 Byte), das alte Format parste V+d+v+V+v
+                 * = 20 Byte statt 14: unpack false, alle Schluessel null,
+                 * je Bucket blieb EINE Zeile uebrig (dprof nur 12 Byte). */
+                $u = unpack('Vstop/vdep/varr/Vtrip/vseq', $raw);
                 $key = pack('NnnNV', $u['stop'], $u['dep'], $u['seq'], $u['trip'], $u['arr']);
                 $rows[$key] = $raw;
             }
@@ -715,7 +740,8 @@ function dfr_phase_buckets(string $idir, string $tdir, array &$st, int $tEnd): ?
         usort($keys, 'strcmp');
         foreach ($keys as $key) {
             $raw = $rows[$key];
-            $u = unpack('Vstop/dep/varr/Vtrip/vseq', $raw);
+            /* v0.2.6: siehe oben, unpack-Format korrigiert */
+            $u = unpack('Vstop/vdep/varr/Vtrip/vseq', $raw);
             if ($u['stop'] !== $curStop) {
                 if ($curCount > 0) {
                     fseek($fpI, ($curStop >> 8) * 8, SEEK_SET);
@@ -998,12 +1024,43 @@ function dfr_dodp_svcmap(string $zipPath, string $day0, string $idir, int $tEnd)
     return null;
 }
 
+/** v0.2.6: Reparatur-Bootstrap nach dem unpack-Bug (DIAG v0.2.5: dprof/tprof
+ *  je nur 12 Byte, weil alle Events je Bucket auf EINE Zeile kollabierten).
+ *  Aufruf NUR CLI: "php delfirouting.php import=1 repair=1 budget=0".
+ *  Entfernt DONE/stimes_done und die kollabierten Bucket-Dateien, setzt den
+ *  State auf Phase stimes zurueck; der folgende Bau ueberspringt svc (svcday.tsv
+ *  da) und tabs (tabs_done + stops/trips.tsv, tripday.bin, gridb, nidx/nms/sll,
+ *  trline bleiben) und laeuft NUR stop_times -> Buckets -> trans -> fin neu. */
+function dfr_repair(): void {
+    $today = dfr_day_zo();
+    $dir = null; $day0 = '';
+    foreach (dfr_dodp_dirs() as $d0 => $p) {
+        $u = dfr_day_diff($d0, $today);
+        if ($u >= 0 && $u < DFR_SVC_DAYS) { $day0 = $d0; $dir = $p; break; }
+    }
+    if ($dir === null) {
+        echo "repair: kein gueltiges DODP-Index-Verzeichnis gefunden.\n";
+        exit(1);
+    }
+    foreach (['DONE', 'stimes_done'] as $f) @unlink($dir . '/' . $f);
+    foreach (['dprof_*.bin', 'didx_*.bin', 'tprof_*.bin', 'tidx_*.bin',
+              'trans_*.bin', 'trx_*.bin'] as $g)
+        foreach (glob($dir . '/' . $g) ?: [] as $p2) @unlink($p2);
+    dfr_state_put(['src' => 'dodp', 'phase' => 'stimes', 'day0' => $day0,
+        'doff' => 0, 'st2next' => 0, 'st3next' => 0, 'transnext' => 0,
+        'b_trips' => 0, 'b_pairs' => 0, 'ts' => time()]);
+    dfr_log("v0.2.6 repair: stimes-Neubau fuer dodp_$day0 (svc/tabs bleiben erhalten)");
+    echo "repair ok: dodp_$day0 auf Phase stimes zurueckgesetzt.\n";
+}
+
 /** Der DODP-Vollbau: svc -> tabs -> stimes -> Buckets -> fin. */
 function dfr_build_dodp(string $zipPath, int $zipMtime, int $tEnd): array {
     $today = dfr_day_zo();
     foreach (dfr_dodp_dirs() as $d0 => $p) {
         $u = dfr_day_diff($d0, $today);
-        if ($u >= 0 && $u < DFR_SVC_DAYS) {
+        /* v0.2.6: ohne DONE-Datei ist kein Index "fertig"; fehlt sie
+         * (Abbruch oder repair), faellt der Bau in die Resume-Logik. */
+        if ($u >= 0 && $u < DFR_SVC_DAYS && is_file($p . '/DONE')) {
             $ts = (int)@filemtime($p . '/DONE');
             if ($zipMtime > $ts) {
                 return ['ok' => true, 'phase' => 'done',
@@ -1416,10 +1473,12 @@ function dfr_trans_block(DfrIdx $ix, int $stopNr): array {
     $hdr = fread($fd, 2);
     if (strlen($hdr) < 2) return [];
     $cnt = unpack('v', $hdr)[1];
-    $raw = $cnt > 0 ? fread($fd, $cnt * 5) : '';
+    /* v0.2.6: der Bau schreibt pack('Vv') = 6 Byte je Paar; der Leser
+     * ging mit 5-Byte-Schritten durch die Records und las Muell/null. */
+    $raw = $cnt > 0 ? fread($fd, $cnt * 6) : '';
     $out = [];
     for ($i = 0; $i < $cnt; $i++) {
-        $u = unpack('Vb/vm', substr($raw, $i * 5, 5));
+        $u = unpack('Vb/vm', substr($raw, $i * 6, 6));
         $out[] = [$u['b'], $u['m']];
     }
     return $out;
@@ -2113,6 +2172,7 @@ function dfr_query_run(array $q): void {
                 if ($b2 >= 0) $budget = $b2;    /* budget=0: Langlaeufer ohne Limit */
             }
             @ini_set('memory_limit', '1024M');
+            if (isset($q['repair'])) dfr_repair();   /* v0.2.6: stimes-Neubau ohne svc/tabs */
             $r = dfr_build($budget);
             echo json_encode($r, JSON_UNESCAPED_SLASHES) . "\n";
             exit(($r['ok'] ?? false) ? 0 : 1);
