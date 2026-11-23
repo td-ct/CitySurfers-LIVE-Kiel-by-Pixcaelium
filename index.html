@@ -12031,7 +12031,7 @@ function routeBackends() {   // Chip-Zustand je Router: {id, en, why, label, tit
   const bb = routeInBox(dc, ROUTE_VBB_BOX) && routeInBox(ac, ROUTE_VBB_BOX);
   const dr = drouteGuard(dc, ac);
   return [
-    { id: "auto", en: true, why: "", label: "\U0001F916 Auto",
+    { id: "auto", en: true, why: "", label: "🤖 Auto",
       title: "Automatisch die beste Wahl mit Echtzeit bevorzugt: VBB bei Start und Ziel in Berlin/Brandenburg, sonst NAH.SH; kann NAH.SH die Endpunkte nicht bedienen, greift die App auf delfirouting (eigener Router, Soll-Fahrplan) und zuletzt auf bundesweites Zug-Routing zwischen Bahnhöfen zurueck." },
     { id: "nahsh", en: sh, why: sh ? "" : "NAH.SH bedient nur Start und Ziel im Nah.sh-Gebiet (Schleswig-Holstein).",
       label: "NAH.SH",
@@ -12041,7 +12041,7 @@ function routeBackends() {   // Chip-Zustand je Router: {id, en, why, label, tit
       title: "v6.vbb.transport.rest mit Echtzeit, OEPNV und Bahngleisen - nur wenn Start UND Ziel in Berlin/Brandenburg liegen." },
     { id: "droute", en: dr.ok, why: dr.why, label: "delfirouting",
       title: "Eigener deutschlandweiter Router (delfirouting.php auf pixcaelium): Soll-Fahrplan, Tuer zu Tuer mit bundesweitem OEPNV, ohne Echtzeit; nur Abfahrtssuche, heutiges Datum, alle Produkte, zu Fuss." },
-    { id: "bahn", en: true, why: "", label: "\U0001F686 Bahnhöfe",
+    { id: "bahn", en: true, why: "", label: "🚆 Bahnhöfe",
       title: "NAH.SH-Zug-Routing bundesweit zwischen den naechstgelegenen Bahnhöfen (Echtzeit fuer Schiene; kein OEPNV am Ort, keine Adress-Feinroute)." },
   ];
 }
@@ -14371,7 +14371,7 @@ function openRouteDlg(newTab) {
     if (be) {
       const info = routeBackends().find(x => x.id === be.dataset.rtbe);
       if (!info) return;
-      if (!info.en) { setLocNote("\U0001F916 " + info.label + " passt nicht zu dieser Suche: " + info.why); return; }   // grauer Chip: Grund anzeigen
+      if (!info.en) { setLocNote("🤖 " + info.label + " passt nicht zu dieser Suche: " + info.why); return; }   // grauer Chip: Grund anzeigen
       routeSel.backend = info.id;
       wrap.innerHTML = routeDlgHTML();   // Chips neu zeichnen (Auswahl und Grauzustand auffrischen)
       return;
@@ -14760,7 +14760,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.1 · Build: 23.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.2 · Build: 23.11.2026</div>
 </div>
 </body>
 </html>
