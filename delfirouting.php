@@ -1,0 +1,1926 @@
+<?php
+declare(strict_types=1);
+/**
+ * delfirouting.php - v0.2.1
+ * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
+ * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
+ * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
+ * Fahrt, danach KEIN taeglicher Bau-Cron mehr); die gtfs.de-free-Feeds
+ * fv/rv/nv (CC-BY, Datenbasis DELFI) bleiben als Failsafe drin, falls kein
+ * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
+ * Fusswege als Luftlinie 1,3x mit 5 km/h.
+ *
+ * Projekt CitySurfers LIVE @ Kiel by Pixcaelium (td-ct) - Timo Damm.
+ * Web: pixcaelium.timo-damm.de/apps/citysurfers/ (liegt parallel zu
+ *      delfiproxy.php im CitySurfers-Verzeichnis)
+ *
+ * Schnittstellen:
+ *   HTTP: ?from=lat,lon&to=lat,lon&dep=HH:MM[&walk=200..5000][&limit=1..8]
+ *         Antwort JSON, Fehler als {"ok":false,...} mit HTTP 200.
+ *         ?probe=1   Status/Index-Info
+ *         ?warm=1    eine Bau-Runde (18 s Budget, Cron-tauglich, resume-faehig)
+ *   CLI : php delfirouting.php import=1            (Cron-Slot, 900 s Budget)
+ *         php delfirouting.php import=1 budget=0   (Langlaeufer ohne Limit,
+ *                                                   nohup, DODP-Vollbau)
+ *         php delfirouting.php probe=1
+ *
+ * Datensaetze:
+ *   - Soll (primaer): DODP-Zip, gesucht in delfidata/ und delfidata/dfrouting/
+ *     (neben bzw. unterhalb dieses Skripts), ../citysurfers/delfidata/ und
+ *     /var/www/pixcaelium/apps/citysurfers/delfidata/
+ *     (Dateiname mit gesamt/deutschland/fahrplan/dodp); 21 Tage nach mtime
+ *     frisch. Ergebnis: delfidata/dfrouting/idx/dodp_<day0>/ mit tripday.bin
+ *     (16-B-Bitmaske je Trip, Tage day0+0..127) und den Profilen;
+ *     Neubau bei neuem Zip.
+ *   - Soll (Failsafe): download.gtfs.de free-Feeds (fv/rv/nv, taeglich, CC-BY),
+ *     Tagesindex delfidata/dfrouting/idx/<yyyymmdd>/ mit nur heute aktiven
+ *     Services.
+ *   - Echtzeit: realtime.gtfs.de/realtime-free.pb (TripUpdates; nur free-Modus,
+ *     da die RT-IDs zu den free-Feeds passen)
+ *
+ * Verzeichnis: <skript>/delfidata/dfrouting/   (eigener Bereich im delfidata-
+ *   Ordner von delfiproxy.php; getrennt von dessen state.json/overlay.json.gz/
+ *   pool.pb/bk/-Cache; die .htaccess-Sperre von delfidata deckt den Unterordner
+ *   mit ab)
+ *   zips/            heruntergeladene latest.zip je Feed (Cache 20 h, free-Modus)
+ *   rt_sim.pb        Echtzeit-Cache (60 s)
+ *   state.json       Build-Status (atomar), Phasen: tabs/stimes1/stimes2/
+ *                    stimes3/trans/fin
+ *   idx/<yyyymmdd>/  Tagesindex:
+ *     stops.tsv   nr \t stop_id \t name \t lat \t lon \t parent_station
+ *     trips.tsv   nr \t trip_id \t route_id
+ *     routes.tsv  route_id \t line \t type
+ *     nms.bin/nidx.bin   Stopnamen (u32 off, u16 len, 2 pad = 8 B je Stop)
+ *     sll.bin            Stop-Koordinaten (2x float32 LE = 8 B je Stop)
+ *     trline.bin         Linienlabel je Trip (32 B, NUL-gepaddet)
+ *     gridb_<la>_<lo>.tsv Zubringer-Grid 0,1 Grad (la/lo = floor(lat*10))
+ *     dprof_<n>.bin/didx_<n>.bin  Abfahrtsprofile je Stop
+ *         Block: [count u32][count x (dep u16, tripNr u32, seq u16) = 8 B]
+ *         Slot didx (stopNr>>8): Offset u64
+ *     tprof_<n>.bin/tidx_<n>.bin  Fahrtprofile je Trip
+ *         Block: [stops u16][stops x (seq u16, dep u16, arr u16, stopNr u32) = 10 B]
+ *         Slot tidx (tripNr>>8): Offset u64
+ *     trans_<n>.bin/trx_<n>.bin   Parent-Transfers
+ *         Block: [count u16][count x (stopNr u32, mins u8) = 5 B]
+ *         Slot trx (stopNr>>8): Offset u64
+ *
+ * Datenformate sind identisch zum Python-Referenzsimulator (dfrsim.py),
+ * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
+ */
+
+const DFR_V          = 'delfirouting 0.2.1';
+const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
+const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
+const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
+const DFR_SVC_DAYS   = 128;           /* Mehr-Tages-Bitmaske: 16 Bytes je Trip */
+const DFR_FEEDS      = [
+    'fv' => 'https://download.gtfs.de/germanfv_free/latest.zip',
+    'rv' => 'https://download.gtfs.de/germanrv_free/latest.zip',
+    'nv' => 'https://download.gtfs.de/germannv_free/latest.zip',
+];
+const DFR_STAT_TTL  = 71400;   /* Sekunden: Index gilt ~19,8 h */
+const DFR_BUDGET_S  = 18;      /* warm: Budget einer Bau-Runde */
+const DFR_IMPORT_S  = 900;     /* import: Budget eines Cron-Slots */
+const DFR_TIMEOUT_S = 25;      /* harte Obergrenze je Routing-Anfrage */
+const DFR_TRANS_M   = 600;     /* Geo-Transferradius Fussweg (m) */
+const DFR_TRANS_MAX = 14;      /* max. naechste Transferpartner je Stop */
+const DFR_ROUNDS    = 8;       /* Wellen der Routing-Engine */
+const DFR_SCAN_MIN  = 240;     /* Abfahrtsfenster je Stop (Minuten) */
+const DFR_RESULTS   = 6;       /* max. Verbindungen */
+const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle */
+const DFR_MT_TTL    = 60;      /* Echtzeit-Cache (Sekunden) */
+const DFR_ACC_MAX   = 32;      /* Zubringerstops je Endpunkt */
+const DFR_MEM       = '512M';
+
+/** Basisverzeichnis: eigener Bereich INNERHALB des delfidata-Ordners von
+ *  delfiproxy.php (keine Kollision mit dessen state.json/pool.pb/bk/...);
+ *  das DODP-Zip selbst bleibt direkt in ../delfidata/ liegen. */
+function dfr_base(): string { return __DIR__ . '/delfidata/dfrouting'; }
+function dfr_idxdir(string $day): string { return dfr_base() . '/idx/' . $day; }
+function dfr_tmpdir(string $day): string { return dfr_base() . '/tmp/' . $day; }
+function dfr_zipdir(): string { return dfr_base() . '/zips'; }
+
+/* ---------------------------------------------------------------- Zeit */
+
+function dfr_day_zo(): string {
+    $d = new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin'));
+    return $d->format('Ymd');
+}
+function dfr_hm2min(string $s): ?int {
+    if ($s === '' || strlen($s) < 4) return null;
+    $p = explode(':', $s);
+    if (count($p) < 2) return null;
+    $h = (int)$p[0]; $m = (int)$p[1];
+    if ($h < 0 || $h > 47 || $m < 0 || $m > 59) return null;
+    $t = $h * 60 + $m;
+    if ($t > 65535) return null;
+    return $t;
+}
+function dfr_min2hm(int $m): string {
+    $m &= 0xFFFF;
+    return sprintf('%02d:%02d', intdiv($m, 60) % 48, $m % 60);
+}
+function dfr_dist_m(float $la1, float $lo1, float $la2, float $lo2): float {
+    $rla = deg2rad($la2 - $la1); $rlo = deg2rad($lo2 - $lo1);
+    $a = sin($rla / 2) ** 2 +
+        cos(deg2rad($la1)) * cos(deg2rad($la2)) * sin($rlo / 2) ** 2;
+    return 12742000.0 * asin(min(1.0, sqrt($a)));
+}
+function dfr_walkmin(float $m): int {
+    return max(1, (int)ceil($m * 1.3 / 5000.0 * 60.0));
+}
+
+/* --------------------------------------------------- State (atomar) */
+
+function dfr_state_get(): array {
+    $p = dfr_base() . '/state.json';
+    if (!is_file($p)) return [];
+    $j = json_decode((string)file_get_contents($p), true);
+    return is_array($j) ? $j : [];
+}
+function dfr_state_put(array $st): void {
+    if (!is_dir(dfr_base())) mkdir(dfr_base(), 0755, true);
+    $p = dfr_base() . '/state.json';
+    $q = $p . '.tmp';
+    file_put_contents($q, json_encode($st), LOCK_EX);
+    rename($q, $p);
+}
+
+/* ------------------------------------------------------------ CSV-Zeile */
+
+function dfr_csv(string $ln): array {
+    if (strpos($ln, '"') === false) return explode(',', $ln);
+    $out = []; $cur = ''; $q = false; $n = strlen($ln);
+    for ($i = 0; $i < $n; $i++) {
+        $c = $ln[$i];
+        if ($q) {
+            if ($c === '"') $q = false; else $cur .= $c;
+        } elseif ($c === '"') { $q = true;
+        } elseif ($c === ',') { $out[] = $cur; $cur = '';
+        } else { $cur .= $c; }
+    }
+    $out[] = $cur;
+    return $out;
+}
+function dfr_col(array $f, ?int $i): string {
+    if ($i === null || $i < 0 || $i >= count($f)) return '';
+    return trim($f[$i]);
+}
+/** Header-Aliase: free-Feeds benennen teilweise ohne route_-Praefix. */
+function dfr_hmap(string $ln, array $want): array {
+    $cols = dfr_csv(trim($ln));
+    $mp = [];
+    foreach ($cols as $i => $c) $mp[trim($c)] = $i;
+    $out = [];
+    foreach ($want as $w) $out[$w] = $mp[$w] ?? null;
+    return $out;
+}
+
+/* -------------------------------------------------------------- Logs */
+
+function dfr_log(string $s): void {
+    file_put_contents(dfr_base() . '/build.log', date('c') . ' ' . $s . "\n", FILE_APPEND);
+}
+
+/* ============================================================ IMPORT */
+
+/** Zip als Zeilen-Generator; ZipArchive ist auf Netcup vorhanden.
+ *  Member wird auch in Unterordnern gefunden (DODP-Zips koennen einen
+ *  Praefix-Pfad haben, z. B. "fahrplan/stops.txt"). */
+function dfr_zip_lines($zipPath, string $member): ?array {
+    static $zCache = [];
+    static $mCache = [];
+    if (!class_exists('ZipArchive')) return null;
+    if (!array_key_exists($zipPath, $zCache)) {
+        $z = new ZipArchive();
+        if ($z->open($zipPath) !== true) { $zCache[$zipPath] = false; return null; }
+        $zCache[$zipPath] = $z;
+    }
+    $z = $zCache[$zipPath];
+    if (!is_object($z)) return null;
+    $mk = $zipPath . '#' . $member;
+    if (!array_key_exists($mk, $mCache)) {
+        $full = null;
+        if ($z->locateName($member) !== false) {
+            $full = $member;
+        } else {
+            $suf = '/' . $member;
+            for ($i = 0; $i < $z->numFiles; $i++) {
+                $nm = $z->getNameIndex($i);
+                if (is_string($nm) &&
+                    (substr($nm, -strlen($suf)) === $suf || $nm === $member)) {
+                    $full = $nm; break;
+                }
+            }
+        }
+        $mCache[$mk] = $full;
+    }
+    $full = $mCache[$mk];
+    if ($full === null) return null;
+    $strm = $z->getStream($full);
+    if ($strm === false) return null;
+    return [$z, $strm];
+}
+
+/** DODP-Gesamtdeutschland-Zip suchen (neuestes gewinnt).
+ *  Rueckgabe: [Pfad, mtime] oder null. */
+function dfr_dodp_find(): ?array {
+    $cands = [];
+    $paths = [
+        dfr_base(),
+        __DIR__ . '/delfidata',
+        __DIR__ . '/../citysurfers/delfidata',
+        '/var/www/pixcaelium/apps/citysurfers/delfidata',
+    ];
+    foreach ($paths as $p) {
+        if (!is_dir($p)) continue;
+        $fs = @scandir($p);
+        if ($fs === false) continue;
+        foreach ($fs as $f) {
+            if (strlen($f) < 8 || substr($f, -4) !== '.zip') continue;
+            $fp = $p . '/' . $f;
+            if (!is_file($fp)) continue;
+            if (!preg_match('/dodp|gesamt|deutschland|fahrplan/i', $f)) continue;
+            if (!preg_match('/gesamt|deutschland/i', $f)) continue; /* Schutz vor Streifern */
+            $cands[$fp] = (int)filemtime($fp);
+        }
+    }
+    if (!$cands) return null;
+    arsort($cands);
+    $fp = array_key_first($cands);
+    return [$fp, $cands[$fp]];
+}
+
+/** Feed-Zip je.feed laden (Cache 20 h, atomic rename). */
+function dfr_feed_zip(string $feed, string $url, int $budgetEnd): ?string {
+    $dir = dfr_zipdir();
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+    $p = $dir . '/' . $feed . '_latest.zip';
+    if (is_file($p) && time() - (int)filemtime($p) < 72000) return $p;
+    $q = $p . '.part';
+    $ok = false;
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        $fp = fopen($q, 'wb');
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_TIMEOUT => max(30, $budgetEnd - time()),
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_USERAGENT => 'pixcaelium-delfirouting/0.1',
+        ]);
+        $ok = curl_exec($ch) === true;
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch); fclose($fp);
+        if ($ok && $code !== 200) $ok = false;
+    } else {
+        $ctx = stream_context_create(['http' => [
+            'timeout' => max(30, $budgetEnd - time()),
+            'user_agent' => 'pixcaelium-delfirouting/0.1',
+        ]]);
+        $ok = (bool)@file_put_contents($q, fopen($url, 'rb', false, $ctx));
+    }
+    if (!$ok || !is_file($q) || filesize($q) < 500) {
+        @unlink($q);
+        return is_file($p) ? $p : null;   /* Alter Stand bleibt nutzbar */
+    }
+    rename($q, $p);
+    return $p;
+}
+
+/** Aktive Services des Tages (calendar + calendar_dates). */
+function dfr_svc_active($zipPath, string $day): ?array {
+    $got = dfr_zip_lines($zipPath, 'calendar.txt');
+    $act = [];
+    if ($got !== null) {
+        [, $fh] = $got;
+        $wd = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'][
+            (int)(new DateTimeImmutable($day))->format('N') - 1];
+        $hd = null; $first = true;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['service_id','monday','tuesday','wednesday',
+                    'thursday','friday','saturday','sunday','start_date','end_date']);
+                continue; }
+            $f = dfr_csv($ln);
+            $si = dfr_col($f, $hd['service_id']);
+            if ($si === '') continue;
+            $st = dfr_col($f, $hd['start_date']); $en = dfr_col($f, $hd['end_date']);
+            if ($st !== '' && $day < $st) continue;
+            if ($en !== '' && $day > $en) continue;
+            if (dfr_col($f, $hd[$wd]) === '1') $act[$si] = 1;
+        }
+        fclose($fh);
+    }
+    $got = dfr_zip_lines($zipPath, 'calendar_dates.txt');
+    if ($got !== null) {
+        [, $fh] = $got;
+        $hd = null; $first = true;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['service_id','date','exception_type']);
+                continue; }
+            $f = dfr_csv($ln);
+            $si = dfr_col($f, $hd['service_id']); $dt = dfr_col($f, $hd['date']);
+            if ($si === '' || $dt !== $day) continue;
+            if (dfr_col($f, $hd['exception_type']) === '1') $act[$si] = 1;
+            elseif (dfr_col($f, $hd['exception_type']) === '2') unset($act[$si]);
+        }
+        fclose($fh);
+    }
+    return $act;
+}
+
+/** stop-/trip-ID-Maps aus bereits geschriebenen TSVs laden (Resume + Dedupe). */
+function dfr_maps_reload(string $idir, array &$stopmap, array &$tripmap): void {
+    $stopmap = []; $tripmap = [];
+    $p = $idir . '/stops.tsv';
+    if (is_file($p)) {
+        $fh = fopen($p, 'rb');
+        $i = 0;
+        while (($ln = fgets($fh, 4096)) !== false) {
+            $t = explode("\t", rtrim($ln, "\n"));
+            if (count($t) >= 2) $stopmap[$t[1]] = $i;
+            $i++;
+        }
+        fclose($fh);
+    }
+    $p = $idir . '/trips.tsv';
+    if (is_file($p)) {
+        $fh = fopen($p, 'rb');
+        $i = 0;
+        while (($ln = fgets($fh, 4096)) !== false) {
+            $t = explode("\t", rtrim($ln, "\n"));
+            if (count($t) >= 2) $tripmap[$t[1]] = $i;
+            $i++;
+        }
+        fclose($fh);
+    }
+}
+
+/** Die Phasen tabs/stimes1/stimes2/stimes3/trans/fin des Tagesindex-Baus. */
+function dfr_build(int $budgetS): array {
+    if (!class_exists('ZipArchive')) {
+        return ['ok' => false, 'code' => 'nozip',
+            'msg' => 'PHP-ZipArchive fehlt; Extension zip wird benoetigt.'];
+    }
+    if ($budgetS > 0) @set_time_limit($budgetS + 30); else @set_time_limit(0);
+    @ini_set('memory_limit', '1024M');
+    $tEnd = $budgetS > 0 ? time() + $budgetS : PHP_INT_MAX;
+    $day = dfr_day_zo();
+    $st = dfr_state_get();
+
+    /* DODP-Vollindex hat Vorrang; die free-Feeds sind der Failsafe */
+    $dodp = dfr_dodp_find();
+    if ($dodp !== null && time() - $dodp[1] <= DFR_DODP_FRESH) {
+        return dfr_build_dodp($dodp[0], $dodp[1], $tEnd);
+    }
+
+    if (($st['phase'] ?? '') === 'done' && ($st['src'] ?? 'free') === 'free'
+        && ($st['day'] ?? '') === $day) {
+        return ['ok' => true, 'msg' => 'Index ' . $day . ' bereits fertig.'];
+    }
+    if (($st['src'] ?? 'free') !== 'free' || ($st['day'] ?? '') !== $day) {
+        $st = ['phase' => 'build', 'src' => 'free', 'day' => $day, 'tabs' => [],
+               'stl' => [], 'st2next' => 0, 'st3next' => 0, 'transnext' => 0];
+    }
+    $idir = dfr_idxdir($day); $tdir = dfr_tmpdir($day);
+    if (!is_dir($idir)) mkdir($idir, 0755, true);
+    if (!is_dir($tdir)) mkdir($tdir, 0755, true);
+
+    $stopmap = []; $tripmap = [];
+    dfr_maps_reload($idir, $stopmap, $tripmap);
+    $rlines = [];
+    if (is_file($idir . '/routes.tsv')) {
+        foreach (file($idir . '/routes.tsv', FILE_IGNORE_NEW_LINES) as $ln) {
+            $t = explode("\t", $ln);
+            if (count($t) >= 2) $rlines[$t[0]] = true;
+        }
+    }
+
+    /* ---- Phase tabs: stops, routes, trips je Feed anhaengen ---- */
+    foreach (DFR_FEEDS as $feed => $url) {
+        if (in_array($feed, $st['tabs'], true)) continue;
+        $t0 = time();
+        $zip = dfr_feed_zip($feed, $url, $tEnd);
+        if ($zip === null) { dfr_log("tabs $feed: Zip-Fehler"); continue; }
+        $svc = dfr_svc_active($zip, $day);
+        if ($svc === null) { dfr_log("tabs $feed: calendar lesbar? nein"); continue; }
+        $fStops = fopen($idir . '/stops.tsv', 'ab');
+        $fNms   = fopen($idir . '/nms.bin', 'ab');
+        $fNidx  = fopen($idir . '/nidx.bin', 'ab');
+        $fLL    = fopen($idir . '/sll.bin', 'ab');
+        $gridFh = []; $nNew = 0;
+        $got = dfr_zip_lines($zip, 'stops.txt');
+        if ($got !== null) {
+            [, $fh] = $got; $hd = null; $first = true;
+            while (($ln = fgets($fh, 65536)) !== false) {
+                $ln = rtrim($ln, "\r\n");
+                if ($ln === '') continue;
+                if ($first) { $first = false;
+                    $hd = dfr_hmap($ln, ['stop_id','stop_name','stop_lat','stop_lon',
+                        'parent_station']);
+                    continue; }
+                $f = dfr_csv($ln);
+                $sid = dfr_col($f, $hd['stop_id']);
+                if ($sid === '' || isset($stopmap[$sid])) continue;
+                $la = dfr_col($f, $hd['stop_lat']); $lo = dfr_col($f, $hd['stop_lon']);
+                if ($la === '' || $lo === '') continue;
+                $laF = (float)$la; $loF = (float)$lo;
+                if ($laF < 47 || $laF > 55.6 || $loF < 5.8 || $loF > 15.2) continue;
+                $pa = dfr_col($f, $hd['parent_station']);
+                $nm = trim(dfr_col($f, $hd['stop_name']));
+                if ($nm === '') $nm = $sid;
+                $nm = str_replace("\t", ' ', mb_substr($nm, 0, 180));
+                $nr = count($stopmap);
+                fwrite($fStops, $nr . "\t" . $sid . "\t" . $nm . "\t" .
+                    $laF . "\t" . $loF . "\t" . $pa . "\n");
+                $off = ftell($fNms);
+                $nb = mb_substr($nm, 0, 180);
+                fwrite($fNms, $nb);
+                $lbnb = strlen($nb);
+                fwrite($fNidx, pack('Vvxx', $off, $lbnb <= 65535 ? $lbnb : 65535));
+                fwrite($fLL, pack('gg', $laF, $loF));
+                $k = ((int)floor($laF * 10)) . '_' . ((int)floor($loF * 10));
+                if (!isset($gridFh[$k])) {
+                    $gridFh[$k] = fopen($idir . '/gridb_' . $k . '.tsv', 'ab');
+                }
+                fwrite($gridFh[$k], $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
+                $stopmap[$sid] = $nr;
+                $nNew++;
+            }
+            fclose($fh);
+        }
+        foreach ($gridFh as $h) fclose($h);
+        fclose($fStops); fclose($fNms); fclose($fNidx); fclose($fLL);
+        /* routes */
+        $fRoutes = fopen($idir . '/routes.tsv', 'ab');
+        $rlines2 = $rlines;
+        $got = dfr_zip_lines($zip, 'routes.txt');
+        if ($got !== null) {
+            [, $fh] = $got; $hd = null; $first = true;
+            while (($ln = fgets($fh, 65536)) !== false) {
+                $ln = rtrim($ln, "\r\n");
+                if ($ln === '') continue;
+                if ($first) { $first = false;
+                    $hd = dfr_hmap($ln, ['route_id','long_name','short_name','route_type',
+                        'route_long_name','route_short_name']);
+                    continue; }
+                $f = dfr_csv($ln);
+                $ri = dfr_col($f, $hd['route_id']);
+                if ($ri === '' || isset($rlines2[$ri])) continue;
+                $sn = dfr_col($f, $hd['short_name']);
+                if ($sn === '') $sn = dfr_col($f, $hd['route_short_name']);
+                $l2n = dfr_col($f, $hd['long_name']);
+                if ($l2n === '') $l2n = dfr_col($f, $hd['route_long_name']);
+                $ty = dfr_col($f, $hd['route_type']); if ($ty === '') $ty = '3';
+                $line = $sn; if ($line === '') $line = $l2n;
+                $line = str_replace("\t", ' ', mb_substr($line, 0, 60));
+                fwrite($fRoutes, $ri . "\t" . $line . "\t" . $ty . "\n");
+                $rlines2[$ri] = true;
+            }
+            fclose($fh);
+        }
+        fclose($fRoutes);
+        /* trips (nur aktive Services) */
+        $fTrips = fopen($idir . '/trips.tsv', 'ab');
+        $fTrline = fopen($idir . '/trline.bin', 'ab');
+        $nT = 0;
+        $rlmap = [];
+        foreach (file($idir . '/routes.tsv', FILE_IGNORE_NEW_LINES) as $ln) {
+            $t = explode("\t", $ln);
+            if (count($t) >= 2) $rlmap[$t[0]] = $t[1];
+        }
+        $trlineCache = [];
+        $got = dfr_zip_lines($zip, 'trips.txt');
+        if ($got !== null) {
+            [, $fh] = $got; $hd = null; $first = true;
+            while (($ln = fgets($fh, 65536)) !== false) {
+                $ln = rtrim($ln, "\r\n");
+                if ($ln === '') continue;
+                if ($first) { $first = false;
+                    $hd = dfr_hmap($ln, ['trip_id','service_id','route_id']);
+                    continue; }
+                $f = dfr_csv($ln);
+                $ti = dfr_col($f, $hd['trip_id']);
+                if ($ti === '' || isset($tripmap[$ti])) continue;
+                $si = dfr_col($f, $hd['service_id']);
+                if ($si === '' || !isset($svc[$si])) continue;
+                $ri = dfr_col($f, $hd['route_id']);
+                $nr = count($tripmap);
+                fwrite($fTrips, $nr . "\t" . $ti . "\t" . $ri . "\n");
+                if (!isset($trlineCache[$ri])) {
+                    $lb = isset($rlmap[$ri]) ? $rlmap[$ri] : '';
+                    $b = substr($lb, 0, 31);
+                    $trlineCache[$ri] = $b . str_repeat("\0", 32 - strlen($b));
+                }
+                fwrite($fTrline, $trlineCache[$ri]);
+                $tripmap[$ti] = $nr;
+                $nT++;
+            }
+            fclose($fh);
+        }
+        fclose($fTrips); fclose($fTrline);
+        $st['tabs'][] = $feed;
+        dfr_state_put($st);
+        dfr_log(sprintf('tabs %s: +%d stops +%d trips (%.0fs)', $feed, $nNew, $nT, time() - $t0));
+        if (time() > $tEnd) return ['ok' => true, 'phase' => 'tabs', 'budget' => true,
+            'msg' => 'Budget nach tabs/' . $feed . ', Resume noetig.'];
+    }
+
+    /* Map-Reload nach tabs (auch bei Resume der spaeteren Phasen) */
+    dfr_maps_reload($idir, $stopmap, $tripmap);
+
+    /* ---- Phase stimes1: stop_times je Feed in 256 TMP-Buckets ---- */
+    $buckets = null;
+    foreach (DFR_FEEDS as $feed => $url) {
+        if (!isset($st['stl'][$feed])) $st['stl'][$feed] = 0;
+    }
+    foreach (DFR_FEEDS as $feed => $url) {
+        if (($st['stl'][$feed] ?? -2) === -2) continue;
+        $t0 = time();
+        $zip = dfr_zip_zippath($feed);
+        $zip = $zip ?? dfr_feed_zip($feed, $url, $tEnd);
+        if ($zip === null) { dfr_log("stimes1 $feed: Zip-Fehler"); continue; }
+        $done = (int)$st['stl'][$feed];
+        $nr = 0; $miss = 0;
+        $got = dfr_zip_lines($zip, 'stop_times.txt');
+        if ($got === null) { dfr_log("stimes1 $feed: keine stop_times"); continue; }
+        [, $fh] = $got;
+        $hd = null; $first = true;
+        while (($ln = fgets($fh, 1024)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($nr < $done) { $nr++; continue; }        /* Zeilen-Skip-Resume */
+            if ($ln === '') { $nr++; continue; }
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['trip_id','arrival_time','arrival',
+                    'departure_time','departure','stop_id','stop_sequence']);
+                $nr++; continue; }
+            $f = dfr_csv($ln);
+            $ti = dfr_col($f, $hd['trip_id']);
+            $sid = dfr_col($f, $hd['stop_id']);
+            if ($ti === '' || $sid === '' ||
+                !isset($tripmap[$ti]) || !isset($stopmap[$sid])) { $miss++; }
+            else {
+                $iDp = $hd['departure_time']; if ($iDp === null) $iDp = $hd['departure'];
+                $iAr = $hd['arrival_time'];   if ($iAr === null) $iAr = $hd['arrival'];
+                $dp = dfr_col($f, $iDp);
+                $ar = dfr_col($f, $iAr); if ($ar === '') $ar = $dp;
+                $dep = dfr_hm2min($dp); $arr = dfr_hm2min($ar);
+                $sq = (int)dfr_col($f, $hd['stop_sequence']);
+                if ($dep === null || $arr === null || $sq < 0 || $sq > 65535) $miss++;
+                else {
+                    $sp = $stopmap[$sid];
+                    $rec = pack('VvvvV', $sp, $dep, $arr, $tripmap[$ti], $sq);
+                    $b = $sp & 255;
+                    if ($buckets === null) $buckets = [];
+                    if (!isset($buckets[$b]))
+                        $buckets[$b] = fopen($tdir . sprintf('/b%03d.bin', $b), 'ab');
+                    fwrite($buckets[$b], $rec);
+                }
+            }
+            $nr++;
+            if (($nr & 0xFFFFF) === 0) {
+                $st['stl'][$feed] = $nr;
+                dfr_state_put($st);
+                if (time() > $tEnd) {
+                    foreach ($buckets ?? [] as $h) fclose($h);
+                    dfr_log("stimes1 $feed: Budget bei Zeile $nr");
+                    return ['ok' => true, 'phase' => 'stimes1', 'budget' => true,
+                        'msg' => "Budget in stimes1/$feed bei Zeile $nr."];
+                }
+            }
+        }
+        foreach ($buckets ?? [] as $h) fclose($h);
+        $buckets = null;
+        $st['stl'][$feed] = -2;
+        dfr_state_put($st);
+        dfr_log(sprintf('stimes1 %s: fertig (%d Zeilen, %d verworfen, %.0fs)',
+            $feed, $nr, $miss, time() - $t0));
+        if (time() > $tEnd)
+            return ['ok' => true, 'phase' => 'stimes1', 'budget' => true,
+                'msg' => 'Budget nach stimes1/' . $feed . '.'];
+    }
+
+    /* ---- Bucket-Phasen (gemeinsam fuer free und DODP) ---- */
+    $bres = dfr_phase_buckets($idir, $tdir, $st, $tEnd);
+    if ($bres !== null) return $bres;
+    $ntrips = (int)($st['b_trips'] ?? 0);
+    $npairs = (int)($st['b_pairs'] ?? 0);
+
+    /* ---- fin: TMP aufraeumen, State done ---- */
+    if (is_dir($tdir)) {
+        foreach (scandir($tdir) as $f2) if ($f2 !== '.' && $f2 !== '..')
+            @unlink($tdir . '/' . $f2);
+        @rmdir($tdir);
+    }
+    dfr_state_put(['src' => 'free', 'phase' => 'done', 'day' => $day, 'ts' => time(),
+        'trips' => $ntrips, 'pairs' => $npairs]);
+    dfr_log("fin: Index $day fertig ($ntrips Profile, $npairs Transferpaare)");
+    return ['ok' => true, 'phase' => 'fin', 'day' => $day,
+        'trips' => $ntrips, 'pairs' => $npairs];
+}
+
+/** Gemeinsame Bucket-Phasen stimes2/stimes3/trans (free UND DODP).
+ *  Rueckgabe null = alle Phasen fertig (Zaehler in $st['b_trips']/['b_pairs']),
+ *  sonst Budget-Info-Array. */
+function dfr_phase_buckets(string $idir, string $tdir, array &$st, int $tEnd): ?array {
+    if (!isset($st['b_trips'])) { $st['b_trips'] = 0; $st['b_pairs'] = 0; }
+    /* ---- Phase stimes2: je Bucket sortieren -> dprof/didx + tp-Buckets ---- */
+    $t0 = time();
+    while ($st['st2next'] < 256) {
+        if (time() > $tEnd) { dfr_state_put($st);
+            return ['ok' => true, 'phase' => 'stimes2', 'budget' => true,
+                'msg' => 'Budget in stimes2 bei ' . $st['st2next'] . '.']; }
+        $n = (int)$st['st2next'];
+        $bf = $tdir . sprintf('/b%03d.bin', $n);
+        if (!is_file($bf) && is_file($idir . sprintf('/dprof_%03d.bin', $n))) {
+            $st['st2next'] = $n + 1;                     /* Resume: schon fertig */
+            continue;
+        }
+        $rows = [];
+        if (is_file($bf)) {
+            $fh = fopen($bf, 'rb');
+            $left = (int)floor(filesize($bf) / 14);
+            while ($left-- > 0) {
+                $raw = fread($fh, 14);
+                $u = unpack('Vstop/dep/varr/Vtrip/vseq', $raw);
+                $key = pack('NnnNV', $u['stop'], $u['dep'], $u['seq'], $u['trip'], $u['arr']);
+                $rows[$key] = $raw;
+            }
+            fclose($fh);
+            unlink($bf);
+        }
+        $fpD = fopen($idir . sprintf('/dprof_%03d.bin', $n), 'wb');
+        $fpI = fopen($idir . sprintf('/didx_%03d.bin', $n), 'wb');
+        $tp = []; $curStop = -1; $curRek = ''; $curOff = 0; $curCount = 0;
+        $keys = array_keys($rows);
+        usort($keys, 'strcmp');
+        foreach ($keys as $key) {
+            $raw = $rows[$key];
+            $u = unpack('Vstop/dep/varr/Vtrip/vseq', $raw);
+            if ($u['stop'] !== $curStop) {
+                if ($curCount > 0) {
+                    fseek($fpI, ($curStop >> 8) * 8, SEEK_SET);
+                    fwrite($fpI, pack('P', $curOff));
+                    fwrite($fpD, pack('V', $curCount) . $curRek);
+                }
+                $curStop = $u['stop']; $curRek = ''; $curCount = 0;
+                $curOff = ftell($fpD);
+            }
+            $curRek .= pack('vVv', $u['dep'], $u['trip'], $u['seq']);
+            $curCount++;
+            $tb = $u['trip'] & 255;
+            if (!isset($tp[$tb]))
+                $tp[$tb] = fopen($tdir . sprintf('/tp%03d.bin', $tb), 'ab');
+            fwrite($tp[$tb], pack('VvvvV', $u['trip'], $u['seq'], $u['dep'], $u['arr'], $u['stop']));
+        }
+        if ($curCount > 0) {
+            fseek($fpI, ($curStop >> 8) * 8, SEEK_SET);
+            fwrite($fpI, pack('P', $curOff));
+            fwrite($fpD, pack('V', $curCount) . $curRek);
+        }
+        fclose($fpD); fclose($fpI);
+        foreach ($tp as $h) fclose($h);
+        $st['st2next'] = $n + 1;
+        if (time() - $t0 > 5) { dfr_state_put($st); $t0 = time(); }
+    }
+
+    /* ---- Phase stimes3: tp-Buckets -> tprof/tidx ---- */
+    $t0 = time();
+    while ($st['st3next'] < 256) {
+        if (time() > $tEnd) { dfr_state_put($st);
+            return ['ok' => true, 'phase' => 'stimes3', 'budget' => true,
+                'msg' => 'Budget in stimes3 bei ' . $st['st3next'] . '.']; }
+        $n = (int)$st['st3next'];
+        $bf = $tdir . sprintf('/tp%03d.bin', $n);
+        if (!is_file($bf) && is_file($idir . sprintf('/tprof_%03d.bin', $n))) {
+            $st['st3next'] = $n + 1;                     /* Resume: schon fertig */
+            continue;
+        }
+        $rows = [];
+        if (is_file($bf)) {
+            $fh = fopen($bf, 'rb');
+            $left = (int)floor(filesize($bf) / 14);
+            while ($left-- > 0) {
+                $raw = fread($fh, 14);
+                $u = unpack('Vtrip/vseq/vdep/varr/Vstop', $raw);
+                $key = pack('Nn', $u['trip'], $u['seq']);
+                $rows[$key] = [$u, $raw];
+            }
+            fclose($fh);
+            unlink($bf);
+        }
+        $fpT = fopen($idir . sprintf('/tprof_%03d.bin', $n), 'wb');
+        $fpX = fopen($idir . sprintf('/tidx_%03d.bin', $n), 'wb');
+        $curTrip = -1; $curRek = ''; $curOff = 0; $curCount = 0;
+        $keys = array_keys($rows);
+        usort($keys, 'strcmp');
+        foreach ($keys as $key) {
+            [$u] = $rows[$key];
+            if ($u['trip'] !== $curTrip) {
+                if ($curCount > 0) {
+                    fseek($fpX, ($curTrip >> 8) * 8, SEEK_SET);
+                    fwrite($fpX, pack('P', $curOff));
+                    fwrite($fpT, pack('v', $curCount) . $curRek);
+                }
+                $curTrip = $u['trip']; $curRek = ''; $curCount = 0;
+                $curOff = ftell($fpT);
+            }
+            $curRek .= pack('vvvV', $u['seq'], $u['dep'], $u['arr'], $u['stop']);
+            $curCount++;
+        }
+        if ($curCount > 0) {
+            fseek($fpX, ($curTrip >> 8) * 8, SEEK_SET);
+            fwrite($fpX, pack('P', $curOff));
+            fwrite($fpT, pack('v', $curCount) . $curRek);
+        }
+        fclose($fpT); fclose($fpX);
+        $st['b_trips'] += count(array_unique(array_map('intval',
+            array_map(fn($k) => unpack('Nt', substr($k, 0, 4))['t'], $keys))));
+        $st['st3next'] = $n + 1;
+    }
+
+    /* ---- Phase trans: Parent-Station-Paare (symmetrisch) ---- */
+    $t0 = time();
+    while ($st['transnext'] < 256) {
+        if (time() > $tEnd) { dfr_state_put($st);
+            return ['ok' => true, 'phase' => 'trans', 'budget' => true,
+                'msg' => 'Budget in trans bei ' . $st['transnext'] . '.']; }
+        $n = (int)$st['transnext'];
+        if (!is_file($tdir . sprintf('/x%03d.bin', $n)) &&
+            is_file($idir . sprintf('/trans_%03d.bin', $n))) {
+            $st['transnext'] = $n + 1;                   /* Resume: schon fertig */
+            continue;
+        }
+        /* Paare einmalig aus stops.tsv (Parent-Gruppen) */
+        if (!is_file($tdir . '/tpairs_ready')) {
+            $groups = [];
+            $fh = fopen($idir . '/stops.tsv', 'rb');
+            while (($ln = fgets($fh, 4096)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) >= 6 && $t[5] !== '') {
+                    $groups[$t[5]][] = [(int)$t[0], (float)$t[3], (float)$t[4]];
+                }
+            }
+            fclose($fh);
+            $fh2 = [];
+            foreach ($groups as $mem) {
+                $c = count($mem);
+                if ($c < 2 || $c > 64) continue;
+                for ($i = 0; $i < $c; $i++) {
+                    for ($j = 0; $j < $c; $j++) {
+                        if ($i === $j) continue;
+                        [$a, $la1, $lo1] = $mem[$i];
+                        [$b2, $la2, $lo2] = $mem[$j];
+                        $d = dfr_dist_m($la1, $lo1, $la2, $lo2);
+                        if ($d > 1200) continue;
+                        $mins = dfr_walkmin($d);
+                        $bkt = $a & 255;
+                        if (!isset($fh2[$bkt]))
+                            $fh2[$bkt] = fopen($tdir . sprintf('/x%03d.bin', $bkt), 'wb');
+                        fwrite($fh2[$bkt], pack('VVC', $a, $b2,
+                            min(255, $mins)));
+                    }
+                }
+            }
+            foreach ($fh2 as $h) fclose($h);
+            file_put_contents($tdir . '/tpairs_ready', '1');
+        }
+        /* Bucket sortieren -> trans/trx (Block nach Stop A) */
+        $bf = $tdir . sprintf('/x%03d.bin', $n);
+        $rows = [];
+        if (is_file($bf)) {
+            $fh = fopen($bf, 'rb');
+            $left = (int)floor(filesize($bf) / 9);
+            while ($left-- > 0) {
+                $u = unpack('Va/Vb/Cm', fread($fh, 9));
+                if ($u['b'] !== $u['a'])
+                    $rows[$u['a']][$u['b']] = $u['m'];
+            }
+            fclose($fh);
+            unlink($bf);
+        }
+        $fpT = fopen($idir . sprintf('/trans_%03d.bin', $n), 'wb');
+        $fpX = fopen($idir . sprintf('/trx_%03d.bin', $n), 'wb');
+        ksort($rows);
+        foreach ($rows as $a => $inner) {
+            $off = ftell($fpT);
+            fseek($fpX, ((int)$a >> 8) * 8, SEEK_SET);
+            fwrite($fpX, pack('P', $off));
+            ksort($inner);
+            fwrite($fpT, pack('v', count($inner)));
+            foreach ($inner as $b2 => $m) fwrite($fpT, pack('Vv', $b2, $m));
+            $st['b_pairs'] += count($inner);
+        }
+        fclose($fpT); fclose($fpX);
+        $st['transnext'] = $n + 1;
+        if (time() - $t0 > 3) { dfr_state_put($st); $t0 = time(); }
+    }
+    return null;
+}
+
+/* ============================================================ DODP-VOLLBAU */
+
+/** Tagesdifferenz zwischen zwei Ymd-Daten (to minus from). */
+function dfr_day_diff(string $from, string $to): int {
+    if (strlen($from) !== 8 || strlen($to) !== 8) return PHP_INT_MIN;
+    $d = (new DateTimeImmutable($from))->diff(new DateTimeImmutable($to));
+    return (int)$d->format('%r%a');
+}
+
+/** Alle fertigen DODP-Index-Verzeichnisse (day0 => Pfad, absteigend). */
+function dfr_dodp_dirs(): array {
+    $root = dfr_base() . '/idx';
+    $out = [];
+    if (!is_dir($root)) return $out;
+    $fs = @scandir($root);
+    if ($fs === false) return $out;
+    foreach ($fs as $d) {
+        if (!str_starts_with($d, 'dodp_')) continue;
+        $d0 = substr($d, 5);
+        if (!ctype_digit($d0)) continue;
+        $p = $root . '/' . $d;
+        if (is_file($p . '/tprof_255.bin') && is_file($p . '/DONE'))
+            $out[$d0] = $p;
+    }
+    krsort($out);
+    return $out;
+}
+
+/** Phase svc: 128-Tage-Bitmasken aller Services aus calendar+calendar_dates.
+ *  Rueckgabe null bei Erfolg, sonst Budget-Info-Array. */
+function dfr_dodp_svcmap(string $zipPath, string $day0, string $idir, int $tEnd): ?array {
+    $zero = str_repeat("\0", 16);
+    $svc = [];
+    $wd = [];
+    for ($i = 0; $i < DFR_SVC_DAYS; $i++) {
+        $wd[$i] = (int)(new DateTimeImmutable($day0))
+            ->add(new DateInterval('P' . $i . 'D'))->format('N');
+    }
+    $wdN = [1 => 'monday', 2 => 'tuesday', 3 => 'wednesday', 4 => 'thursday',
+        5 => 'friday', 6 => 'saturday', 7 => 'sunday'];
+    $got = dfr_zip_lines($zipPath, 'calendar.txt');
+    if ($got !== null) {
+        [, $fh] = $got;
+        $hd = null; $first = true;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['service_id','monday','tuesday','wednesday',
+                    'thursday','friday','saturday','sunday','start_date','end_date']);
+                continue; }
+            $f = dfr_csv($ln);
+            $sid = dfr_col($f, $hd['service_id']);
+            if ($sid === '' || isset($svc[$sid])) continue;
+            $bm = $zero;
+            $stD = dfr_col($f, $hd['start_date']);
+            $enD = dfr_col($f, $hd['end_date']);
+            $i0 = 0; $i1 = DFR_SVC_DAYS - 1;
+            if ($stD !== '') {
+                $u = dfr_day_diff($day0, $stD);
+                if ($u > $i1) { $svc[$sid] = $bm; continue; }
+                $i0 = max(0, $u);
+            }
+            if ($enD !== '') {
+                $u = dfr_day_diff($day0, $enD);
+                $i1 = min($i1, $u);
+            }
+            for ($i = $i0; $i <= $i1; $i++) {
+                if (dfr_col($f, $hd[$wdN[$wd[$i]]]) === '1') {
+                    $bm[$i >> 3] = chr(ord($bm[$i >> 3]) | (1 << ($i & 7)));
+                }
+            }
+            $svc[$sid] = $bm;
+        }
+        fclose($fh);
+        if ($tEnd !== PHP_INT_MAX && time() > $tEnd)
+            return ['ok' => true, 'phase' => 'svc', 'budget' => true,
+                'msg' => 'Budget in DODP-svc (calendar).'];
+    }
+    $got = dfr_zip_lines($zipPath, 'calendar_dates.txt');
+    if ($got !== null) {
+        [, $fh] = $got;
+        $hd = null; $first = true;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['service_id','date','exception_type']);
+                continue; }
+            $f = dfr_csv($ln);
+            $si = dfr_col($f, $hd['service_id']);
+            $dt = dfr_col($f, $hd['date']);
+            $ex = dfr_col($f, $hd['exception_type']);
+            if ($si === '' || $dt === '') continue;
+            $di = dfr_day_diff($day0, $dt);
+            if ($di < 0 || $di >= DFR_SVC_DAYS) continue;
+            if (!isset($svc[$si])) $svc[$si] = $zero;
+            $byte = $di >> 3; $mask = 1 << ($di & 7);
+            $bm = $svc[$si];
+            if ($ex === '1') {
+                $bm[$byte] = chr(ord($bm[$byte]) | $mask);
+            } elseif ($ex === '2') {
+                $bm[$byte] = chr(ord($bm[$byte]) & (255 - $mask));
+            }
+            $svc[$si] = $bm;
+            if ($tEnd !== PHP_INT_MAX && time() > $tEnd)
+                return ['ok' => true, 'phase' => 'svc', 'budget' => true,
+                    'msg' => 'Budget in DODP-svc (calendar_dates).'];
+        }
+        fclose($fh);
+    }
+    $fhO = fopen($idir . '/svcday.tsv.part', 'wb');
+    if ($fhO === false) return ['ok' => false, 'code' => 'readonly',
+        'msg' => 'svcday.tsv nicht schreibbar.'];
+    foreach ($svc as $sid => $bm) fwrite($fhO, $sid . "\t" . bin2hex($bm) . "\n");
+    fclose($fhO);
+    rename($idir . '/svcday.tsv.part', $idir . '/svcday.tsv');
+    dfr_log(sprintf('dodp svc: %d Services gemappt', count($svc)));
+    return null;
+}
+
+/** Der DODP-Vollbau: svc -> tabs -> stimes -> Buckets -> fin. */
+function dfr_build_dodp(string $zipPath, int $zipMtime, int $tEnd): array {
+    $today = dfr_day_zo();
+    foreach (dfr_dodp_dirs() as $d0 => $p) {
+        $u = dfr_day_diff($d0, $today);
+        if ($u >= 0 && $u < DFR_SVC_DAYS) {
+            $ts = (int)@filemtime($p . '/DONE');
+            if ($zipMtime > $ts) {
+                return ['ok' => true, 'phase' => 'done',
+                    'msg' => 'Gueltiger DODP-Index ab ' . $d0 .
+                        ' vorhanden, aber das Zip ist neuer. Fuer Neubau: delfidata/dfrouting/idx/dodp_' .
+                        $d0 . ' loeschen und Import neu starten.'];
+            }
+            return ['ok' => true, 'phase' => 'done',
+                'msg' => 'DODP-Index ab ' . $d0 . ' bereits fertig und gueltig.'];
+        }
+    }
+
+    /* passenden abgebrochenen Bau fortsetzen (max. 30 Tage alt), sonst neu */
+    $st = dfr_state_get();
+    $st = is_array($st) ? $st : [];
+    $day0 = $today; $resume = false;
+    if (($st['src'] ?? '') === 'dodp' && ($st['phase'] ?? '') !== 'done') {
+        $cand = (string)($st['day0'] ?? '');
+        $u = $cand !== '' ? dfr_day_diff($cand, $today) : PHP_INT_MIN;
+        if ($u >= 0 && $u <= 30 && is_dir(dfr_base() . '/idx/dodp_' . $cand)) {
+            $day0 = $cand; $resume = true;
+        }
+    }
+    if (!$resume) {
+        $st = ['src' => 'dodp', 'phase' => 'svc', 'day0' => $day0, 'zip' => $zipPath,
+               'doff' => 0, 'st2next' => 0, 'st3next' => 0, 'transnext' => 0,
+               'b_trips' => 0, 'b_pairs' => 0, 'ts' => time()];
+        dfr_state_put($st);
+    }
+    $idir = dfr_base() . '/idx/dodp_' . $day0;
+    $tdir = dfr_base() . '/tmp/dodp_' . $day0;
+    if (!is_dir($idir)) mkdir($idir, 0755, true);
+    if (!is_dir($tdir)) mkdir($tdir, 0755, true);
+
+    /* ---- Phase svc ---- */
+    if (!is_file($idir . '/svcday.tsv')) {
+        $res = dfr_dodp_svcmap($zipPath, $day0, $idir, $tEnd);
+        if ($res !== null) { dfr_state_put($st); return $res; }
+    }
+    $st['phase'] = 'tabs';
+    dfr_state_put($st);
+
+    /* ---- Phase tabs: stops/routes/trips (alle) + tripday.bin ---- */
+    if (!is_file($idir . '/tabs_done')) {
+        if ($tEnd !== PHP_INT_MAX && time() > $tEnd)
+            return ['ok' => true, 'phase' => 'tabs', 'budget' => true,
+                'msg' => 'Budget vor DODP-tabs; naechster Slot.'];
+        $svcmap = [];
+        foreach (file($idir . '/svcday.tsv', FILE_IGNORE_NEW_LINES) as $ln) {
+            $t = explode("\t", $ln);
+            if (count($t) >= 2) $svcmap[$t[0]] = hex2bin($t[1]);
+        }
+        $fStops = fopen($idir . '/stops.tsv', 'ab');
+        $fNms   = fopen($idir . '/nms.bin', 'ab');
+        $fNidx  = fopen($idir . '/nidx.bin', 'ab');
+        $fLL    = fopen($idir . '/sll.bin', 'ab');
+        $gridFh = [];
+        $stopmap = []; $tripmap = [];
+        dfr_maps_reload($idir, $stopmap, $tripmap);
+        $got = dfr_zip_lines($zipPath, 'stops.txt');
+        if ($got === null) return ['ok' => false, 'code' => 'nozipmember',
+            'msg' => 'stops.txt nicht im DODP-Zip gefunden.'];
+        [, $fh] = $got; $hd = null; $first = true; $nStops = 0;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['stop_id','stop_name','stop_lat','stop_lon',
+                    'parent_station']);
+                continue; }
+            $f = dfr_csv($ln);
+            $sid = dfr_col($f, $hd['stop_id']);
+            if ($sid === '' || isset($stopmap[$sid])) continue;
+            $la = dfr_col($f, $hd['stop_lat']); $lo = dfr_col($f, $hd['stop_lon']);
+            if ($la === '' || $lo === '') continue;
+            $laF = (float)$la; $loF = (float)$lo;
+            if ($laF < 47 || $laF > 55.6 || $loF < 5.8 || $loF > 15.2) continue;
+            $pa = dfr_col($f, $hd['parent_station']);
+            $nm = trim(dfr_col($f, $hd['stop_name']));
+            if ($nm === '') $nm = $sid;
+            if (strpos($sid, "\t") !== false) continue;   /* TSV-Sicherheit */
+            $nm = str_replace("\t", ' ', mb_substr($nm, 0, 180));
+            $nr = count($stopmap);
+            $stopmap[$sid] = $nr;
+            fwrite($fStops, $nr . "\t" . $sid . "\t" . $nm . "\t" .
+                $laF . "\t" . $loF . "\t" . $pa . "\n");
+            $off = ftell($fNms);
+            fwrite($fNms, $nm);
+            $lbnb = strlen($nm);
+            fwrite($fNidx, pack('Vvxx', $off, $lbnb <= 65535 ? $lbnb : 65535));
+            fwrite($fLL, pack('gg', $laF, $loF));
+            $k = ((int)floor($laF * 10)) . '_' . ((int)floor($loF * 10));
+            if (!isset($gridFh[$k])) $gridFh[$k] = fopen($idir . '/gridb_' . $k . '.tsv', 'ab');
+            fwrite($gridFh[$k], $nr . "\t" . $nm . "\t" . $laF . "\t" . $loF . "\n");
+            $nStops++;
+        }
+        fclose($fh);
+        foreach ($gridFh as $h) fclose($h);
+        fclose($fStops); fclose($fNms); fclose($fNidx); fclose($fLL);
+        /* routes */
+        $fRoutes = fopen($idir . '/routes.tsv', 'ab');
+        $got = dfr_zip_lines($zipPath, 'routes.txt');
+        if ($got !== null) {
+            [, $fh] = $got; $hd = null; $first = true;
+            $have = [];
+            foreach (file($idir . '/routes.tsv', FILE_IGNORE_NEW_LINES) as $ln)
+                { $t2 = explode("\t", $ln); if (count($t2) >= 1) $have[$t2[0]] = 1; }
+            while (($ln = fgets($fh, 65536)) !== false) {
+                $ln = rtrim($ln, "\r\n");
+                if ($ln === '') continue;
+                if ($first) { $first = false;
+                    $hd = dfr_hmap($ln, ['route_id','long_name','short_name','route_type',
+                        'route_long_name','route_short_name']);
+                    continue; }
+                $f = dfr_csv($ln);
+                $ri = dfr_col($f, $hd['route_id']);
+                if ($ri === '' || isset($have[$ri])) continue;
+                $sn = dfr_col($f, $hd['short_name']);
+                if ($sn === '') $sn = dfr_col($f, $hd['route_short_name']);
+                $l2n = dfr_col($f, $hd['long_name']);
+                if ($l2n === '') $l2n = dfr_col($f, $hd['route_long_name']);
+                $ty = dfr_col($f, $hd['route_type']); if ($ty === '') $ty = '3';
+                $line = $sn; if ($line === '') $line = $l2n;
+                $line = str_replace("\t", ' ', mb_substr($line, 0, 60));
+                fwrite($fRoutes, $ri . "\t" . $line . "\t" . $ty . "\n");
+                $have[$ri] = 1;
+            }
+            fclose($fh);
+        }
+        fclose($fRoutes);
+        /* rlmap + trips (alle) + tripday.bin */
+        $rlmap = [];
+        foreach (file($idir . '/routes.tsv', FILE_IGNORE_NEW_LINES) as $ln) {
+            $t = explode("\t", $ln);
+            if (count($t) >= 2) $rlmap[$t[0]] = $t[1];
+        }
+        $fTrips = fopen($idir . '/trips.tsv', 'ab');
+        $fTrline = fopen($idir . '/trline.bin', 'ab');
+        $fTd = fopen($idir . '/tripday.bin', 'ab');
+        $zero16 = str_repeat("\0", 16);
+        $got = dfr_zip_lines($zipPath, 'trips.txt');
+        if ($got === null) return ['ok' => false, 'code' => 'nozipmember',
+            'msg' => 'trips.txt nicht im DODP-Zip gefunden.'];
+        [, $fh] = $got; $hd = null; $first = true; $nTrips = 0;
+        while (($ln = fgets($fh, 65536)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($ln === '') continue;
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['trip_id','service_id','route_id']);
+                continue; }
+            $f = dfr_csv($ln);
+            $ti = dfr_col($f, $hd['trip_id']);
+            if ($ti === '' || strpos($ti, "\t") !== false || isset($tripmap[$ti])) continue;
+            $si = dfr_col($f, $hd['service_id']);
+            $ri = dfr_col($f, $hd['route_id']);
+            $nr = count($tripmap);
+            $tripmap[$ti] = $nr;
+            fwrite($fTrips, $nr . "\t" . $ti . "\t" . $ri . "\n");
+            $lb = isset($rlmap[$ri]) ? $rlmap[$ri] : '';
+            $b = substr($lb, 0, 31);
+            fwrite($fTrline, $b . str_repeat("\0", 32 - strlen($b)));
+            fwrite($fTd, $svcmap[$si] ?? $zero16);
+            $nTrips++;
+        }
+        fclose($fh); fclose($fTrips); fclose($fTrline); fclose($fTd);
+        file_put_contents($idir . '/tabs_done', '1');
+        dfr_log(sprintf('dodp tabs: %d stops, %d trips', $nStops, $nTrips));
+    }
+    $st['phase'] = 'stimes';
+    dfr_state_put($st);
+
+    /* ---- Phase stimes: stop_times mit Zeilen-Resume (doff) ---- */
+    if (!is_file($idir . '/stimes_done')) {
+        $stopmap = []; $tripmap = [];
+        dfr_maps_reload($idir, $stopmap, $tripmap);
+        $done = (int)($st['doff'] ?? 0);
+        $got = dfr_zip_lines($zipPath, 'stop_times.txt');
+        if ($got === null) return ['ok' => false, 'code' => 'nozipmember',
+            'msg' => 'stop_times.txt nicht im DODP-Zip gefunden.'];
+        [, $fh] = $got;
+        $hd = null; $first = true; $nr = 0; $miss = 0;
+        $buckets = [];
+        while (($ln = fgets($fh, 1024)) !== false) {
+            $ln = rtrim($ln, "\r\n");
+            if ($nr < $done) { $nr++; continue; }
+            if ($ln === '') { $nr++; continue; }
+            if ($first) { $first = false;
+                $hd = dfr_hmap($ln, ['trip_id','arrival_time','arrival',
+                    'departure_time','departure','stop_id','stop_sequence']);
+                $nr++; continue; }
+            $f = dfr_csv($ln);
+            $ti = dfr_col($f, $hd['trip_id']);
+            $sid = dfr_col($f, $hd['stop_id']);
+            if ($ti === '' || $sid === '' ||
+                !isset($tripmap[$ti]) || !isset($stopmap[$sid])) { $miss++; }
+            else {
+                $iDp = $hd['departure_time']; if ($iDp === null) $iDp = $hd['departure'];
+                $iAr = $hd['arrival_time'];   if ($iAr === null) $iAr = $hd['arrival'];
+                $dp = dfr_col($f, $iDp);
+                $ar = dfr_col($f, $iAr); if ($ar === '') $ar = $dp;
+                $dep = dfr_hm2min($dp); $arr = dfr_hm2min($ar);
+                $sq = (int)dfr_col($f, $hd['stop_sequence']);
+                if ($dep === null || $arr === null || $sq < 0 || $sq > 65535) $miss++;
+                else {
+                    $sp = $stopmap[$sid];
+                    $rec = pack('VvvvV', $sp, $dep, $arr, $tripmap[$ti], $sq);
+                    $b = $sp & 255;
+                    if ($buckets === null) $buckets = [];
+                    if (!isset($buckets[$b]))
+                        $buckets[$b] = fopen($tdir . sprintf('/b%03d.bin', $b), 'ab');
+                    fwrite($buckets[$b], $rec);
+                }
+            }
+            $nr++;
+            if (($nr & 0x3FFFF) === 0) {
+                $st['doff'] = $nr;
+                dfr_state_put($st);
+                if (time() > $tEnd) {
+                    foreach ($buckets ?? [] as $h) fclose($h);
+                    dfr_log("dodp stimes: Budget bei Zeile $nr");
+                    return ['ok' => true, 'phase' => 'stimes', 'budget' => true,
+                        'msg' => "Budget in DODP-stimes bei Zeile $nr."];
+                }
+            }
+        }
+        foreach ($buckets ?? [] as $h) fclose($h);
+        $st['doff'] = $nr;
+        dfr_state_put($st);
+        file_put_contents($idir . '/stimes_done', '1');
+        dfr_log(sprintf('dodp stimes: fertig (%d Zeilen, %d verworfen)', $nr, $miss));
+    }
+    $st['phase'] = 'buckets';
+    dfr_state_put($st);
+
+    /* ---- Bucket-Phasen (identisch free) ---- */
+    $bres = dfr_phase_buckets($idir, $tdir, $st, $tEnd);
+    if ($bres !== null) { dfr_state_put($st); return $bres; }
+
+    /* ---- fin ---- */
+    if (is_dir($tdir)) {
+        foreach (scandir($tdir) as $f2) if ($f2 !== '.' && $f2 !== '..')
+            @unlink($tdir . '/' . $f2);
+        @rmdir($tdir);
+    }
+    $rootI = dfr_base() . '/idx';           /* alle aelteren dodp-Indizes weg */
+    foreach (scandir($rootI) as $d2) {
+        if (!str_starts_with($d2, 'dodp_') || $d2 === 'dodp_' . $day0) continue;
+        $p2 = $rootI . '/' . $d2;
+        if (!is_dir($p2)) continue;
+        foreach (scandir($p2) as $f2) if ($f2 !== '.' && $f2 !== '..')
+            @unlink($p2 . '/' . $f2);
+        @rmdir($p2);
+    }
+    file_put_contents($idir . '/DONE', (string)time());
+    dfr_state_put(['src' => 'dodp', 'phase' => 'done', 'day0' => $day0,
+        'ts' => time(), 'trips' => (int)($st['b_trips'] ?? 0),
+        'pairs' => (int)($st['b_pairs'] ?? 0)]);
+    dfr_log("fin: DODP-Index $day0 fertig");
+    return ['ok' => true, 'phase' => 'fin', 'day0' => $day0, 'src' => 'dodp',
+        'trips' => (int)($st['b_trips'] ?? 0),
+        'pairs' => (int)($st['b_pairs'] ?? 0)];
+}
+
+function dfr_zip_zippath(string $feed): ?string {
+    $p = dfr_zipdir() . '/' . $feed . '_latest.zip';
+    return is_file($p) ? $p : null;
+}
+
+/* ====================================================== INDEX-ZUGRIFF */
+
+class DfrIdx {
+    public string $dir = '';
+    public string $day = '';
+    public string $src = 'free';      /* 'free' | 'dodp' */
+    public string $day0 = '';          /* dodp: erster Index-Tag */
+    public int $dayIdx = 0;           /* dodp: heutiger Tag 0..127 */
+    public string $validUntil = '';   /* dodp: letzter gueltiger Tag */
+    public ?string $tripday = null;   /* dodp: tripday.bin lazy geladen */
+    /** @var resource|null */
+    public $fhC = null;              /* Handle-Cache: path => resource */
+    public array $h = [];
+    public array $nearCache = [];    /* Zubringer */
+    public array $bandCache = [];    /* Geo-Transfer-Baender */
+    public array $transCache = [];
+    public array $tCache = [];       /* 's'.stopNr / tripNr -> Block */
+}
+
+function dfr_idx(): DfrIdx {
+    static $idx = null;
+    if ($idx !== null && $idx->dir !== '') return $idx;
+    $idx = new DfrIdx();
+    $root = dfr_base() . '/idx';
+    if (!is_dir($root)) return $idx;
+    $fs = @scandir($root);
+    if ($fs === false) return $idx;
+    /* 1) frischester gueltiger DODP-Index gewinnt */
+    $dodps = [];
+    $days = [];
+    foreach ($fs as $d) {
+        if ($d === '.' || $d === '..') continue;
+        if (ctype_digit($d)) {
+            if (is_file($root . '/' . $d . '/tprof_255.bin')) $days[] = $d;
+            continue;
+        }
+        if (!str_starts_with($d, 'dodp_')) continue;
+        $d0 = substr($d, 5);
+        if (!ctype_digit($d0)) continue;
+        $p = $root . '/' . $d;
+        if (!is_file($p . '/tprof_255.bin') || !is_file($p . '/tripday.bin')) continue;
+        $dodps[] = $d0;
+    }
+    if ($dodps) {
+        rsort($dodps);
+        $today = dfr_day_zo();
+        foreach ($dodps as $d0) {
+            $u = dfr_day_diff($d0, $today);
+            if ($u >= 0 && $u < DFR_SVC_DAYS) {
+                $idx->src = 'dodp';
+                $idx->day0 = $d0;
+                $idx->dayIdx = $u;
+                $idx->validUntil = (new DateTimeImmutable($d0))
+                    ->add(new DateInterval('P' . (DFR_SVC_DAYS - 1) . 'D'))->format('Ymd');
+                $idx->day = $today;
+                $idx->dir = $root . '/dodp_' . $d0;
+                return $idx;
+            }
+        }
+    }
+    /* 2) Failsafe: neuester free-Tagesindex */
+    if (!$days) return $idx;
+    rsort($days);
+    $idx->day = $days[0];
+    $idx->src = 'free';
+    $idx->dir = $root . '/' . $idx->day;
+    return $idx;
+}
+
+/** DODP: laeuft die Fahrt laut 128-Tage-Bitmaske am heutigen Index-Tag? */
+function dfr_trip_active(DfrIdx $ix, int $tripNr): bool {
+    if ($ix->src !== 'dodp') return true;
+    if ($ix->tripday === null) {
+        $p = $ix->dir . '/tripday.bin';
+        $ix->tripday = is_file($p) ? (string)file_get_contents($p) : '';
+    }
+    if ($ix->tripday === '') return true;   /* Fehlschutz: Bitmaske weg */
+    $o = $tripNr * 16 + ($ix->dayIdx >> 3);
+    if ($o >= strlen($ix->tripday)) return false;
+    return ((ord($ix->tripday[$o]) >> ($ix->dayIdx & 7)) & 1) === 1;
+}
+function dfr_fopen(string $path) {
+    global $_dfr_handles;
+    if (!isset($_dfr_handles)) $_dfr_handles = [];
+    if (!array_key_exists($path, $_dfr_handles)) {
+        $_dfr_handles[$path] = @fopen($path, 'rb');
+        if ($_dfr_handles[$path] === false) $_dfr_handles[$path] = null;
+    }
+    return $_dfr_handles[$path];
+}
+
+function dfr_dprof(DfrIdx $ix, int $stopNr) {
+    $n = $stopNr & 255;
+    $fh = dfr_fopen($ix->dir . sprintf('/didx_%03d.bin', $n));
+    if ($fh === null) return null;
+    fseek($fh, ($stopNr >> 8) * 8);
+    $raw = fread($fh, 8);
+    if (strlen($raw) < 8) return null;
+    $off = unpack('P', $raw)[1];
+    if ($off === 0) return null;
+    $fd = dfr_fopen($ix->dir . sprintf('/dprof_%03d.bin', $n));
+    if ($fd === null) return null;
+    fseek($fd, $off);
+    $hdr = fread($fd, 4);
+    if (strlen($hdr) < 4) return null;
+    $cnt = unpack('V', $hdr)[1];
+    if ($cnt === 0 || $cnt > 20000) return null;
+    return [$cnt, fread($fd, $cnt * 8)];
+}
+function dfr_tprof(DfrIdx $ix, int $tripNr) {
+    $n = $tripNr & 255;
+    $fh = dfr_fopen($ix->dir . sprintf('/tidx_%03d.bin', $n));
+    if ($fh === null) return null;
+    fseek($fh, ($tripNr >> 8) * 8);
+    $raw = fread($fh, 8);
+    if (strlen($raw) < 8) return null;
+    $off = unpack('P', $raw)[1];
+    if ($off === 0) return null;
+    $fd = dfr_fopen($ix->dir . sprintf('/tprof_%03d.bin', $n));
+    if ($fd === null) return null;
+    fseek($fd, $off);
+    $hdr = fread($fd, 2);
+    if (strlen($hdr) < 2) return null;
+    $cnt = unpack('v', $hdr)[1];
+    if ($cnt === 0 || $cnt > 2000) return null;
+    return [$cnt, fread($fd, $cnt * 10)];
+}
+/** Parent-Transfer-Block eines Stops: [[stopNr, mins], ...] */
+function dfr_trans_block(DfrIdx $ix, int $stopNr): array {
+    $n = $stopNr & 255;
+    $fh = dfr_fopen($ix->dir . sprintf('/trx_%03d.bin', $n));
+    if ($fh === null) return [];
+    fseek($fh, ($stopNr >> 8) * 8);
+    $raw = fread($fh, 8);
+    if (strlen($raw) < 8) return [];
+    $off = unpack('P', $raw)[1];
+    if ($off === 0) return [];
+    $fd = dfr_fopen($ix->dir . sprintf('/trans_%03d.bin', $n));
+    if ($fd === null) return [];
+    fseek($fd, $off);
+    $hdr = fread($fd, 2);
+    if (strlen($hdr) < 2) return [];
+    $cnt = unpack('v', $hdr)[1];
+    $raw = $cnt > 0 ? fread($fd, $cnt * 5) : '';
+    $out = [];
+    for ($i = 0; $i < $cnt; $i++) {
+        $u = unpack('Vb/vm', substr($raw, $i * 5, 5));
+        $out[] = [$u['b'], $u['m']];
+    }
+    return $out;
+}
+function dfr_stop_name(DfrIdx $ix, int $stopNr): string {
+    $fh = dfr_fopen($ix->dir . '/nidx.bin');
+    if ($fh === null) return '?';
+    fseek($fh, $stopNr * 8);
+    $raw = fread($fh, 6);
+    if (strlen($raw) < 6) return '?';
+    $u = unpack('Voff/vlen', $raw);
+    $fm = dfr_fopen($ix->dir . '/nms.bin');
+    if ($fm === null) return '?';
+    fseek($fm, $u['off']);
+    return (string)fread($fm, $u['len']);
+}
+function dfr_stop_ll(DfrIdx $ix, int $stopNr) {
+    $fh = dfr_fopen($ix->dir . '/sll.bin');
+    if ($fh === null) return null;
+    fseek($fh, $stopNr * 8);
+    $raw = fread($fh, 8);
+    if (strlen($raw) < 8) return null;
+    $u = unpack('gla/glo', $raw);
+    return [$u['la'], $u['lo']];
+}
+function dfr_trip_label(DfrIdx $ix, int $tripNr): string {
+    $fh = dfr_fopen($ix->dir . '/trline.bin');
+    if ($fh === null) return '';
+    fseek($fh, $tripNr * 32);
+    $raw = fread($fh, 32);
+    $p = strpos($raw, "\0");
+    if ($p !== false) $raw = substr($raw, 0, $p);
+    return (string)$raw;
+}
+
+/** Zubringerstops um einen Punkt (3x3 Grid-Zellen, gecacht, naechste zuerst). */
+function dfr_near_stops(DfrIdx $ix, float $lat, float $lon, int $radius, int $maxN): array {
+    $key = sprintf('%.5f|%.5f|%d', $lat, $lon, $radius);
+    if (isset($ix->nearCache[$key])) return array_slice($ix->nearCache[$key], 0, $maxN);
+    $out = [];
+    $cla = (int)floor($lat * 10); $clo = (int)floor($lon * 10);
+    for ($dla = -1; $dla <= 1; $dla++) {
+        for ($dlo = -1; $dlo <= 1; $dlo++) {
+            $p = $ix->dir . sprintf('/gridb_%d_%d.tsv', $cla + $dla, $clo + $dlo);
+            if (!is_file($p)) continue;
+            $fh = fopen($p, 'rb');
+            while (($ln = fgets($fh, 512)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) < 4) continue;
+                $d = dfr_dist_m($lat, $lon, (float)$t[2], (float)$t[3]);
+                if ($d <= $radius) {
+                    $out[] = [(int)$t[0], $t[1], (int)round($d), dfr_walkmin($d),
+                        (float)$t[2], (float)$t[3]];
+                }
+            }
+            fclose($fh);
+        }
+    }
+    usort($out, fn($a, $b) => $a[3] <=> $b[3]);
+    $ix->nearCache[$key] = $out;
+    return array_slice($out, 0, $maxN);
+}
+
+/** 3x3-Zellband (lat/lon) fuer Geo-Transfer, einmal je Gruppe gecacht. */
+function dfr_cell_band(DfrIdx $ix, int $la, int $lo): array {
+    $k = $la * 1000 + $lo;
+    if (isset($ix->bandCache[$k])) return $ix->bandCache[$k];
+    $out = [];
+    for ($dla = -1; $dla <= 1; $dla++) {
+        for ($dlo = -1; $dlo <= 1; $dlo++) {
+            $p = $ix->dir . sprintf('/gridb_%d_%d.tsv', $la + $dla, $lo + $dlo);
+            if (!is_file($p)) continue;
+            $fh = fopen($p, 'rb');
+            while (($ln = fgets($fh, 512)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) < 4) continue;
+                $out[] = [(float)$t[2], (float)$t[3], (int)$t[0]];
+            }
+            fclose($fh);
+        }
+    }
+    $ix->bandCache[$k] = $out;
+    return $out;
+}
+
+/** Naechste Transfers je Stop: Parent-Paare + Geo-Umfeld (bbox-Vorfilter). */
+function dfr_trans_near(DfrIdx $ix, int $stopNr): array {
+    if (isset($ix->transCache[$stopNr])) return $ix->transCache[$stopNr];
+    $out = [];
+    foreach (dfr_trans_block($ix, $stopNr) as [$b2, $m]) {
+        if ($b2 !== $stopNr) $out[$b2] = $m;
+    }
+    $ll = dfr_stop_ll($ix, $stopNr);
+    if ($ll !== null) {
+        $band = dfr_cell_band($ix, (int)floor($ll[0] * 10), (int)floor($ll[1] * 10));
+        $la = $ll[0]; $lo = $ll[1];
+        $nl = count($band);
+        for ($i = 0; $i < $nl; $i++) {
+            $e = $band[$i];
+            if (abs($e[0] - $la) > 0.0065) continue;     /* ~720 m Breite */
+            if (abs($e[1] - $lo) > 0.0095) continue;     /* ~600-1100 m Laenge */
+            $nr = $e[2];
+            if ($nr === $stopNr || isset($out[$nr])) continue;
+            $d = dfr_dist_m($la, $lo, $e[0], $e[1]);
+            if ($d <= DFR_TRANS_M) {
+                $wm = dfr_walkmin($d);
+                if (!isset($out[$nr]) || $wm < $out[$nr]) $out[$nr] = $wm;
+            }
+        }
+    }
+    asort($out);
+    $res = [];
+    $i = 0;
+    foreach ($out as $b2 => $m) {
+        if ($i++ >= DFR_TRANS_MAX) break;
+        $res[] = [(int)$b2, (int)$m];
+    }
+    $ix->transCache[$stopNr] = $res;
+    return $res;
+}
+
+/* ========================================================= REALTIME */
+
+/** Minimal-Protobuf-Scanner: [field, wire, value(bytes|int)] - Liste. */
+function dfr_pb_scan(string $s): array {
+    $out = []; $i = 0; $n = strlen($s);
+    while ($i < $n) {
+        $tag = 0; $sh = 0;
+        while ($i < $n) {
+            $b = ord($s[$i]); $i++;
+            $tag |= ($b & 0x7F) << $sh; $sh += 7;
+            if (!($b & 0x80)) break;
+        }
+        $field = $tag >> 3; $wire = $tag & 7;
+        if ($wire === 0) {
+            $v = 0; $sh = 0;
+            while ($i < $n) {
+                $b = ord($s[$i]); $i++;
+                $v |= ($b & 0x7F) << $sh; $sh += 7;
+                if (!($b & 0x80)) break;
+            }
+            $out[] = [$field, $wire, $v];
+        } elseif ($wire === 2) {
+            $len = 0; $sh = 0;
+            while ($i < $n) {
+                $b = ord($s[$i]); $i++;
+                $len |= ($b & 0x7F) << $sh; $sh += 7;
+                if (!($b & 0x80)) break;
+            }
+            $out[] = [$field, $wire, substr($s, $i, $len)];
+            $i += $len;
+        } elseif ($wire === 5) { $out[] = [$field, $wire, substr($s, $i, 4)]; $i += 4;
+        } elseif ($wire === 1) { $out[] = [$field, $wire, substr($s, $i, 8)]; $i += 8;
+        } else break;
+    }
+    return $out;
+}
+
+/** trip_id -> tripNr -> Verzoegerung (Sekunden, Trip-Ebene oder Stop-Ebene). */
+function dfr_rt_delays(DfrIdx $ix): array {
+    static $cache = null; static $t0 = 0;
+    if ($cache !== null && time() - $t0 < DFR_MT_TTL) return $cache;
+    $cache = [];
+    $p = dfr_base() . '/rt_sim.pb';
+    $need = true;
+    if (is_file($p) && time() - (int)filemtime($p) < DFR_MT_TTL) $need = false;
+    if ($need) {
+        $ok = false;
+        $ctx = stream_context_create(['http' => ['timeout' => 25,
+            'user_agent' => 'pixcaelium-delfirouting/0.1']]);
+        $raw = @file_get_contents(DFR_RT_URL, false, $ctx);
+        if (is_string($raw) && strlen($raw) > 16) {
+            file_put_contents($p . '.tmp', $raw);
+            rename($p . '.tmp', $p);
+            $ok = true;
+        } elseif (is_file($p)) $ok = true;               /* Alter Cache faellt zurueck */
+        if (!$ok) { $t0 = time(); return []; }
+    }
+    $pb = (string)file_get_contents($p);
+    $rawDelays = [];
+    foreach (dfr_pb_scan($pb) as [$field, , $ent]) {
+        if ($field !== 2 || !is_string($ent)) continue;
+        foreach (dfr_pb_scan($ent) as [$f2, , $tu]) {
+            if ($f2 !== 2 || !is_string($tu)) continue;
+            $tripId = null; $delay = null;
+            foreach (dfr_pb_scan($tu) as [$f3, , $v3]) {
+                if ($f3 === 1 && is_string($v3)) {
+                    foreach (dfr_pb_scan($v3) as [$f4, , $v4]) {
+                        if ($f4 === 1 && is_string($v4)) { $tripId = $v4; break; }
+                    }
+                } elseif ($f3 === 5 && is_int($v3)) {
+                    $delay = $v3;
+                } elseif ($f3 === 2 && is_string($v3) && $delay === null) {
+                    /* StopTimeUpdate: erstes Arrival/Departure-Delay genuegt */
+                    foreach (dfr_pb_scan($v3) as [$f5, , $v5]) {
+                        if ($f5 === 2 && is_string($v5)) {
+                            foreach (dfr_pb_scan($v5) as [$f6, , $v6]) {
+                                if ($f6 === 1 && is_int($v6)) { $delay = $v6; break 2; }
+                            }
+                        }
+                    }
+                }
+            }
+            if ($tripId !== null && $delay !== null) $rawDelays[$tripId] = $delay;
+        }
+    }
+    if (!$rawDelays) { $t0 = time(); return []; }
+    /* Join trip_id -> tripNr (trips.tsv einmal scannen) */
+    $delays = [];
+    $nr = 0;
+    $fh = fopen($ix->dir . '/trips.tsv', 'rb');
+    if ($fh !== false) {
+        while (($ln = fgets($fh, 4096)) !== false) {
+            $t = explode("\t", rtrim($ln, "\n"));
+            if (count($t) >= 2 && isset($rawDelays[$t[1]])) $delays[$nr] = $rawDelays[$t[1]];
+            $nr++;
+        }
+        fclose($fh);
+    }
+    $cache = $delays; $t0 = time();
+    return $delays;
+}
+
+/* ========================================================== ROUTING */
+
+/**
+ * Kern-Engine (Multiplelokale: RMX-CSA-Variante mit Wellen).
+ * Rueckgabe: ['conns' => [...]] oder ['err' => 'noaccess'|'noconns'].
+ */
+function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
+    int $depMin, int $walkR, int $limit, array $delays, int $tEnd): array {
+    $accFrom = dfr_near_stops($ix, $fLa, $fLo, $walkR, DFR_ACC_MAX);
+    $accTo = dfr_near_stops($ix, $tLa, $tLo, $walkR, DFR_ACC_MAX);
+    if (!$accFrom || !$accTo) return ['err' => 'noaccess'];
+    $walkTo = []; $walkFrom = [];
+    foreach ($accTo as $a) $walkTo[$a[0]] = $a[3];
+    foreach ($accFrom as $a) $walkFrom[$a[0]] = [$a[3], $a[2], $a[1]];
+
+    $tau = []; $parent = []; $marked = [];
+    foreach ($accFrom as $a) {
+        $t = $depMin + $a[3];
+        if (!isset($tau[$a[0]]) || $t < $tau[$a[0]]) {
+            $tau[$a[0]] = $t;
+            $marked[] = $a[0];
+        }
+    }
+    $bestFinish = [];
+    for ($r = 0; $r < DFR_ROUNDS; $r++) {
+        if (!$marked) break;
+        if (count($marked) > DFR_MARK_CAP) {
+            $marked = array_values(array_unique($marked));
+            usort($marked, fn($a, $b) => $tau[$a] <=> $tau[$b]);
+            if (count($marked) > DFR_MARK_CAP)
+                $marked = array_slice($marked, 0, DFR_MARK_CAP);
+        }
+        $nxt = []; $nxtSet = []; $tripSeq = [];
+        foreach ($marked as $stop) {
+            if (time() > $tEnd) return ['err' => 'timeout'];
+            $ts = $tau[$stop];
+            $skey = 's' . $stop;
+            if (!array_key_exists($skey, $ix->tCache)) $ix->tCache[$skey] = dfr_dprof($ix, $stop);
+            $blk = $ix->tCache[$skey];
+            if ($blk === null) continue;
+            [$count, $recs] = $blk;
+            $lo = 0; $hi = $count - 1; $first = $count;
+            while ($lo <= $hi) {                        /* erste Abfahrt >= ts */
+                $mid = ($lo + $hi) >> 1;
+                $d = unpack('v', substr($recs, $mid * 8, 2))[1];
+                if ($d >= $ts) { $first = $mid; $hi = $mid - 1; }
+                else $lo = $mid + 1;
+            }
+            for ($i = $first; $i < $count; $i++) {
+                $o = $i * 8;
+                $dep = unpack('v', substr($recs, $o, 2))[1];
+                if ($dep > $ts + DFR_SCAN_MIN) break;
+                $rr = substr($recs, $o, 8);
+                $u = unpack('vdep/Vtrip/vseq', $rr);
+                if (isset($tripSeq[$u['trip']]) && $u['seq'] >= $tripSeq[$u['trip']])
+                    continue;                           /* Trip nur ab fruehester Seq */
+                if (!dfr_trip_active($ix, $u['trip']))
+                    continue;                           /* DODP: nur heute aktive Fahrten */
+                $tripSeq[$u['trip']] = $u['seq'];
+                if (!array_key_exists($u['trip'], $ix->tCache))
+                    $ix->tCache[$u['trip']] = dfr_tprof($ix, $u['trip']);
+                $prof = $ix->tCache[$u['trip']];
+                if ($prof === null) continue;
+                [$stops, $pr] = $prof;
+                $delayS = $delays[$u['trip']] ?? 0;
+                $dM = $delayS > 0 ? intdiv($delayS, 60) : 0;
+                for ($k = 0; $k < $stops; $k++) {
+                    $o2 = $k * 10;
+                    $w2 = unpack('vseq/x2/varr/Vstop', substr($pr, $o2, 10));
+                    if ($w2['seq'] <= $u['seq']) continue;
+                    $ar = $w2['arr'] + $dM;
+                    if ($ar > 65535) $ar = 65535;
+                    $hs = $w2['stop'];
+                    if (!isset($tau[$hs]) || $ar < $tau[$hs]) {
+                        $tau[$hs] = $ar;
+                        $parent[$hs] = 'j' . $u['trip'] . '|' . $u['seq'] . '|' .
+                            $stop . '|' . ($dep + $dM) . '|' . $ar;
+                        if (!isset($nxtSet[$hs])) { $nxtSet[$hs] = 1; $nxt[] = $hs; }
+                    }
+                }
+            }
+        }
+        /* Transfers von allen verbesserten Stops (Parent + Geo) */
+        foreach ($nxt as $hs) {
+            $tCur = $tau[$hs] ?? null;
+            if ($tCur === null) continue;
+            foreach (dfr_trans_near($ix, $hs) as [$g, $wm]) {
+                $t2 = $tCur + $wm;
+                if (!isset($tau[$g]) || $t2 < $tau[$g]) {
+                    $tau[$g] = $t2;
+                    $parent[$g] = 'w' . $hs . '|' . $wm;
+                    if (!isset($nxtSet[$g])) { $nxtSet[$g] = 1; $nxt[] = $g; }
+                }
+            }
+        }
+        $marked = $nxt;
+        /* Finale: Zielfussweg pruefen */
+        foreach ($walkTo as $tStop => $wmin) {
+            if (isset($tau[$tStop])) {
+                $fin = $tau[$tStop] + $wmin;
+                if (!isset($bestFinish[$tStop]) || $fin < $bestFinish[$tStop])
+                    $bestFinish[$tStop] = $fin;
+            }
+        }
+    }
+    if (!$bestFinish) return ['err' => 'noconns'];
+    asort($bestFinish);
+    $conns = []; $seen = [];
+    foreach ($bestFinish as $tStop => $fin) {
+        if (count($conns) >= $limit) break;
+        $legs = []; $cur = (int)$tStop; $sig = []; $lines = 0;
+        $ok = false;
+        for ($n = 0; $n < 40; $n++) {
+            $pd = $parent[$cur] ?? null;
+            if ($pd === null) break;
+            $at = $pd[0];
+            if ($at === 'j') {
+                $pp = explode('|', $pd);
+                $legs = array_merge([[
+                    'k' => 'jny',
+                    'line' => dfr_trip_label($ix, (int)$pp[0]),
+                    'from' => dfr_stop_name($ix, (int)$pp[2]),
+                    'to' => dfr_stop_name($ix, $cur),
+                    'dep' => dfr_min2hm((int)$pp[3]),
+                    'arr' => dfr_min2hm((int)$pp[4]),
+                    'dD' => $delays[(int)$pp[0]] ?? null,
+                ]], $legs);
+                $sig[] = 'j' . $pp[0] . '@' . $pp[2];
+                $lines++;
+                $cur = (int)$pp[2];
+            } else {
+                $pp = explode('|', $pd);
+                $legs = array_merge([[
+                    'k' => 'walk',
+                    'from' => dfr_stop_name($ix, (int)$pp[0]),
+                    'to' => dfr_stop_name($ix, $cur),
+                    'mins' => (int)$pp[1],
+                    'dist' => null,
+                ]], $legs);
+                $sig[] = 'w' . $pp[0] . '@' . $cur;
+                $cur = (int)$pp[0];
+            }
+        }
+        if (!isset($walkFrom[$cur])) continue;
+        [$w0, $dist, $nm] = $walkFrom[$cur];
+        $legs = array_merge([[
+            'k' => 'walk', 'from' => 'Start', 'to' => $nm,
+            'mins' => $w0, 'dist' => $dist,
+        ]], $legs);
+        $legs[] = ['k' => 'walk', 'from' => dfr_stop_name($ix, (int)$tStop),
+            'to' => 'Ziel', 'mins' => $walkTo[$tStop], 'dist' => null];
+        $sigKey = implode('|', $sig);
+        if (isset($seen[$sigKey])) continue;
+        $seen[$sigKey] = 1;
+        $dep = null;
+        foreach ($legs as $lg) if ($lg['k'] === 'jny') { $dep = $lg['dep']; break; }
+        if ($dep === null) $dep = dfr_min2hm($depMin);
+        $conns[] = [
+            'dep' => $dep, 'arr' => dfr_min2hm($fin),
+            'dur' => ($fin >= $depMin) ? $fin - $depMin : $fin + 2880 - $depMin,
+            'chg' => max(0, $lines - 1), 'legs' => $legs,
+        ];
+    }
+    if (!$conns) return ['err' => 'noconns'];
+    usort($conns, fn($a, $b) => strcmp($a['dep'], $b['dep']));
+    return ['conns' => $conns];
+}
+
+/* ============================================================= I/O */
+
+function dfr_out(array $j, int $httpCode = 200): void {
+    if (!headers_sent()) {
+        http_response_code($httpCode);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Access-Control-Allow-Origin: *');
+        header('Cache-Control: no-store');
+    }
+    echo json_encode($j, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (PHP_SAPI === 'cli') echo "\n";
+    exit;
+}
+
+function dfr_probe(): array {
+    $ix = dfr_idx();
+    $st = dfr_state_get();
+    if (!is_array($st)) $st = [];
+    $idx = [];
+    if ($ix->dir !== '') {
+        $idx = [
+            'day' => $ix->day,
+            'src' => $ix->src,
+            'is_today' => $ix->day === dfr_day_zo(),
+            'stops' => null, 'trips' => null,
+        ];
+        if ($ix->src === 'dodp') {
+            $idx['day0'] = $ix->day0;
+            $idx['valid_until'] = $ix->validUntil;
+            $idx['day_index'] = $ix->dayIdx;
+        }
+        if (is_file($ix->dir . '/stops.tsv')) $idx['stops'] = count(file($ix->dir . '/stops.tsv'));
+        if (is_file($ix->dir . '/trips.tsv')) $idx['trips'] = count(file($ix->dir . '/trips.tsv'));
+    }
+    $dz = null;
+    $dz2 = dfr_dodp_find();
+    if ($dz2 !== null)
+        $dz = ['file' => basename($dz2[0]), 'age_h' => (int)((time() - $dz2[1]) / 3600)];
+    return ['ok' => true, 'v' => DFR_V,
+        'src' => $ix->dir !== '' ? $ix->src : 'none',
+        'phase' => $st['phase'] ?? 'idle',
+        'state_day' => $st['day'] ?? '', 'state_day0' => $st['day0'] ?? '',
+        'idx' => $idx, 'dodp_zip' => $dz,
+        'php' => PHP_VERSION, 'zip' => class_exists('ZipArchive')];
+}
+
+function dfr_query_run(array $q): void {
+    $t0 = microtime(true);
+    $ix = dfr_idx();
+    if ($ix->dir === '') {
+        dfr_out(['ok' => false, 'code' => 'nodata',
+            'msg' => 'Noch kein Tagesindex. Erst import=1 bzw. warm=1 ausfuehren.']);
+    }
+    $from = $q['from'] ?? ''; $to = $q['to'] ?? '';
+    $depS = $q['dep'] ?? '';
+    $walk = (int)($q['walk'] ?? 1500);
+    $limit = (int)($q['limit'] ?? DFR_RESULTS);
+    if ($walk < 200) $walk = 200;
+    if ($walk > 5000) $walk = 5000;
+    if ($limit < 1) $limit = 1;
+    if ($limit > 8) $limit = 8;
+    $fm = explode(',', $from); $tm = explode(',', $to);
+    if (count($fm) !== 2 || count($tm) !== 2 ||
+        !is_numeric($fm[0]) || !is_numeric($fm[1]) ||
+        !is_numeric($tm[0]) || !is_numeric($tm[1])) {
+        dfr_out(['ok' => false, 'code' => 'params',
+            'msg' => 'from/to muessen lat,lon sein (dezimal).']);
+    }
+    $fLa = (float)$fm[0]; $fLo = (float)$fm[1];
+    $tLa = (float)$tm[0]; $tLo = (float)$tm[1];
+    if ($fLa < 47 || $fLa > 55.6 || $tLo < 5.8 || $tLo > 15.2 ||
+        $tLa < 47 || $tLa > 55.6 || $fLo < 5.8 || $fLo > 15.2) {
+        dfr_out(['ok' => false, 'code' => 'params',
+            'msg' => 'Koordinaten ausserhalb Deutschlands.']);
+    }
+    $depMin = null;
+    if ($depS !== '') $depMin = dfr_hm2min($depS);
+    if ($depMin === null) {
+        $depMin = (int)(new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))
+            ->format('H') * 60 +
+            (int)(new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('i');
+    }
+    $delays = [];
+    $rt = 0;
+    if ($ix->src === 'free' && $ix->day === dfr_day_zo()) {
+        /* Echtzeit: nur free-Modus + heutiger Index (RT-IDs passen nur dort) */
+        $delays = dfr_rt_delays($ix);
+        $rt = count($delays);
+    }
+    $res = dfr_route($ix, $fLa, $fLo, $tLa, $tLo, $depMin, $walk, $limit, $delays,
+        $t0 + DFR_TIMEOUT_S);
+    $ms = (int)round((microtime(true) - $t0) * 1000);
+    if (isset($res['err'])) {
+        $msg = $res['err'] === 'noaccess'
+            ? 'Keine OEPNV-Haltestellen im Zubringerbereich von Start und/oder Ziel.'
+            : ($res['err'] === 'timeout'
+                ? 'Anfrage ueberschreitet das Zeitlimit; bitte erneut versuchen.'
+                : 'Keine Verbindung gefunden.');
+        dfr_out(['ok' => false, 'code' => $res['err'],
+            'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);
+    }
+    $out = [
+        'ok' => true, 'v' => DFR_V, 'day' => $ix->day,
+        'src' => $ix->src,
+        'rt' => $rt, 'ms' => $ms,
+        'dep_min' => $depMin, 'walk' => $walk,
+        'conns' => array_slice($res['conns'], 0, $limit),
+    ];
+    if ($ix->src === 'dodp') {
+        $out['day0'] = $ix->day0;
+        $out['valid_until'] = $ix->validUntil;
+    }
+    dfr_out($out);
+}
+
+/* ============================================================== MAIN */
+
+(function () {
+    $cli = PHP_SAPI === 'cli';
+    $q = [];
+    if ($cli) {
+        global $argv;
+        foreach (array_slice($argv ?? [], 1) as $a) {
+            $p = explode('=', $a, 2);
+            if (count($p) === 2) $q[$p[0]] = $p[1];
+            else $q[$a] = '1';
+        }
+    } else {
+        $q = $_GET;
+    }
+    if (!is_dir(dfr_base()) && !$cli) @mkdir(dfr_base(), 0755, true);
+
+    $mode = 'query';
+    if (isset($q['import'])) $mode = 'import';
+    elseif (isset($q['warm'])) $mode = 'warm';
+    elseif (isset($q['probe'])) $mode = 'probe';
+
+    switch ($mode) {
+        case 'import':
+            if (!$cli) {
+                dfr_out(['ok' => false, 'code' => 'clionly',
+                    'msg' => 'import ist nur per CLI/Cron erlaubt (php ...delfirouting.php import=1).']);
+            }
+            $budget = DFR_IMPORT_S;
+            if (isset($q['budget'])) {
+                $b2 = (int)$q['budget'];
+                if ($b2 >= 0) $budget = $b2;    /* budget=0: Langlaeufer ohne Limit */
+            }
+            @ini_set('memory_limit', '1024M');
+            $r = dfr_build($budget);
+            echo json_encode($r, JSON_UNESCAPED_SLASHES) . "\n";
+            exit(($r['ok'] ?? false) ? 0 : 1);
+        case 'warm':
+            @set_time_limit(DFR_BUDGET_S + 30);
+            @ini_set('memory_limit', DFR_MEM);
+            $r = dfr_build(DFR_BUDGET_S);
+            dfr_out($r);
+        case 'probe':
+            dfr_out(dfr_probe());
+        default:
+            if (isset($q['from']) && isset($q['to'])) {
+                @ini_set('memory_limit', DFR_MEM);
+                dfr_query_run($q);
+            }
+            dfr_out(['ok' => false, 'code' => 'params',
+                'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 | probe=1 | warm=1']);
+    }
+})();
