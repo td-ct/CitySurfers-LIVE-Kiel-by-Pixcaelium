@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.8
+ * delfirouting.php - v0.2.9
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,16 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.9 App-Anbindung (CitySurfers v1.6.0): delfirouting wird als waehlbares
+ *   und als dritte Stufe des Auto-Routers eingebunden. Damit die App weiss, ob
+ *   der Server wirklich nutzbaere Profile hat: (1) probe=1 liefert jetzt
+ *   idx.dprof_mb/idx.tprof_mb (Bucket 000); die App schaltet das Backend nur
+ *   bei tprof_mb >= 1, done und gueltigem valid_until frei - nach den
+ *   Format-Zerstoerern blieben je Buckets unter 0,3 MB uebrig, gesunde
+ *   Buckets haben einige MB. (2) Jny-Abschnitte in conns tragen jetzt 'dir'
+ *   (Kopfziel der Fahrt aus dem tprof-Profil, dfr_trip_headsign), damit die
+ *   App "Richtung ..." anzeigen kann; kein Format-, kein Rebuild-Aufwand,
+ *   deploy reicht. Keine Index-/Eventformat-Aenderung.
  * v0.2.8 ZWEIFTE Wurzelursache des leeren Index (diag v0.2.7: dprof/tprof
  *   gefuellt, Querys trotzdem walk-only/noconns in unter 200 ms; tprof
  *   cnt:1, dprof ueberall seq:0, tidx_000 447656 B trotz nur 3,2 Mio Trips):
@@ -151,7 +161,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.8';
+const DFR_V          = 'delfirouting 0.2.9';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -1561,6 +1571,25 @@ function dfr_trip_label(DfrIdx $ix, int $tripNr): string {
     return (string)$raw;
 }
 
+/** v0.2.9: Kopfziel einer Fahrt (letzte Haltestelle aus dem tprof-Profil) als
+ *  Richtungsangabe fuer die App-Darstellung ("Richtung ..."); leer, wenn das
+ *  Profil (noch) nicht lesbar ist. Cache je TripNr, da mehrere Conns an
+ *  derselben Fahrt haengen koennen. */
+function dfr_trip_headsign(DfrIdx $ix, int $tripNr): string {
+    static $hsCache = [];
+    if (!array_key_exists($tripNr, $hsCache)) {
+        $hs = '';
+        $d = dfr_tprof($ix, $tripNr);
+        if ($d !== null && $d[0] > 0) {
+            $u = unpack('vseq/vdep/varr/Vstop',
+                substr($d[1], ($d[0] - 1) * 10, 10));
+            if ($u !== false) $hs = dfr_stop_name($ix, (int)$u['stop']);
+        }
+        $hsCache[$tripNr] = $hs;
+    }
+    return $hsCache[$tripNr];
+}
+
 /** Zubringerstops um einen Punkt (3x3 Grid-Zellen, gecacht, naechste zuerst). */
 function dfr_near_stops(DfrIdx $ix, float $lat, float $lon, int $radius, int $maxN): array {
     $key = sprintf('%.5f|%.5f|%d', $lat, $lon, $radius);
@@ -1870,6 +1899,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                 $legs = array_merge([[
                     'k' => 'jny',
                     'line' => dfr_trip_label($ix, (int)$pp[0]),
+                    'dir' => dfr_trip_headsign($ix, (int)$pp[0]),   /* v0.2.9: Richtung = Kopfziel der Fahrt */
                     'from' => dfr_stop_name($ix, (int)$pp[2]),
                     'to' => dfr_stop_name($ix, $cur),
                     'dep' => dfr_min2hm((int)$pp[3]),
@@ -1976,6 +2006,15 @@ function dfr_probe(): array {
             $idx['trips_mb'] = dfr_mb($ix->dir . '/trips.tsv');
         }
         if (is_file($ix->dir . '/tripday.bin')) $idx['tripday_mb'] = dfr_mb($ix->dir . '/tripday.bin');
+        /* v0.2.9: Profil-Gesundheit (Bucket 000): Ein intakter Index hat je
+         * nach Verkehrsdichte einige MB je dprof/tprof-Bucket; nach den
+         * Format-Zerstoerern (v0.2.6/v0.2.8) kollabierten die Profile auf
+         * knapp unter 0,3 MB. Die App gibt ihr delfirouting-Backend erst
+         * frei, wenn tprof_mb >= 1 ist (und done + valid_until stimmen). */
+        if (is_file($ix->dir . '/dprof_000.bin'))
+            $idx['dprof_mb'] = dfr_mb($ix->dir . '/dprof_000.bin');
+        if (is_file($ix->dir . '/tprof_000.bin'))
+            $idx['tprof_mb'] = dfr_mb($ix->dir . '/tprof_000.bin');
     }
     $dz = null;
     $dz2 = dfr_dodp_find();
