@@ -468,11 +468,24 @@
   .rtxm.ok { color: #4ade80; }
   .rtxm.soon { color: #fbbf24; }
   .rtxm.missed { color: #f87171; }
-  .rtgo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-    padding: 2px 2px 2px 30px; font-size: .82rem; color: #94a3b8; }
-  .rtgo .tdelay.up { color: #f87171; }
-  .rtgo .tdelay.down { color: #7dd3fc; }
-  .rtgo .tdelay.ok { color: #4ade80; }
+  /* v1.6.5: Zeilen des Gesamtfahrtsverlaufs einer Route im Spalten-Schema des
+     Einzelfahrtsverlaufs (Gep. | Aktuell | Abweichung | Countdown | Name) ohne
+     eigene Kreise auf dem Strahl: Die Strahl-Markierungen bleiben wie bisher
+     (blauer Abfahrts- und Anastations-Strich, Umstiegs-Anschluss, Ziel-Ring),
+     die Kreise kommen weiterhin nur aus den aufgeklappten Stations-Verlaeufen. */
+  .rtrail .rtprow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    padding: 4px 2px 4px 30px; font-size: .95rem; }
+  .rtrail .rtprow .tgep { flex-shrink: 0; min-width: 44px; font-size: .85rem; color: #94a3b8; }
+  .rtrail .rtprow .takt { flex-shrink: 0; min-width: 48px; font-weight: 700; }
+  .rtrail .rtprow .tdelay { flex-shrink: 0; font-size: .75rem; font-weight: 600; min-width: 38px; }
+  .rtrail .rtprow[data-rtsec] { cursor: pointer; }
+  .rtrail .rtprow .rtnamev { min-width: 0; flex: 1 1 90px; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  .rtrail .rtprow .rtnsub { font-size: .72rem; color: #64748b; }
+  .rtrail .rtlegend { display: flex; gap: 8px; padding: 0 2px 2px 30px; font-size: .7rem;
+    color: #64748b; text-transform: uppercase; letter-spacing: .04em; }
+  .rtrail .rtlegend .lgep { min-width: 44px; }
+  .rtrail .rtlegend .lakt { min-width: 48px; font-weight: 600; }
   .rtline .rtpa { white-space: nowrap; }
   .routesec.rtstale { color: #f87171; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rtsec { cursor: pointer; }
@@ -566,7 +579,8 @@
     border-radius: 2px; background: #ec4899; z-index: 3; }
   /* v1.5.6: Bus-/Bahn-Abschnitte im Strang: Die Abfahrts-Station traegt einen
      kurzen BLAUEN Querstrich auf dem Strahl (dort sass frueher der lila Knopf),
-     die Anastation einen HELLROTEN; dazwischen laeuft die Abschnitts-Leiste in
+     die Anastation seit v1.6.5 ebenfalls einen BLAUEN (vorher hellrot); die
+     Abschnitts-Leiste laeuft dazwischen in
      Dunkelblau, und der GPS-Fortschritt fuellt sie stationssynchron in
      Hellblau auf: In aufgeklappten Verlaeufen erreicht der Strahl jeden
      Stationskreis genau dann, wenn die Fahrt den Halt geometrisch passiert,
@@ -579,7 +593,7 @@
   .rtrail .rtdep { position: absolute; left: 10px; top: 9px; width: 11px; height: 3px;
     border-radius: 2px; background: #38bdf8; z-index: 3; }
   .rtrail .rtal { position: absolute; left: 10px; bottom: 9px; width: 11px; height: 3px;
-    border-radius: 2px; background: #f87171; z-index: 3; }
+    border-radius: 2px; background: #38bdf8; z-index: 3; }
   .trip .trow.rtpass::after { background: #7dd3fc; border-color: #7dd3fc;
     box-shadow: 0 0 0 3px rgba(125, 211, 252, .35); }
   /* Eingebetteter Verlauf: Der Trip-Block liegt INNERHALB des Abschnitts (zwischen
@@ -10342,17 +10356,9 @@ function routeCdChipHTML(absMs, preTxt, postTxt, missTxt) {
   if (dMs > -45000) return '<span class="rtxm soon">' + (missTxt || "jetzt") + "</span>";
   return '<span class="rtxm missed">' + (missTxt || ("vor " + Math.round(-dMs / 60000) + " min.")) + "</span>";
 }
-// v1.6.4: kursiver Raum-Zeit-Chip im ZUGEKLAPPTEN Bus-/Bahn-Abschnitt der
-// gewaehlten Route: beobachtete Verspätung der Fahrt (Soll-/Ist-Zeiten der
-// Stationsliste, GPS-ETA bleibt dem aufgeklappten Verlauf vorbehalten) in der
-// Watch-Farbskala (gruen puenktlich, gelb leicht verspaetet, rot stark, blau zu
-// frueh). Feeds die Raum-Zeit-Karte wie der aufgeklappte Verlauf.
-function routeSecSztChip(sec) {
-  if (!sec || sec.kind !== "jny" || !sec.stops || !sec.stops.length) return "";
-  const w = sztSecWatch(sec, sec.stops, false, null, null);
-  if (!w || w.delay == null) return "";
-  return " " + sztWatchChipHTML(w.delay);
-}
+// (v1.6.5: Der Raum-Zeit-Chip je Bus-/Bahn-Zeile entsteht jetzt direkt in
+// rtTimeCols aus der selben sztSecWatch-Beobachtung; die ehemals separate
+// Chip-Funktion ist entfallen.)
 // ---------- Pinker Fortschritt ueber die gewaehlte Route (Gesamt-Punkt) ----------
 // Fortschritt in einem Zubringer-Abschnitt (Fussweg/Rad): "nach echtem Weg" –
 // ab dem Einstieg am Startpunkt werden die tatsaechlich zurueckgelegten
@@ -10627,11 +10633,11 @@ function paintRouteSpine(wrapEl, baseCol) {
       ringY = next.offsetTop + 10;
     }
     let b1e = b1;
-    if (inner && next && next.classList.contains("rtstop")) {
+    if (inner && next && (next.classList.contains("rtstop") || next.classList.contains("rtalight"))) {   // v1.6.5: Ausstiegs-Zeile statt rtstop
       const rr = next.getBoundingClientRect();
       b1e = Math.max(b1, rr.top - wrapTop + rr.height / 2);   // Anastation: blaue Zone bis zu ihrem Kreis
     }
-    zones.push({ up: railEnd, b0: b0, b1: b1e, dn: ringY });
+    zones.push({ up: railEnd, b0: b0, b1: b1e, dn: ringY, inner: inner });
     if (ringY == null) bottom = Math.max(bottom, b1e);
   });
   const H = bottom - top;
@@ -10649,7 +10655,8 @@ function paintRouteSpine(wrapEl, baseCol) {
     push(P, z.up);       // pinke Basis bis zum Ende der pinken Leiste
     push(B, z.b0);       // Verbindungs-Strecke: gradueller Farbverlauf pink -> blau
     push(B, z.b1);       // blaue Zone durch die Stationen-Zeilen des Verlaufs
-    if (z.dn != null) push(P, z.dn);   // und zurueck: blau -> pink bis zum Ring des Folge-Abschnitts
+    if (z.inner) push(P, z.b1 + 2);   // v1.6.5: nach dem blauen Anastations-Strich direkt dunkelpink weiter (kein Fade, keine Luecke)
+    else if (z.dn != null) push(P, z.dn);   // und zurueck: blau -> pink bis zum Ring des Folge-Abschnitts
   }
   push(P, H);
   spine.style.top = top + "px";
@@ -10804,6 +10811,112 @@ function rtJnyHTML(sec, tail, attrs, pre, cls, stopsHTML, lineAttrs) {   // Bus-
     '<div class="rtstop">an ' + escapeHtml(sec.to || "?") + " " + escapeHtml(sec.arr || "–") +
     rtDelaySpan(sec.arrDelay) + "</div>" +
     "</div>";
+}
+// v1.6.5: Spalten "Gep." / "Aktuell" / Abweichung einer Zeile im Gesamtfahrts-
+// verlauf der gewaehlten Route, gleiches Bild wie der Fahrtverlauf einer
+// einzelnen Linie: geplante Uhrzeit, daneben die aktuelle Uhrzeit (Echtzeit;
+// ohne Echtzeit der Fahrplan, als kursive blendende ≈-Zeit die Raum-Zeit-
+// Prognose, sobald die App die Fahrt beobachtet), dahinter der Abweichungs-
+// Chip (+ rot, zu frueh blau, puenktlich gruen; die Raum-Zeit-Variante gelb
+// ab 1, rot ab 5 Minuten). isDep = Abfahrts- statt Ankunfts-Seite des Abschnitts.
+function rtTimeCols(sec, isDep, w) {
+  const P = isDep ? (sec.depP || sec.dep) : (sec.arrP || sec.arr);
+  const R = isDep ? sec.dep : sec.arr;
+  const dFix = isDep ? sec.depDelay : sec.arrDelay;
+  const rt = P != null && R != null && R !== P;
+  let akt = escapeHtml(rt ? R : (P || "–"));
+  let delay = "";
+  if (rt)
+    delay = rtDelaySpan(dFix != null ? dFix : sztWrapDiff(hhmmToMin(R), hhmmToMin(P)));
+  else if (dFix != null && dFix !== 0)
+    delay = rtDelaySpan(dFix);
+  else if (P && w && w.delay != null) {
+    const pMin = hhmmToMin(P);
+    if (pMin != null) {
+      const pet = pMin + w.delay;
+      if (sztWrapDiff(pet, sztNowMin()) >= -1) {
+        delay = " " + sztWatchChipHTML(w.delay);
+        if (w.delay !== 0) akt = sztBlend(P, "≈" + sztClockOf(pet));
+      }
+    }
+  }
+  return { gep: escapeHtml(P || "–"), akt: akt, delay: delay };
+}
+// v1.6.5: Bus-/Bahn-Abschnitt der gewaehlten Route im Zeilen-Schema des
+// Einzelfahrtsverlaufs: Einstiegs-Zeile (klappt den Haltestellen-Verlauf auf
+// und zu) und Ausstiegs-Zeile, dazwischen schiebt sich der bekannte blaue
+// Stations-Verlauf; der letzte Abschnitt traegt den "da in"-Countdown am Ziel.
+function rtLegSecHTML(rc, c, sec, si, lastLeg, legCls, rail, stopsHTML) {
+  const open = !!rc.secOpen[si];
+  const w = sztSecWatch(sec, sec.stops, false, null, null);   // Raum-Zeit-Beobachtung wie beim zugeklappten Chip (v1.6.4)
+  const depC = rtTimeCols(sec, true, w);
+  const arrC = rtTimeCols(sec, false, w);
+  // Countdown der Einstiegs-Zeile = Moment der Abfahrt (erster Abschnitt:
+  // echter Aufbruch inklusive Zubringer aus der Karte, spätere: Echtzeit-Abfahrt)
+  const boardMs = si === 0 && c.depAbsMs != null ? c.depAbsMs : hhmmAbsMs(sec.dep);
+  const depCd = routeCdChipHTML(boardMs, "los in ", " min", null);
+  const arrCd = lastLeg ? routeCdChipHTML(c.arrAbsMs != null ? c.arrAbsMs : hhmmAbsMs(sec.arr || c.arr), "da in ", " min", "angekommen") : "";
+  return '<div class="routesec rtjny' + (legCls ? " " + legCls : "") + '" data-rsi="' + si + '">' + rail +
+    '<div class="rtprow' + (open ? " rton" : "") + '" data-rtsec="' + si + '" title="' +
+      (open ? "Fahrtverlauf dieses Abschnitts einklappen" : "Fahrtverlauf dieses Abschnitts aufklappen (Antippen; Haltestellen zwischen Einstiegs- und Ausstiegs-Zeile)") + '">' +
+      '<span class="tgep" title="Geplante Abfahrt an der Einstiegshaltestelle (Soll-Fahrplan)">' + depC.gep + '</span>' +
+      '<span class="takt" title="Aktuelle Abfahrt (Echtzeit; ohne Echtzeit Fahrplan, kursiv ≈ = Raum-Zeit-Prognose aus dem beobachteten Verlauf)">' + depC.akt + '</span>' +
+      depC.delay + depCd +
+      '<span class="rtnamev"><span class="rtbadge">' + escapeHtml(sec.line || "?") + '</span> Richtung ' + escapeHtml(sec.dir || "?") +
+        ' <span class="rtnsub">· ab ' + escapeHtml(sec.from || "?") + '</span></span>' +
+      bikeSecBtnHTML(sec, si) +
+    '</div>' +
+    (stopsHTML || "") +
+    '<div class="rtprow rtalight" title="Ankunft am Ausstieg' + (lastLeg ? " = Ziel" : "") + '">' +
+      '<span class="tgep" title="Geplante Ankunft an der Ausstiegshaltestelle">' + arrC.gep + '</span>' +
+      '<span class="takt" title="Aktuelle Ankunft (Echtzeit; ohne Echtzeit Fahrplan, kursiv ≈ = Raum-Zeit-Prognose)">' + arrC.akt + '</span>' +
+      arrC.delay + arrCd +
+      '<span class="rtnamev">· an ' + escapeHtml(sec.to || "?") +
+        (lastLeg ? ' <span class="rtnsub">🏁 Ziel</span>' : "") + '</span>' +
+    '</div></div>';
+}
+// v1.6.5: Zubringer-/Weg-Abschnitt (Fuß, Rad, Roller) im selben Zeilen-Schema:
+// Gep./Aktuell = Beginn des Wegs (zu Hause inklusive Zubringer-Verrechnung,
+// spaeter am Umstieg: Ankunft des vorherigen Fahr-Abschnitts), Countdown =
+// Moment des Losgehens (naechste Echtzeit-Abfahrt minus Wegzeit, am Ziel-
+// Zubringer der letzte Fahrzeug-Ausstieg), Name = Wegart, Dauer, Strecke.
+function rtWalkSecHTML(c, sec, si, lastLeg, rail) {
+  let tP = null, tR = null, cdMs = null, prevJny = null;
+  if (si === 0) {
+    tP = c.depP || c.dep;
+    tR = (c.depP != null && c.dep != null && c.dep !== c.depP) ? c.dep : null;
+    cdMs = c.depAbsMs;
+  } else {
+    for (let j = si - 1; j >= 0; j--) if (c.secs[j].kind === "jny") { prevJny = c.secs[j]; break; }
+    if (prevJny) {
+      tP = prevJny.arrP || prevJny.arr;
+      tR = (prevJny.arrP != null && prevJny.arr != null && prevJny.arr !== prevJny.arrP) ? prevJny.arr : null;
+    }
+    let nextJny = null, waitMin = sec.mins || 0;
+    for (let j = si + 1; j < c.secs.length; j++) {
+      const s2 = c.secs[j];
+      if (s2.kind === "jny") { nextJny = s2; break; }
+      waitMin += s2.mins || 0;   // Folgewege bis zum naechsten Zustieg frisst dieselbe Aufbruchs-Restzeit
+    }
+    if (nextJny) {
+      const bMs = hhmmAbsMs(nextJny.dep);
+      cdMs = bMs != null ? bMs - waitMin * 60000 : null;
+    } else if (prevJny) cdMs = hhmmAbsMs(prevJny.arr);   // Ziel-Zubringer: los beim Ausstieg aus dem letzten Fahrzeug
+  }
+  const nm = (sec.mins != null ? sec.mins : "?") + " min" +
+    (sec.distM != null ? " · " + escapeHtml(formatDist(sec.distM)) : "") +
+    ((sec.from || "?") !== "?" || (sec.to || "?") !== "?" ?
+      " · " + escapeHtml(sec.from || "Start") + " → " + escapeHtml(sec.to || "Ziel") : "");
+  const tt = (sec.sfx ? escapeHtml(sec.sfx) + " · " : "") +
+    "Weg-Abschnitt ohne Fahrplan-Uhr: Gep./Aktuell = Beginn des Wegs, Countdown = Moment des Aufbruchs";
+  return '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail +
+    '<div class="rtprow" title="' + tt + '">' +
+    '<span class="tgep">' + escapeHtml(tP || "–") + '</span>' +
+    '<span class="takt">' + escapeHtml(tR || tP || "–") + '</span>' +
+    routeCdChipHTML(cdMs, "los in ", " min", "Aufbruch verpasst") +
+    '<span class="rtnamev">' + indIcon(sec.kind) + " " + nm + '</span>' +
+    bikeSecBtnHTML(sec, si) +
+    '</div></div>';
 }
 // Expand je Abschnitt: GANZER Lauf der Linie (Start- bis Endhaltestelle) ueber
 // JourneyDetails nachladen. Mappt auf dieselbe Stop-Form wie sec.stops, damit
@@ -12566,7 +12679,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart oder Neuladen wieder da, die MM-Reiter (🚲 Micromobility) samt ihrer übernommenen Routen genau wie Stations- und Route-Reiter; ein Tipp auf ✕ schließt einen Reiter endgültig.");
   h += sec("🧭 Zweig 2: Routing – wie komme ich dahin?");
-  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit, Produktfilter (alle/Bus/Schiene) und - sobald Start und Ziel gesetzt sind - der Router der Verbindungssuche (🤖 Auto-Qualitätskette oder ein bestimmter, Details unter „Router-Wahl“). Verbindungen stammen seit v1.5.5 je nach Wahl und Region aus dem passenden Router: Start UND Ziel in Berlin/Brandenburg fragt der VBB-Router, alles Weitere NAH.SH; scheitert NAH.SH, weil ein Endpunkt außerhalb Schleswig-Holsteins liegt, springt die Suche auf bundesweites Zug-Routing zwischen Bahnhöfen. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.6.1 sortieren vier einzelne Knöpfe die Treffer der Verbindungssuche sofort und ohne neue Suche: ⭐ Beste (Standard: heuristische Bewertung, die früheste Ankunft, kurze Fahrzeit, kurze Fuß-, Rad- und Roller-Wege und wenige Umstiege gemeinsam bewertet), ⏱ Ankunft (wer zuerst am Ziel ist, steht oben), 🚀 Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Verbindungen, die dieselbe Fahrt nur mit anderem Ausstieg oder anderem Fuß-, Rad- oder Roller-Weg nutzen und fast gleichzeitig ankommen (± 1 Minute), werden dabei als EINE Verbindung zusammengefasst: Oben stehen damit wirklich unterschiedliche Verbindungen, und unter einer zusammengefassten Verbindung klappt ein Knopf („weitere ähnliche Varianten“) die übrigen Varianten der gleichen Fahrt auf, damit die App weiterhin bis zu 10 Treffer sammelt und anzeigt. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt."); h += P("<b>CitySurfers LIVE – Regionale Router der Verbindungssuche (v1.5.5):</b> Der NAH.SH-HAFAS beantwortet nur Anfragen mit Start UND Ziel im eigenen Gebiet; sobald EIN Endpunkt eine Adresse oder Koordinate außerhalb Schleswig-Holsteins ist, antwortet er H9220 (außerhalb des Provider-Gebiets). Deshalb fragt die Verbindungssuche jetzt zuerst den VBB-Router, wenn Start und Ziel beide in Berlin/Brandenburg liegen: derselbe offene Dienst (v6.vbb.transport.rest), der auch die Berliner Live-Abfahrten liefert, mit echten Fußwegen, Echtzeit-Verspätungen, Bahngleisen, Haltestellen je Abschnitt und der VBB-LED oben rechts; ist die VBB-Suche leer oder gestört, läuft automatisch die bisherige NAH.SH-Kette weiter. Liegt Start oder Ziel außerhalb Schleswig-Holsteins und Berlin/Brandenburg, heilt die App den NAH.SH-Fehler H9220 selbst: Beide Endpunkte werden auf die nächstgelegenen Bahnhöfe gelegt, und die Verbindungssuche liefert die Zug-Verbindung zwischen ihnen (ÖPNV am Ort kennt NAH.SH außerhalb des eigenen Gebiets nicht); ein Hinweis unter der Suche nennt die gewählten Bahnhöfe. Die Ankunftssuche („Ankunft“ statt Abfahrt) kann der VBB-Dienst technisch nicht rückwärts – dort nähert die App an, indem sie in mehreren Abfrage-Runden die letzten Verbindungen vor der gewählten Ankunftszeit sammelt (Hinweis an der Suche, Genauigkeit circa eine Verbindung); bei NAH.SH bleibt die echte Ankunftssuche unverändert. Bahnhof-Favoriten und Fern-Stationen funktionieren in beiden Fällen wie gehabt."); h += P("<b>CitySurfers LIVE – Router-Wahl im Routing-Dialog (v1.6.0):</b> Sobald Start UND Ziel gesetzt sind, zeigt der Route-Dialog die Zeile <b>Router</b> mit wählbaren Chips: <b>🤖 Auto</b> (Standard, immer ausgewählt), <b>NAH.SH</b>, <b>VBB</b>, <b>delfirouting</b> und <b>🚆 Bahnhöfe</b>. Router, die die gesetzten Endpunkte nicht bedienen, sind grau: NAH.SH braucht beide Endpunkte im Nah.sh-Gebiet, VBB beide in Berlin/Brandenburg - ein Tipp auf einen grauen Chip nennt den Grund als Hinweis unter der Router-Zeile. <b>Auto</b> bleibt immer aktiv und nimmt die qualitativ beste Kette mit Echtzeit bevorzugt: erst VBB (nur Berlin/Brandenburg), sonst NAH.SH; meldet NAH.SH H9220 (Endpunkt außerhalb), folgt der eigene Router <b>delfirouting</b> (delfirouting.php auf pixcaelium: deutschlandweites Tür-zu-Tür-Routing mit ÖPNV aus dem DELFI-Soll-Fahrplan, Solldaten ohne Echtzeit), und erst zuletzt die bekannte Bahnhof-Heilung. Der delfirouting-Chip wird erst wählbar, sobald der Server einen fertigen Index mit gültigen Fahrtprofilen meldet (probe: Index fertig, gültig bis zumindest heute, genug Profil-Daten) - und nur bei Abfahrtssuche (kein Ankunft-Modus), heutigem Datum, allen Verkehrsmitteln und zu Fuß; ein Tipp auf den grauen Chip nennt den fehlenden Grund. Der Server-Status wird bis zu 5 Minuten gecacht, die Prüfung zählt keine Anfrage. Bahnhöfe ruft die bundesweite Zug-Verbindung zwischen den nächstgelegenen Bahnhöfen direkt auf, ohne Umweg über HAFAS-Fehler. Ein ausdrücklich gewählter Router wechselt nie heimlich: Kann er die gesetzten Endpunkte nicht bedienen, erscheint eine Klartext-Meldung statt stiller Ersatzsuche (bei Auto läuft die Kette wie beschrieben weiter). Die Wahl gilt pro Route-Reiter und bleibt beim Umplanen (✎) erhalten; nur ungültig gewordene Auswahl fällt still auf Auto zurück. delfirouting-Anfragen laufen über apiFetch und zählen an der blauen DELFI-LED mit (Solldaten, daher ohne Verspätungs-Chips an den Fahrten). Seit v1.6.3 zeigt jede delfirouting-Fahrt wieder Linie und Richtung (Kopfziel der Fahrt): Der Abschnitt-Knopf klappt den Soll-Fahrtverlauf des eigenen Abschnitts auf, und der ⤢-Knopf den ganzen Lauf der Fahrt über den Server-Abruf ?trip= (Solldaten, 5 Minuten gecacht); Verbindungen mit Umstiegs-Fußwegen erscheinen jetzt ebenfalls, ein Server-Parse-Bug hatte sie zuvor unterschlagen.");  h += P("<b>CitySurfers LIVE – Aufbruchzeit, Countdown-Chips und Gep./Aktuell (v1.6.4):</b> Die Abfahrtszeit der Verbindungskarten ist jetzt die echte <b>Aufbruchzeit</b>: Snappt der Router Start oder Ziel einer Adresse auf die nächste Haltestelle, ergänzt die App den fehlenden Fuß-, Rad- oder Roller-Zubringer selbst (Luftlinie × 1,3, Tempo des gewählten Zubringer-Modus, Leihfahrrad inklusive 2 Minuten Holen und Abstellen) und verlegt Abfahrtszeit und Countdown entsprechend nach vorne; wäre der Zubringer aber länger als 12 Gehminuten, hat der Router bewusst auf Bahnhof oder Station gesnappt und der Weg bleibt dir selbst überlassen. Überall, wo gezählt wird, zeigt der Countdown-Chip, wie lange du noch Zeit hast: in der Verbindungssuche hinter den Eckdaten („16:20 – 16:39 – 19 min – in 7 min“), im Titel jedes Routen-Unter-Reiters und im Kopf der gewählten Route („los in 7 min“), farbig wie der Countdown der Stationslisten – grün im Normalfall, gelb ab 3 Minuten Restzeit und dann als Minuten:Sekunden-Angabe sekündlich herunterzählend (etwa „los in 2:54 min“, so genau wie es Fahrplan- und Echtzeitdaten eben sind), rot, sobald die Zeit verstrichen ist. Im Verlauf der gewählten Route stehen dieselben Marker durchgehend am Strang: 🚶 am Aufbruch, ↳ an jedem Umsteigepunkt (Echtzeit-Abfahrt des Anschlusses minus Zubringerzeit) und 🏁 am Ziel („da in X min“ samt Verspätungs-Chip der letzten Fahrt). Zugeklappt zeigt die Zeile jeder Bus- und Bahn-Fahrt zusätzlich zur Richtung die <b>Gep.</b>-Abfahrt, bei Echtzeit zusätzlich die <b>Aktuell</b>-Abfahrt samt Verspätungs-Chip (+ rot verspätet, blau zu früh, grün pünktlich) und dahinter kursiv die Raum-Zeit-Voraussage aus dem beobachteten Fahrtverlauf (grün/gelb/rot/blau) – damit entspricht der zugeklappte Zustand dem aufgeklappten Verlauf. Damit keine Zeit mehr vergeudet wird, blendet die Verbindungssuche im Abfahrtsmodus Karten aus, deren Aufbruch inklusive Zubringer bereits verpasst ist; sind ALLE gefundenen Verbindungen betroffen, sagt eine rote Zeile Bescheid. Im Ankunftsmodus bleiben sämtliche Treffer stehen.")
+  h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit, Produktfilter (alle/Bus/Schiene) und - sobald Start und Ziel gesetzt sind - der Router der Verbindungssuche (🤖 Auto-Qualitätskette oder ein bestimmter, Details unter „Router-Wahl“). Verbindungen stammen seit v1.5.5 je nach Wahl und Region aus dem passenden Router: Start UND Ziel in Berlin/Brandenburg fragt der VBB-Router, alles Weitere NAH.SH; scheitert NAH.SH, weil ein Endpunkt außerhalb Schleswig-Holsteins liegt, springt die Suche auf bundesweites Zug-Routing zwischen Bahnhöfen. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.6.1 sortieren vier einzelne Knöpfe die Treffer der Verbindungssuche sofort und ohne neue Suche: ⭐ Beste (Standard: heuristische Bewertung, die früheste Ankunft, kurze Fahrzeit, kurze Fuß-, Rad- und Roller-Wege und wenige Umstiege gemeinsam bewertet), ⏱ Ankunft (wer zuerst am Ziel ist, steht oben), 🚀 Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Verbindungen, die dieselbe Fahrt nur mit anderem Ausstieg oder anderem Fuß-, Rad- oder Roller-Weg nutzen und fast gleichzeitig ankommen (± 1 Minute), werden dabei als EINE Verbindung zusammengefasst: Oben stehen damit wirklich unterschiedliche Verbindungen, und unter einer zusammengefassten Verbindung klappt ein Knopf („weitere ähnliche Varianten“) die übrigen Varianten der gleichen Fahrt auf, damit die App weiterhin bis zu 10 Treffer sammelt und anzeigt. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt."); h += P("<b>CitySurfers LIVE – Regionale Router der Verbindungssuche (v1.5.5):</b> Der NAH.SH-HAFAS beantwortet nur Anfragen mit Start UND Ziel im eigenen Gebiet; sobald EIN Endpunkt eine Adresse oder Koordinate außerhalb Schleswig-Holsteins ist, antwortet er H9220 (außerhalb des Provider-Gebiets). Deshalb fragt die Verbindungssuche jetzt zuerst den VBB-Router, wenn Start und Ziel beide in Berlin/Brandenburg liegen: derselbe offene Dienst (v6.vbb.transport.rest), der auch die Berliner Live-Abfahrten liefert, mit echten Fußwegen, Echtzeit-Verspätungen, Bahngleisen, Haltestellen je Abschnitt und der VBB-LED oben rechts; ist die VBB-Suche leer oder gestört, läuft automatisch die bisherige NAH.SH-Kette weiter. Liegt Start oder Ziel außerhalb Schleswig-Holsteins und Berlin/Brandenburg, heilt die App den NAH.SH-Fehler H9220 selbst: Beide Endpunkte werden auf die nächstgelegenen Bahnhöfe gelegt, und die Verbindungssuche liefert die Zug-Verbindung zwischen ihnen (ÖPNV am Ort kennt NAH.SH außerhalb des eigenen Gebiets nicht); ein Hinweis unter der Suche nennt die gewählten Bahnhöfe. Die Ankunftssuche („Ankunft“ statt Abfahrt) kann der VBB-Dienst technisch nicht rückwärts – dort nähert die App an, indem sie in mehreren Abfrage-Runden die letzten Verbindungen vor der gewählten Ankunftszeit sammelt (Hinweis an der Suche, Genauigkeit circa eine Verbindung); bei NAH.SH bleibt die echte Ankunftssuche unverändert. Bahnhof-Favoriten und Fern-Stationen funktionieren in beiden Fällen wie gehabt."); h += P("<b>CitySurfers LIVE – Router-Wahl im Routing-Dialog (v1.6.0):</b> Sobald Start UND Ziel gesetzt sind, zeigt der Route-Dialog die Zeile <b>Router</b> mit wählbaren Chips: <b>🤖 Auto</b> (Standard, immer ausgewählt), <b>NAH.SH</b>, <b>VBB</b>, <b>delfirouting</b> und <b>🚆 Bahnhöfe</b>. Router, die die gesetzten Endpunkte nicht bedienen, sind grau: NAH.SH braucht beide Endpunkte im Nah.sh-Gebiet, VBB beide in Berlin/Brandenburg - ein Tipp auf einen grauen Chip nennt den Grund als Hinweis unter der Router-Zeile. <b>Auto</b> bleibt immer aktiv und nimmt die qualitativ beste Kette mit Echtzeit bevorzugt: erst VBB (nur Berlin/Brandenburg), sonst NAH.SH; meldet NAH.SH H9220 (Endpunkt außerhalb), folgt der eigene Router <b>delfirouting</b> (delfirouting.php auf pixcaelium: deutschlandweites Tür-zu-Tür-Routing mit ÖPNV aus dem DELFI-Soll-Fahrplan, Solldaten ohne Echtzeit), und erst zuletzt die bekannte Bahnhof-Heilung. Der delfirouting-Chip wird erst wählbar, sobald der Server einen fertigen Index mit gültigen Fahrtprofilen meldet (probe: Index fertig, gültig bis zumindest heute, genug Profil-Daten) - und nur bei Abfahrtssuche (kein Ankunft-Modus), heutigem Datum, allen Verkehrsmitteln und zu Fuß; ein Tipp auf den grauen Chip nennt den fehlenden Grund. Der Server-Status wird bis zu 5 Minuten gecacht, die Prüfung zählt keine Anfrage. Bahnhöfe ruft die bundesweite Zug-Verbindung zwischen den nächstgelegenen Bahnhöfen direkt auf, ohne Umweg über HAFAS-Fehler. Ein ausdrücklich gewählter Router wechselt nie heimlich: Kann er die gesetzten Endpunkte nicht bedienen, erscheint eine Klartext-Meldung statt stiller Ersatzsuche (bei Auto läuft die Kette wie beschrieben weiter). Die Wahl gilt pro Route-Reiter und bleibt beim Umplanen (✎) erhalten; nur ungültig gewordene Auswahl fällt still auf Auto zurück. delfirouting-Anfragen laufen über apiFetch und zählen an der blauen DELFI-LED mit (Solldaten, daher ohne Verspätungs-Chips an den Fahrten). Seit v1.6.3 zeigt jede delfirouting-Fahrt wieder Linie und Richtung (Kopfziel der Fahrt): Der Abschnitt-Knopf klappt den Soll-Fahrtverlauf des eigenen Abschnitts auf, und der ⤢-Knopf den ganzen Lauf der Fahrt über den Server-Abruf ?trip= (Solldaten, 5 Minuten gecacht); Verbindungen mit Umstiegs-Fußwegen erscheinen jetzt ebenfalls, ein Server-Parse-Bug hatte sie zuvor unterschlagen.");  h += P("<b>CitySurfers LIVE – Aufbruchzeit, Countdown-Chips und Gep./Aktuell (v1.6.4):</b> Die Abfahrtszeit der Verbindungskarten ist jetzt die echte <b>Aufbruchzeit</b>: Snappt der Router Start oder Ziel einer Adresse auf die nächste Haltestelle, ergänzt die App den fehlenden Fuß-, Rad- oder Roller-Zubringer selbst (Luftlinie × 1,3, Tempo des gewählten Zubringer-Modus, Leihfahrrad inklusive 2 Minuten Holen und Abstellen) und verlegt Abfahrtszeit und Countdown entsprechend nach vorne; wäre der Zubringer aber länger als 12 Gehminuten, hat der Router bewusst auf Bahnhof oder Station gesnappt und der Weg bleibt dir selbst überlassen. Überall, wo gezählt wird, zeigt der Countdown-Chip, wie lange du noch Zeit hast: in der Verbindungssuche hinter den Eckdaten („16:20 – 16:39 – 19 min – in 7 min“), im Titel jedes Routen-Unter-Reiters und im Kopf der gewählten Route („los in 7 min“), farbig wie der Countdown der Stationslisten – grün im Normalfall, gelb ab 3 Minuten Restzeit und dann als Minuten:Sekunden-Angabe sekündlich herunterzählend (etwa „los in 2:54 min“, so genau wie es Fahrplan- und Echtzeitdaten eben sind), rot, sobald die Zeit verstrichen ist. Im Verlauf der gewählten Route stehen dieselben Marker durchgehend am Strang: 🚶 am Aufbruch, ↳ an jedem Umsteigepunkt (Echtzeit-Abfahrt des Anschlusses minus Zubringerzeit) und 🏁 am Ziel („da in X min“ samt Verspätungs-Chip der letzten Fahrt). Zugeklappt zeigt die Zeile jeder Bus- und Bahn-Fahrt zusätzlich zur Richtung die <b>Gep.</b>-Abfahrt, bei Echtzeit zusätzlich die <b>Aktuell</b>-Abfahrt samt Verspätungs-Chip (+ rot verspätet, blau zu früh, grün pünktlich) und dahinter kursiv die Raum-Zeit-Voraussage aus dem beobachteten Fahrtverlauf (grün/gelb/rot/blau) – damit entspricht der zugeklappte Zustand dem aufgeklappten Verlauf. Damit keine Zeit mehr vergeudet wird, blendet die Verbindungssuche im Abfahrtsmodus Karten aus, deren Aufbruch inklusive Zubringer bereits verpasst ist; sind ALLE gefundenen Verbindungen betroffen, sagt eine rote Zeile Bescheid. Im Ankunftsmodus bleiben sämtliche Treffer stehen."); h += P("<b>CitySurfers LIVE – Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (v1.6.5):</b> Der Gesamt-Verlauf einer gewählten Route zeigt jetzt durchgehend dieselben Spalten wie der Fahrtverlauf einer einzelnen Linie: <b>Gep.</b> (Fahrplan), daneben <b>Aktuell</b> (Echtzeit, ohne Echtzeit der Fahrplan bzw. kursiv die Raum-Zeit-Prognose der App), dahinter die Abweichung (+ rot, zu früh blau, pünktlich grün; gelb = leichte Verspätung laut Raum-Zeit) und danach, wo du tatsächlich losgehen musst, der Countdown: „los in X min“ vor jedem Fuß-, Rad- oder Roller-Weg und vor jeder Bus- und Bahn-Fahrt (der erste Aufbruch inklusive Zubringer-Zeit, jeder Umstieg mit Echtzeit-Abfahrt minus Wegzeit) sowie „da in X min“ am Ziel – alle im bekannten Farbschema (grün, in den letzten 3 Minuten gelb und als Minuten:Sekunden tickend, rot nach Verstreichen). Die alte Doppelzeilen-Optik mit ab/an und die separaten Los-/Umstieg-/Ziel-Blockzeilen sind entfallen: Jede Fahrt steht als Zeile mit Linienschild, Richtung und Einstiegshaltestelle (antippen klappt den Haltestellen-Verlauf auf und zu, die Ausstiegs-Zeile dahinter trägt die Ankunft), jeder Weg als Zeile mit Wegart, Dauer und Strecke. Am Strahl ist der kleine Strich an der Ausstiegs-Haltestelle jetzt blau wie der Abfahrts-Strich, und der GPS-Fortschrittsstrahl läuft danach ohne Unterbrechung direkt in der dunkelpinkenen Basis weiter. Und die Verbindungskarten der Suche öffnen nach dem Ausblenden verpasster Verbindungen jetzt auch garantiert genau die Verbindung, auf die du tippst.")
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Ein Tipp auf das <b>blaue Linien-Schild mit dem Richtungstext daneben</b> klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft der Fortschritts-Strahl je Abschnitt mit: Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; Bus- und Bahn-Abschnitte tragen an der Abfahrts-Station einen kurzen blauen Querstrich auf dem Strahl und an der Anastation einen hellroten, und zwischen beiden läuft die Leiste dunkelblau, deren GPS-Fortschritt sich hellblau stationssynchron füllt; der Ziel-Ring am Routenende bleibt Kreis. Ein leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte, auf Bus- und Bahn-Abschnitten in Hellblau – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert, und der hellblaue Fortschritts-Strahl aktiviert die Kreise dabei genau beim Überfahren (ausgefüllt hellblau). Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
@@ -14051,13 +14164,18 @@ function renderRoutePanel() {
       // Rad-/Roller-Zubringer bereits vorbei) im Abfahrtsmodus ausblenden;
       // im Ankunftsmodus bleiben alle Treffer stehen. Die Daten bleiben in
       // routeCons (Chosen-Updates und Storage arbeiten unberuehrt weiter).
-      const shownCons = routeArr ? routeCons : routeCons.filter(cc =>
-        cc.depAbsMs == null || cc.depAbsMs >= Date.now() - 45000);
+      // v1.6.5-Bugfix: Die Karten behalten ABSOLUTE Indizes in die unfilterte
+      // routeCons-Liste (v1.6.4 oeffnete der Klick in die gefilterte Liste
+      // hinein und zeigte deshalb mitunter eine andere Verbindung).
+      const shownMap = routeCons.map((cc, i) => [cc, i]).filter(pr =>
+        routeArr || pr[0].depAbsMs == null || pr[0].depAbsMs >= Date.now() - 45000);
+      const shownCons = shownMap.map(pr => pr[0]);
+      const cardKey = k => shownMap.hasOwnProperty(k) ? shownMap[k][1] : -1;
       if (!shownCons.length && routeCons.length)
         topHTML += '<div style="padding:8px 2px;color:#f87171">Keine der gefundenen Verbindungen ist mit dem Zubringerweg zeitig zu schaffen – bitte neu suchen ("▶").</div>';
       const grps = routeGroups(shownCons);   // v1.6.1: fast gleiche Verbindungen (gleiche Fahrt, Ankunft +- 1 min) zusammenfassen
       for (const g of grps) {
-        topHTML += cardOf(g.rep, g.repCi);
+        topHTML += cardOf(g.rep, cardKey(g.repCi));
         if (g.items.length > 1) {
           const rawkey = g.key || routeSig(g.rep), open = !!routeVarShown[rawkey];
           topHTML += '<div class="rcvars"><button class="achip" data-rtvars="1" data-rvkey="' + escapeHtml(rawkey) +
@@ -14066,7 +14184,7 @@ function renderRoutePanel() {
             (g.items.length - 1 > 1 ? "n" : "") + " (gleiche Fahrt, anderer Ausstieg/Weg)</button></div>";
           if (open)
             for (const it of g.items)
-              if (it.c !== g.rep) topHTML += cardOf(it.c, it.ci);
+              if (it.c !== g.rep) topHTML += cardOf(it.c, cardKey(it.ci));
         }
       }
     }
@@ -14140,55 +14258,44 @@ function renderRoutePanel() {
             ' <button class="achip" data-rttotop="1" title="Zurück zur Verbindungsauswahl">▲ Verbindungsauswahl</button></div>';
         }
         const lastSi = c.secs.length - 1;
-        subHTML += '<div class="rtrail"><i class="rtspine"></i><i class="rtdot"></i>';
-        // v1.6.4: "los"-Marker am Aufbruch (Zielzeit = Abfahrt inkl. Zubringer)
-        if (c.depAbsMs != null)
-          subHTML += '<div class="rtgo" title="Countdown bis zum Aufbruch (inklusive Fuß-, Rad- oder Roller-Zubringer)">🚶 Los: ' +
-            routeCdChipHTML(c.depAbsMs, "los in ", " min", "Aufbruch verpasst") + "</div>";
+        // v1.6.5: Der Gesamtfahrtverlauf traegt durchgehend das Zeilen-Schema
+        // des Einzelfahrtsverlaufs (Gep. | Aktuell | Abweichung | los-/da-
+        // Countdown | Name). Die Strahl-Markierungen (blauer Abfahrts- und
+        // Anastations-Strich, Umstiegs-Anschluss, Ziel-Ring, GPS-Punkt) bleiben
+        // unveraendert, das Aufklappen schiebt den bekannten blauen Stations-
+        // Verlauf zwischen Einstiegs- und Ausstiegs-Zeile; die separate
+        // ab/an-Doppelzeile und die Los-/Umstieg-/Ziel-Marker-Zeilen entfallen.
+        subHTML += '<div class="rtrail"><i class="rtspine"></i><i class="rtdot"></i>' +
+          '<div class="rtlegend" title="Spalten wie im Fahrtverlauf einer einzelnen Linie: geplante Uhrzeit, aktuelle bzw. prognostizierte Uhrzeit (kursiv ≈ = Raum-Zeit-Prognose der App), Abweichung (+ rot / zu frueh blau / puenktlich gruen / gelb = leichte Verspaetung laut Raum-Zeit), dahinter der Countdown bis zum Aufbruch bzw. bis zur Ankunft (gruen/gelb/rot)"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
         c.secs.forEach((sec, si) => {
           const lastLeg = si === lastSi;
-          // Uebergaege zu Fuß, mit dem Fahrrad oder dem Roller: KEIN Kreis am
-          // Übergang, sondern nur ein kleiner Anschluss-Strich nach rechts vom
-          // Hauptstrang. Der Endpunkt einer Route bleibt ein Kreis (Ziel).
-          // v1.5.6: Bus-/Bahn-Abschnitte tragen am Strahl statt des Start-Rings
-          // einen kurzen blauen Abfahrts-Querstrich und an der Anastation einen
-          // hellroten; nur der Ziel-Ring (rtbot, letzte Abschnitt) bleibt Kreis.
           const rail = '<i class="rtleg"><i class="rfill" data-rsi="' + si + '"></i></i>' +
             (sec.kind === "jny"
               ? '<i class="rtdep"></i>' + (lastLeg ? '<i class="rtc rtbot"></i>' : '<i class="rtal"></i>')
               : '<i class="rtlnk"></i>' + (lastLeg ? '<i class="rtc rtbot"></i>' : ""));
           if (sec.kind === "jny") {
             const open = !!rc.secOpen[si];
-            const stopsHTML = open ? routeSecStopsHTML(rc, si) : "";   // aufgeklappt: der blaue Verlauf schiebt sich zwischen Linien-Zeile und Anastation
+            const stopsHTML = open ? routeSecStopsHTML(rc, si) : "";   // aufgeklappt: der blaue Verlauf schiebt sich zwischen Einstiegs- und Ausstiegs-Zeile
             const legCls = ((lastLeg ? " rtlast" : "") + (open && stopsHTML ? " rtopen" : "")).trim();
-            const lineAttrs = ' data-rtsec="' + si + '" title="' +
-              (open ? "Fahrtverlauf dieses Abschnitts einklappen" : "Fahrtverlauf dieses Abschnitts aufklappen") +
-              ' (Linien-Schild und Richtungstext antippen; Haltestellen zwischen Linien-Zeile und Anastation)"';
-            subHTML += rtJnyHTML(sec, routeSecSztChip(sec) + bikeSecBtnHTML(sec, si), ' data-rsi="' + si + '"', rail, legCls, stopsHTML, lineAttrs);
-            if (si < lastSi) {   // v1.6.4: Umstieg-Marker: Countdown bis zum Aufbruch am Umsteigepunkt
-              let waitMin = 0, nextJny = null;
-              for (let j = si + 1; j < c.secs.length; j++) {
-                const s2 = c.secs[j];
-                if (s2.kind === "jny") { nextJny = s2; break; }
-                waitMin += (s2.mins || 0);   // Zwischen-Zubringer (Fuß/Rad/Roller) frisst die Restzeit
-              }
-              if (nextJny) {
-                const boardMs = hhmmAbsMs(nextJny.dep);
-                const go2Ms = boardMs != null ? boardMs - waitMin * 60000 : null;
-                subHTML += '<div class="rtgo" title="Countdown bis zum Aufbruch zum nächsten Anschluss (Echtzeit-Abfahrt minus Zubringerzeit)">↳ Umstieg: ' +
-                  routeCdChipHTML(go2Ms, "los in ", " min", "Aufbruch verpasst") + "</div>";
-              }
-            }
+            subHTML += rtLegSecHTML(rc, c, sec, si, lastLeg, legCls, rail, stopsHTML);
           } else {
-            subHTML += '<div class="routesec' + (lastLeg ? " rtlast" : "") + '" data-rsi="' + si + '">' + rail + indSecHTML(sec) + bikeSecBtnHTML(sec, si) + "</div>";
+            subHTML += rtWalkSecHTML(c, sec, si, lastLeg, rail);
           }
         });
-        {   // v1.6.4: "da"-Marker am Ziel: Countdown bis zur Ankunft samt Verspätungs-Chip des letzten Fahr-Abschnitts
+        if (!c.secs.length || c.secs[lastSi].kind !== "jny") {   // Ziel-Zeile, wenn der letzte Abschnitt ein Weg ist (sonst ist die Ausstiegs-Zeile das Ziel)
           let lastJny = null;
           for (const s of c.secs) if (s.kind === "jny") lastJny = s;
-          subHTML += '<div class="rtgo" title="Countdown bis zur Ankunft am Ziel (Echtzeit, falls verfügbar)">🏁 Ziel: ' +
-            (routeCdChipHTML(c.arrAbsMs != null ? c.arrAbsMs : hhmmAbsMs(c.arr), "da in ", " min", "angekommen") || "") +
-            (lastJny && lastJny.arrDelay != null ? rtDelaySpan(lastJny.arrDelay) : "") + "</div>";
+          const zP = c.arrP || c.arr;
+          const zR = (c.arrP != null && c.arr != null && c.arr !== c.arrP) ? c.arr : zP;
+          subHTML += '<div class="rtprow rtziel" title="Ankunft am Ziel (Echtzeit, falls verfuegbar: letzte Fahrzeug-Ankunft plus Ziel-Zubringer)">' +
+            '<span class="tgep">' + escapeHtml(zP || "–") + '</span>' +
+            '<span class="takt">' + escapeHtml(zR || "–") + '</span>' +
+            (lastJny && lastJny.arrDelay != null ? rtDelaySpan(lastJny.arrDelay) : "") +
+            routeCdChipHTML(c.arrAbsMs != null ? c.arrAbsMs : hhmmAbsMs(c.arr), "da in ", " min", "angekommen") +
+            '<span class="rtnamev">🏁 Ziel' +
+            (c.secs.length && c.secs[lastSi].to && c.secs[lastSi].to !== "?" ?
+              ' <span class="rtnsub">· ' + escapeHtml(c.secs[lastSi].to) + '</span>' : "") +
+            '</span></div>';
         }
         subHTML += sztConnHTML(c) + "</div></div>";
       }
@@ -14944,7 +15051,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.4 · Build: 23.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.5 · Build: 23.11.2026</div>
 </div>
 </body>
 </html>
