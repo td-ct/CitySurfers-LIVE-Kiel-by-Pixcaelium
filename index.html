@@ -379,8 +379,12 @@
   #bikeDlg .bkq { box-sizing: border-box; flex: 1 1 auto; background: #0b1222;
     color: #e2e8f0; border: 1px solid #1e3a5f; border-radius: 8px; padding: 8px 10px;
     font-size: .9rem; }
-  #bikeDlg .bknf { display: inline-flex; align-items: center; gap: 4px;
-    font-size: .74rem; color: #94a3b8; white-space: nowrap; cursor: pointer; user-select: none; }
+  /* v1.6.9: Der Rad-Namen-Haken ist eine EIGENE Zeile unter dem Suchfeld:
+     Das alte nowrap-Label am rechten Rand sprengte im schmalen Dialog das
+     Format (Handy: input + Label in einer Reihe ging nicht mehr auf). */
+  #bikeDlg .bknf { display: flex; align-items: center; gap: 5px; width: 100%;
+    margin: -1px 0 2px; font-size: .74rem; color: #94a3b8; cursor: pointer; user-select: none; }
+  #bikeDlg .bknf input[type="checkbox"] { flex: none; accent-color: #4d8fd6; }
   #bikeDlg .bkslist { display: block; max-height: 240px; overflow-y: auto;
     border: 1px solid #1e3a5f; border-radius: 8px; margin: 2px 0 4px; padding: 3px; }
   #bikeDlg .bkgrp { display: flex; align-items: baseline; gap: 6px; width: 100%;
@@ -12756,6 +12760,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>Route-Planer</b> (🧭-Knopf): Start und Ziel als Station, Adresse (OSM-Suche; bei Adressen gleicht die App OSM gegen NAH.SH ab, Übernahme ab ≤ 100 m Übereinstimmung), Koordinat oder Favorit. Wählbar: Abfahrts- oder Ankunftszeit, Produktfilter (alle/Bus/Schiene) und - sobald Start und Ziel gesetzt sind - der Router der Verbindungssuche (🤖 Auto-Qualitätskette oder ein bestimmter, Details unter „Router-Wahl“). Verbindungen stammen seit v1.5.5 je nach Wahl und Region aus dem passenden Router: Start UND Ziel in Berlin/Brandenburg fragt der VBB-Router, alles Weitere NAH.SH; scheitert NAH.SH, weil ein Endpunkt außerhalb Schleswig-Holsteins liegt, springt die Suche auf bundesweites Zug-Routing zwischen Bahnhöfen. Lange Fuß-, Fahrrad- und Roller-Wege nach einer gefahrenen Strecke gleicht die App dabei automatisch mit späteren Halten derselben Fahrt ab: Liegt ein späterer Halt deutlich näher am Umstieg oder am Ziel, wird die Verbindung direkt so angepasst (Ausstieg später, Weg kürzer), und ein Hinweis am Weg-Abschnitt nennt die ursprüngliche Strecke. Am Umstieg gilt: Die Folgefahrt muss sicher erreichbar bleiben (Fußwege mit 2, Fahrrad- und Roller-Wege mit 3 Minuten Puffer), und die Umstiegs-Ankunft darf nie später werden; reicht der Puffer nicht, bleibt das NAH.SH-Ergebnis unverändert (sehr knappe Umsteigezeiten), und frisst der Weg die Umstiegs-Restzeit auf (≤ 5 min), genügt schon eine kleinere Ersparnis. Die App baut außerdem selbst Umstiegsketten, die NAH.SH gar nicht anbietet: Endet eine Fahrt an einer Haltestelle, startet eine weitere wenige Meter weiter (bis 600 m Fußweg, Luftlinie × 1,3, 2 Minuten Puffer) und höchstens 45 Minuten später, entsteht eine eigene Ketten-Karte mit Übergangs-Hinweis (Weg und Wartezeit am Übergang), sofern die Kette höchstens 5 Minuten nach der besten angezeigten Verbindung ankommt: So lassen sich quasi-gleichzeitige Varianten direkt nach Umstiegen, Laufweg und Komfort vergleichen. Bleiben danach weniger als 5 Minuten reine Wartezeit am Bahn- oder Bussteig, weist ein Hinweis auf versteckte Hindernisse zwischen Halt und Steg hin (etwa Schranken eines Bahnübergangs bei Zugdurchfahrt): dann ggf. eher früher aussteigen. Beim letzten Weg zum Ziel gilt unverändert: nie später ankommen. Jede fertige Planung eröffnet ihren eigenen <b>parallelen Route-Reiter</b> – beliebig viele nebeneinander, ✎ im Reiter plant ihn um. Ein Tipp auf die „Route: …“-Titelzeile (Pfeil links oder rechts) klappt den GESAMTEN Reiter-Inhalt darunter ein und wieder aus; der ❄-Knopf daneben friert den Reiter-Inhalt auf Wunsch ein (erkennbar am ❄-Symbol, auch in den Stationsreitern): Der zuletzt angezeigte Stand bleibt unverändert stehen und nichts aktualisiert sich, bis wiederaufgetaut wird – unterwegs verrutscht nichts. Die „Verbindungssuche“ und der Block „Gewählte Route“ haben je einen eigenen ▾-Pfeil, um sie einzeln ein-/auszuklappen. Wählst du in der Verbindungssuche eine konkrete Verbindung aus, klappt die Auswahlliste darüber automatisch ein, die App springt direkt auf den Unter-Reiter der gewählten Route. Seit v1.6.1 sortieren vier einzelne Knöpfe die Treffer der Verbindungssuche sofort und ohne neue Suche: ⭐ Beste (Standard: heuristische Bewertung, die früheste Ankunft, kurze Fahrzeit, kurze Fuß-, Rad- und Roller-Wege und wenige Umstiege gemeinsam bewertet), ⏱ Ankunft (wer zuerst am Ziel ist, steht oben), 🚀 Fahrzeit (vom Losgehen bis zur Ankunft, Wartezeit mit eingerechnet) und 🔁 Umstiege (erst die umstiegsarmen, dann die schnellsten); die Wahl bleibt gespeichert. Verbindungen, die dieselbe Fahrt nur mit anderem Ausstieg oder anderem Fuß-, Rad- oder Roller-Weg nutzen und fast gleichzeitig ankommen (± 1 Minute), werden dabei als EINE Verbindung zusammengefasst: Oben stehen damit wirklich unterschiedliche Verbindungen, und unter einer zusammengefassten Verbindung klappt ein Knopf („weitere ähnliche Varianten“) die übrigen Varianten der gleichen Fahrt auf, damit die App weiterhin bis zu 10 Treffer sammelt und anzeigt. Die Suche blättert selbst weiter (NAH.SH liefert max. 6 Verbindungen pro Anfrage), bis 10 Treffer vorliegen, und der Knopf ＋ Weitere lädt ab der spätesten gefundenen Abfahrt weitere Verbindungen nach und sortiert die neuen Treffer sofort mit ein (nur bei Abfahrtssuche, aktive Route vorausgesetzt."); h += P("<b>CitySurfers LIVE – Regionale Router der Verbindungssuche (v1.5.5):</b> Der NAH.SH-HAFAS beantwortet nur Anfragen mit Start UND Ziel im eigenen Gebiet; sobald EIN Endpunkt eine Adresse oder Koordinate außerhalb Schleswig-Holsteins ist, antwortet er H9220 (außerhalb des Provider-Gebiets). Deshalb fragt die Verbindungssuche jetzt zuerst den VBB-Router, wenn Start und Ziel beide in Berlin/Brandenburg liegen: derselbe offene Dienst (v6.vbb.transport.rest), der auch die Berliner Live-Abfahrten liefert, mit echten Fußwegen, Echtzeit-Verspätungen, Bahngleisen, Haltestellen je Abschnitt und der VBB-LED oben rechts; ist die VBB-Suche leer oder gestört, läuft automatisch die bisherige NAH.SH-Kette weiter. Liegt Start oder Ziel außerhalb Schleswig-Holsteins und Berlin/Brandenburg, heilt die App den NAH.SH-Fehler H9220 selbst: Beide Endpunkte werden auf die nächstgelegenen Bahnhöfe gelegt, und die Verbindungssuche liefert die Zug-Verbindung zwischen ihnen (ÖPNV am Ort kennt NAH.SH außerhalb des eigenen Gebiets nicht); ein Hinweis unter der Suche nennt die gewählten Bahnhöfe. Die Ankunftssuche („Ankunft“ statt Abfahrt) kann der VBB-Dienst technisch nicht rückwärts – dort nähert die App an, indem sie in mehreren Abfrage-Runden die letzten Verbindungen vor der gewählten Ankunftszeit sammelt (Hinweis an der Suche, Genauigkeit circa eine Verbindung); bei NAH.SH bleibt die echte Ankunftssuche unverändert. Bahnhof-Favoriten und Fern-Stationen funktionieren in beiden Fällen wie gehabt."); h += P("<b>CitySurfers LIVE – Router-Wahl im Routing-Dialog (v1.6.0):</b> Sobald Start UND Ziel gesetzt sind, zeigt der Route-Dialog die Zeile <b>Router</b> mit wählbaren Chips: <b>🤖 Auto</b> (Standard, immer ausgewählt), <b>NAH.SH</b>, <b>VBB</b>, <b>delfirouting</b> und <b>🚆 Bahnhöfe</b>. Router, die die gesetzten Endpunkte nicht bedienen, sind grau: NAH.SH braucht beide Endpunkte im Nah.sh-Gebiet, VBB beide in Berlin/Brandenburg - ein Tipp auf einen grauen Chip nennt den Grund als Hinweis unter der Router-Zeile. <b>Auto</b> bleibt immer aktiv und nimmt die qualitativ beste Kette mit Echtzeit bevorzugt: erst VBB (nur Berlin/Brandenburg), sonst NAH.SH; meldet NAH.SH H9220 (Endpunkt außerhalb), folgt der eigene Router <b>delfirouting</b> (delfirouting.php auf pixcaelium: deutschlandweites Tür-zu-Tür-Routing mit ÖPNV aus dem DELFI-Soll-Fahrplan, Solldaten ohne Echtzeit), und erst zuletzt die bekannte Bahnhof-Heilung. Der delfirouting-Chip wird erst wählbar, sobald der Server einen fertigen Index mit gültigen Fahrtprofilen meldet (probe: Index fertig, gültig bis zumindest heute, genug Profil-Daten) - und nur bei Abfahrtssuche (kein Ankunft-Modus), heutigem Datum, allen Verkehrsmitteln und zu Fuß; ein Tipp auf den grauen Chip nennt den fehlenden Grund. Der Server-Status wird bis zu 5 Minuten gecacht, die Prüfung zählt keine Anfrage. Bahnhöfe ruft die bundesweite Zug-Verbindung zwischen den nächstgelegenen Bahnhöfen direkt auf, ohne Umweg über HAFAS-Fehler. Ein ausdrücklich gewählter Router wechselt nie heimlich: Kann er die gesetzten Endpunkte nicht bedienen, erscheint eine Klartext-Meldung statt stiller Ersatzsuche (bei Auto läuft die Kette wie beschrieben weiter). Die Wahl gilt pro Route-Reiter und bleibt beim Umplanen (✎) erhalten; nur ungültig gewordene Auswahl fällt still auf Auto zurück. delfirouting-Anfragen laufen über apiFetch und zählen an der blauen DELFI-LED mit (Solldaten, daher ohne Verspätungs-Chips an den Fahrten). Seit v1.6.3 zeigt jede delfirouting-Fahrt wieder Linie und Richtung (Kopfziel der Fahrt): Der Abschnitt-Knopf klappt den Soll-Fahrtverlauf des eigenen Abschnitts auf, und der ⤢-Knopf den ganzen Lauf der Fahrt über den Server-Abruf ?trip= (Solldaten, 5 Minuten gecacht); Verbindungen mit Umstiegs-Fußwegen erscheinen jetzt ebenfalls, ein Server-Parse-Bug hatte sie zuvor unterschlagen.");  h += P("<b>CitySurfers LIVE – Aufbruchzeit, Countdown-Chips und Gep./Aktuell (v1.6.4):</b> Die Abfahrtszeit der Verbindungskarten ist jetzt die echte <b>Aufbruchzeit</b>: Snappt der Router Start oder Ziel einer Adresse auf die nächste Haltestelle, ergänzt die App den fehlenden Fuß-, Rad- oder Roller-Zubringer selbst (Luftlinie × 1,3, Tempo des gewählten Zubringer-Modus, Leihfahrrad inklusive 2 Minuten Holen und Abstellen) und verlegt Abfahrtszeit und Countdown entsprechend nach vorne; wäre der Zubringer aber länger als 12 Gehminuten, hat der Router bewusst auf Bahnhof oder Station gesnappt und der Weg bleibt dir selbst überlassen. Überall, wo gezählt wird, zeigt der Countdown-Chip, wie lange du noch Zeit hast: in der Verbindungssuche hinter den Eckdaten („16:20 – 16:39 – 19 min – in 7 min“), im Titel jedes Routen-Unter-Reiters und im Kopf der gewählten Route („los in 7 min“), farbig wie der Countdown der Stationslisten – grün im Normalfall, gelb ab 3 Minuten Restzeit und dann als Minuten:Sekunden-Angabe sekündlich herunterzählend (etwa „los in 2:54 min“, so genau wie es Fahrplan- und Echtzeitdaten eben sind), rot, sobald die Zeit verstrichen ist. Im Verlauf der gewählten Route stehen dieselben Marker durchgehend am Strang: 🚶 am Aufbruch, ↳ an jedem Umsteigepunkt (Echtzeit-Abfahrt des Anschlusses minus Zubringerzeit) und 🏁 am Ziel („da in X min“ samt Verspätungs-Chip der letzten Fahrt). Zugeklappt zeigt die Zeile jeder Bus- und Bahn-Fahrt zusätzlich zur Richtung die <b>Gep.</b>-Abfahrt, bei Echtzeit zusätzlich die <b>Aktuell</b>-Abfahrt samt Verspätungs-Chip (+ rot verspätet, blau zu früh, grün pünktlich) und dahinter kursiv die Raum-Zeit-Voraussage aus dem beobachteten Fahrtverlauf (grün/gelb/rot/blau) – damit entspricht der zugeklappte Zustand dem aufgeklappten Verlauf. Damit keine Zeit mehr vergeudet wird, blendet die Verbindungssuche im Abfahrtsmodus Karten aus, deren Aufbruch inklusive Zubringer bereits verpasst ist; sind ALLE gefundenen Verbindungen betroffen, sagt eine rote Zeile Bescheid. Im Ankunftsmodus bleiben sämtliche Treffer stehen."); h += P("<b>CitySurfers LIVE – Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (v1.6.5):</b> Der Gesamt-Verlauf einer gewählten Route zeigt jetzt durchgehend dieselben Spalten wie der Fahrtverlauf einer einzelnen Linie: <b>Gep.</b> (Fahrplan), daneben <b>Aktuell</b> (Echtzeit, ohne Echtzeit der Fahrplan bzw. kursiv die Raum-Zeit-Prognose der App), dahinter die Abweichung (+ rot, zu früh blau, pünktlich grün; gelb = leichte Verspätung laut Raum-Zeit) und danach, wo du tatsächlich losgehen musst, der Countdown: „los in X min“ vor jedem Fuß-, Rad- oder Roller-Weg und vor jeder Bus- und Bahn-Fahrt (der erste Aufbruch inklusive Zubringer-Zeit, jeder Umstieg mit Echtzeit-Abfahrt minus Wegzeit) sowie „da in X min“ am Ziel – alle im bekannten Farbschema (grün, in den letzten 3 Minuten gelb und als Minuten:Sekunden tickend, rot nach Verstreichen). Die alte Doppelzeilen-Optik mit ab/an und die separaten Los-/Umstieg-/Ziel-Blockzeilen sind entfallen: Jede Fahrt steht als Zeile mit Linienschild, Richtung und Einstiegshaltestelle (antippen klappt den Haltestellen-Verlauf auf und zu, die Ausstiegs-Zeile dahinter trägt die Ankunft), jeder Weg als Zeile mit Wegart, Dauer und Strecke. Am Strahl ist der kleine Strich an der Ausstiegs-Haltestelle jetzt blau wie der Abfahrts-Strich, und der GPS-Fortschrittsstrahl läuft danach ohne Unterbrechung direkt in der dunkelpinkenen Basis weiter. Und die Verbindungskarten der Suche öffnen nach dem Ausblenden verpasster Verbindungen jetzt auch garantiert genau die Verbindung, auf die du tippst.");  h += P("<b>CitySurfers LIVE – Strahl ohne Lücken, Striche mittig (v1.6.6):</b> Der GPS-Fortschrittsstrahl der gewählten Route verläuft jetzt abschnittsübergreifend als eine einzige, durchgehend zusammenhängende Linie: Die Leiste jedes Abschnitts stößt exakt an die Leiste des vorherigen, der Übergang liegt versteckt unter dem jeweiligen Quer-Strich: Nach dem blauen Ausstiegs-Strich eines Bus- oder Bahn-Abschnitts läuft die dunkelrosa Basis des nächsten Abschnitts ohne jeden Zwischenraum direkt weiter, vor jedem neuen blauen Abfahrts-Strich schließt die Zubringer-Leiste an, und zwischen zwei aufeinanderfolgenden Fahrten stoßen die Leisten direkt aneinander. Die horizontalen Quer-Striche sitzen dabei alle horizontal MITTIG auf dem Strahl und sind exakt so lang wie die Durchmesser der Stations-Kreise (blau an Abfahrt und Ausstieg, pink am Fuß-, Rad- und Roller-Übergang), statt wie zuvor über den Strahl hinaus nur nach rechts herauszuragen.");
   h += P("<b>CitySurfers LIVE – GPS nur auf der Fahrt, Strahl läuft immer mit (v1.6.7):</b> An der <b>Einstiegs-/Abfahrtsstation jeder Fahrt</b> der gewählten Route kommt die Abfahrts-Vorhersage jetzt NIEMALS aus dem eigenen GPS: kein „hier“-Hacken, keine GPS-Uhr und kein GPS-Countdown mehr, während du zu Fuß an der Haltestelle wartest (zuvor genügte es, drei Minuten zu früh da zu sein, und die App deutete das eigene Warten als „Fahrt ist jetzt hier“). Am Start jeder Fahrt zählt allein die <b>Echtzeit-Auskunft</b> (ohne Echtzeit: Fahrplan bzw. die kursive Raum-Zeit-Prognose der Fahrt); die GPS-Markierung greift wie gehabt erst an den <b>weiteren Stationen</b>, wenn man wirklich fährt. Der <b>hellblaue GPS-Fortschrittsstrahl</b> auf Bus- und Bahn-Abschnitten läuft außerdem jetzt IMMER kontinuierlich mit der echten Position mit: stationssynchron (er erreicht jede Station genau im Moment des geometrischen Passierens), dazwischen aus dem GPS-Signal interpoliert, ausdrücklich auch rückwärts – und auch dann, wenn der Leuchtpunkt gerade ausgeblendet ist (Abstands-Hysterese) oder der Verlauf zugeklappt bleibt. Er zeigt damit zu jeder Zeit die aktuelle Position in der Route und friert nicht mehr ein, wenn ein Abschnitt keine Halte-Koordinaten liefert.");
   h += P("<b>CitySurfers LIVE – Punkt 2 und Punkt 3 als Suchlisten (v1.6.8):</b> Das Abholrad (Punkt 2) und die Rückgabe-Station (Punkt 3) des Micromobility-Routings sind keine Pulldowns mehr, sondern ausklappbare Suchlisten im Stil des Adress- und Stationssuchfelds. <b>Punkt 2</b> gruppiert die freien Räder unter ihrer Abhol-Station wie Buslinien unter ihrer Station: Die Stationen stehen nach Entfernung zum Start sortiert als Kopfzeilen mit der Zahl ihrer E-Bikes und Standardräder, die Räder darunter (E-Bikes nach Akkustand absteigend, Standardräder nach Namen); ein Tipp auf die Stations-Kopfzeile wählt deren bestes Rad, ein Tipp auf die Rad-Zeile genau dieses. Die AID/Kurz-ID ist aus den Zeilen verschwunden: Der Esel-Link zur Donkey-App sitzt weiter hinter jedem Rad, die Kurz-ID bleibt nur für den uMap-Abgleich in der Rad-Info darüber. Räder ohne Stations-Bezug erscheinen in der eigenen Gruppe „Frei abstellbar · ohne Station“. Das Suchfeld oben filtert Abhol-Stationen namentlich, auch weiter entfernte, und ein Knopf am Listenende blättert weitere Räder nach (-- noch N weitere Räder anzeigen --). Der Haken <b>„Rad-Namen“</b> bezieht als Gimmick die von Donkey vergebenen Vornamen wie Frieda in die Suche ein: Treffer stehen dann unter ihrer Station. <b>Punkt 3</b> zeigt standardmäßig die 5 dem Ziel nächsten Rückgabe-Stationen mit ihren Stellplätzen, findet über sein eigenes Suchfeld aber jede weitere, auch weit entfernte; die gewählte Station bleibt markiert und sichtbar, selbst wenn sie weiter weg liegt als die 5 nächsten.");
+  h += P("<b>CitySurfers LIVE – MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design (v1.6.9):</b> Der Haken „Rad-Namen“ der Punkt-2-Suche steht jetzt als eigene Zeile UNTER dem Suchfeld (das alte Label am rechten Rand sprengte im schmalen Dialog das Format). Beide Suchlisten klappten nach einer Wahl auf: Nach dem Antippen eines Rads (Punkt 2) oder einer Rückgabe-Station (Punkt 3) zeigt die Liste nur noch den gewählten Eintrag, und ein Tipp ins Suchfeld (oder auf den Knopf darunter) klappt alle Einträge wieder auf, um neu zu wählen; bei frischem Start oder Ziel steht die Liste wieder offen. Im MM-Reiter ist die Kurz-ID aus dem Klartext verschwunden: Die Räder der Abhol-Station tragen nur noch ihren Vornamen (die ID bleibt Karten und uMap-Abgleich vorbehalten), und die Abhol-Zeile des MM-Fahrtverlaufs heißt jetzt „Abholung: STATIONSNAME“ mit der Unterzeile Radtyp, Vorname, Akku und Reichweite samt Esel-Link zur Donkey-App. Der MM-Fahrtverlauf läuft im selben Zeilen-Schema wie der Fahrtverlauf im Stationsreiter und der Gesamtfahrtverlauf im Route-Reiter: Legende Gep./Aktuell, je Punkt die geplante Zeit (bei Übernahme berechnet) und daneben kursiv die aktuelle Voraussage aus der eigenen GPS-Bewegung (einen Fahrplan gibt es hier nicht, das GPS bestimmt die aktuellen Zahlen allein), dahinter farbige Abweichungsminuten (gelb = knapp, rot ab 5 min, blau = zu früh, grün = pünktlich) und sekundengenaue Countdowns im letzten 3-Minuten-Fenster (Format M:SS, am Ziel bis zur Ankunft tickend, in Klammern die Raum-Zeit-Voraussage, wenn sie abweicht); ein Kapitel dabei ist Ausleihen + Zurückgeben mit dem Fahrtbeginn als Planzeit. Und der grüne GPS-Fortschrittsstrahl schließt jetzt lückenlos am Ziel-Ring an.");
   h += P("<b>GPS-Sortierung mit drei Zuständen:</b> Der <b>◎ GPS-Sortierung</b>-Knopf in den Start-/Ziel-Auswahldialogen (Adresse, Station, Favoriten) sortiert die Treffer des jeweiligen Feldes nach deiner Position. <b>Grau</b> = GPS nicht übernommen, die Liste steht alphabetisch bzw. nach Ähnlichkeit zum Suchbegriff. <b>Grün</b> = die für dieses Feld gespeicherte Position sortiert nach Entfernung und bleibt als interne Koordinate stehen, bis sie erneuert wird. <b>Gelb</b> = du bist seit der Übernahme weiter gewandert, ein Druck übernimmt die neue Position sofort. Ein Druck auf den grünen Knopf beendet immer nur die Übernahme dieses einen Feldes – das GPS selbst läuft weiter. Dasselbe Drei-Zustände-Prinzip gilt für das GPS im Adressfeld und im Haltestellen-Suchfeld oben im Kopf.");
   h += P("<b>Zubringer-Modus</b> (Schalter, zeigt je genau ein Symbol – 🚶 zu Fuß, 🚲 Fahrrad, 🛴 Roller): zu Fuß (Standard), mit dem Fahrrad (eigenes Tempo 15/20/25 km/h wählbar) oder mit dem Roller (18 km/h). Leihfahrrad-Abschnitte aus NAH.SH werden dann als Fahrrad bzw. Roller gerechnet und angezeigt. Im Fuß-Modus werden Verbindungen mit langem Zubringer hingegen nicht mehr verworfen, nur weil NAH.SH ihn als Radstrecke ansetzt (Fußwege über rund 1,5 km bietet HAFAS nicht an): Das Rad-Bein wird als Fußweg nachgerechnet (5 km/h, Hinweis am Abschnitt, Start entsprechend früher); Taxi- und Rufbus-Zubringer bleiben auch dort außen vor. Das Häkchen <b>„Ausleihe (+2 min)“</b> rechnet je Strecke 2 Minuten Holen und Abstellen ein und blendet Verbindungen aus, deren Rad-Strecke auch in 7 Gehminuten (ca. 583 m) zu schaffen wäre. Die <b>Spar-Schwelle</b> (0/5/10/15 min) gilt für Fahrrad und Roller: Verbindungen verschwinden, wenn sie auf der Gesamtstrecke weniger als eingestellt sparen. Fuß-, Fahrrad- und Roller-Abschnitte tragen das Karten-Symbol für externes Routing: ein Tipp öffnet genau diese Strecke in Google Maps.");
   h += P("<b>Fahrabschnitte:</b> Ein Tipp auf das <b>blaue Linien-Schild mit dem Richtungstext daneben</b> klappt die Haltestellen des Abschnitts auf und zu, mit derselben GPS-Fortschrittslogik wie der Hauptverlauf (50 m, „≈HH:MM“, Richtungserkennung) und demselben Sekunden-Countdown hinter dem Delay-Chip („in M:SS“, kursiv in Klammern, wenn die Raum-Zeit-Voraussage abweicht); aufgeklappt schiebt sich die blaue Stationsliste zwischen die Linien-Zeile und die Anastation des Abschnitts. Das ⤢-Symbol blendet den kompletten Lauf ein: Hafas liefert im Suchergebnis nur das befahrene Segment, der Rest kommt per JourneyDetails. Die Liste selbst bleibt unverändert stehen und wird nur nach oben (bis zum Startpunkt des Laufs) und nach unten (bis zum Laufende) erweitert; beim erneuten Antippen wird die Erweiterung wieder weggeklickt (im Fahrverlauf des Stationsreiters gilt dasselbe für die Haltestellen vor deiner Einstiegshaltestelle). Alle ↻-Aktualisierungs-Knöpfe (Stationen, Fahrtverlauf, Route) leiten ihre Abfrage frühestens alle 5 Sekunden weiter – hämmern bringt nichts. Verspätungen stehen als +Xm; Chips färben gelb bis 3 Minuten und rot wenn der Zug/Bus schon weg ist oder früher fährt; Verbindungen, die in einer Neu-Suche nicht mehr angeboten werden, bekommen einen „nicht mehr angeboten“-Hinweis. „später“ blättert in der Liste. Links in der „Gewählten Route“ läuft der Fortschritts-Strahl je Abschnitt mit: Übergänge, die du zu Fuß, mit dem Fahrrad oder dem Roller zurücklegst, bekommen bewusst keinen Kreis, sondern nur einen kleinen Anschluss-Strich nach rechts vom Hauptstrang; Bus- und Bahn-Abschnitte tragen an der Abfahrts-Station einen kurzen blauen Querstrich auf dem Strahl und an der Anastation einen hellroten, und zwischen beiden läuft die Leiste dunkelblau, deren GPS-Fortschritt sich hellblau stationssynchron füllt; der Ziel-Ring am Routenende bleibt Kreis. Ein leuchtender Punkt in Ringgröße wandert kontinuierlich über die Gesamtroute und gleitet unter den Ringen hindurch bis in ihre Mitte, auf Bus- und Bahn-Abschnitten in Hellblau – bei ausgeklappten Fahrverläufen läuft er lückenlos durch die blaue Stationsliste hindurch, stationssynchron: Er passiert jeden Stationskreis der Liste genau dann, wenn die Fahrt den Halt geometrisch passiert, und der hellblaue Fortschritts-Strahl aktiviert die Kreise dabei genau beim Überfahren (ausgefüllt hellblau). Am Umstieg klebt er am laufenden Abschnitt und läuft Fuß-, Fahrrad- und Roller-Übergänge lückenlos durch, statt vom Kreis des einen zum Kreis des nächsten Abschnitts zu springen. Auch er platziert sich rein geometrisch nach Luftlinie über den jeweils nächsten Routen-Abschnitt, unabhängig vom Fortschritts-Zustand und von Fahrplan-Zeiten; weiter als 300 m von der Route entfernt verschwindet er und kehrt ab 240 m Abstand zurück. Die Linie an der linken Seite ist eine einzige durchgehende Linie von oben nach unten: An den Übergängen in einen ausgeklappten blauen Verlauf läuft sie über die ganze Verbindungsstrecke (vom Ende der pinken Leiste bis zum ersten blauen Kreis) als weicher Farbverlauf von pink nach blau und am unteren Verlaufsende ebenso von blau zurück nach pink; die Zeilen-Köpfe der Verläufe rücken dafür rechts neben die Linie. Bei Fuß-, Fahrrad- und Roller-Wegen zählt die pinke Balkenfüllung die tatsächlich zurückgelegten GPS-Meter gegen die echte Weglänge (ein Drittel Weg = ein Drittel Balkenfüllung); der Punkt selbst übersetzt deine Reststrecke relativ auf den Strang-Abschnitt zwischen Weg-Start und Weg-Ziel: Er rückt vor, wenn du der Anastation näher kommst, und wieder zurück, wenn du umkehrst, auch über Umstiege hinweg und auf langen Wegen mit dem Fahrrad oder Roller. Die Auswahl des Abschnitts erlaubt Umwege im Rahmen der Ellipse um den Weg (das 1,6-fache der Weglänge plus 250 m Grund-Spielraum). Die 🔔-Glocke neben dem ↻-Knopf der gewählten Route stellt Wecker für jede Station der Gesamt-Route: Die Auswahlliste umfasst alle Busse und Bahnen der Verbindung gemeinsam, gestellt wird wie im Fahrtverlauf per Distanz oder Zeit vor Abfahrt. Im aufgeklappten Verlauf jedes Bus-/Bahn-Abschnitts der gewählten Route steht dieselbe Folgefahrten-Zeile („auch geplant: … Uhr“, 3-Stunden-Fahrplanfenster, Kurzform bei dichtem Takt) samt Betriebsschluss-Warnung der Linie, direkt über der Kopfzeile „Gep./Aktuell“ – falls du die Verbindung verpasst, siehst du im Verlauf sofort die nächste Chance und ob die Linie eventuell schon Schluss macht.");
@@ -12953,6 +12958,11 @@ function bkGroupBikes(bikes, findStn, qq, byNm) {
 function bikeNiceName(v) {
   const n = v && v.n;
   return (typeof n === "string" && n.trim()) ? n.trim() : null;
+}
+// v1.6.9: Anzeige-Name OHNE Kurz-ID im Klartext (die IDs bleiben nur für den
+// uMap-Abgleich in Rad-Info und Karten-Markern); ohne Vornamen der Typ.
+function bikeNiceLabel(v) {
+  return bikeNiceName(v) || ((v && v.t === "ebike") ? "E-Bike" : "Standardrad");
 }
 function bikeNameLabel(v) {
   const sid = bikeShortId(v && v.id);
@@ -13244,10 +13254,8 @@ function openBikeDlg(which, ctx) {
         '<button class="achip rtgps" id="bkGps" data-bkgps="start" title="GPS-Position als Start übernehmen (grau), neu orten (gelb), Übernahme beenden (grün)">◎ GPS</button>' +
       '</div>' +
       '<label class="dlabel" style="margin-top:8px">Abholrad (2. Punkt)</label>' +
-      '<div class="bksrchrow">' +
-        '<input class="bkq" id="bkBikeQ" type="text" autocomplete="off" placeholder="Suche: Abhol-Station (leer = Räder um den Start, gruppiert nach Station)" title="Suchtext filtert die Abhol-Stationen namentlich, auch weiter entfernte (leer lassen zeigt die Räder um den Start in Stations-Gruppen)" />' +
-        '<label class="bknf" title="Gimmick: Die Suche trifft dann auch auf die von Donkey vergebenen Rad-Namen zu (z. B. Frieda); Treffer stehen dann unter ihrer Station"><input type="checkbox" id="bkBikeByName" /> Rad-Namen</label>' +
-      '</div>' +
+      '<div class="bksrchrow"><input class="bkq" id="bkBikeQ" type="text" autocomplete="off" placeholder="Suche: Abhol-Station (leer = Räder um den Start, gruppiert nach Station)" title="Suchtext filtert die Abhol-Stationen namentlich, auch weiter entfernte (leer lassen zeigt die Räder um den Start in Stations-Gruppen)" /></div>' +
+      '<label class="bknf" title="Gimmick: Die Suche trifft dann auch auf die von Donkey vergebenen Rad-Namen zu (z. B. Frieda); Treffer stehen dann unter ihrer Station"><input type="checkbox" id="bkBikeByName" /> Rad-Namen in die Suche einbeziehen</label>' +
       '<div class="bkslist" id="bkBikeList"></div>' +
       (bkCanFix ? '<div class="routepick" style="margin-top:2px"><button class="achip" id="bkFixSt" title="Abhol-Station fixieren">📌 Abhol-Station fixieren</button></div>' : '') +   // v1.4.17: nur bei übernommener Station
       '<div class="bksub" id="bkWheelBox" hidden></div>' +   // v1.4.17: Zähler + ausklappbare Rad-Liste der fixierten Station
@@ -13486,11 +13494,11 @@ function openBikeDlg(which, ctx) {
   };
   function curBike() { return (st.bikes || []).find(v => String(v.id) === String(bkst.bikeId)) || null; }
   function curDrop() { return (st.drops || []).find(x => x.s && String(x.s.id) === String(bkst.dropId)) || null; }
-  function afterBikePick() { renderBikeList(); fillBikeInfo(); fillDropInfo(); resEl.innerHTML = ""; mmInvalidate(); }
-  function afterDropPick() { renderDropList(); fillDropInfo(); resEl.innerHTML = ""; mmInvalidate(); }
+  function afterBikePick() { bkst.bikeOpen = false; renderBikeList(); fillBikeInfo(); fillDropInfo(); resEl.innerHTML = ""; mmInvalidate(); }   // v1.6.9: nach der Wahl zeigt die Rad-Liste nur noch das gewählte Rad
+  function afterDropPick() { bkst.dropOpen = false; renderDropList(); fillDropInfo(); resEl.innerHTML = ""; mmInvalidate(); }   // v1.6.9: nach der Wahl zeigt die Rückgabe-Liste nur noch die gewählte Station
   const bikeInfoEl = wrap.querySelector("#bkBikeInfo"), dropInfoEl = wrap.querySelector("#bkDropInfo");
   const resEl = wrap.querySelector("#bkRes");
-  const bkst = { bikeId: null, dropId: null, wheelMore: false, fixSt: (ctx && ctx.mmSt) ? { id: ctx.mmSt.id, name: ctx.mmSt.name, lat: ctx.mmSt.lat, lon: ctx.mmSt.lon } : null };   // v1.4.14: fixierte Abhol-Station, v1.4.17: wheelMore = Rad-Liste unter Punkt 2 aufgeklappt
+  const bkst = { bikeId: null, dropId: null, wheelMore: false, bikeOpen: true, dropOpen: true, fixSt: (ctx && ctx.mmSt) ? { id: ctx.mmSt.id, name: ctx.mmSt.name, lat: ctx.mmSt.lat, lon: ctx.mmSt.lon } : null };   // v1.4.14: fixierte Abhol-Station, v1.4.17: wheelMore = Rad-Liste unter Punkt 2 aufgeklappt, v1.6.9: bikeOpen/dropOpen = nach der Wahl zeigt die Liste nur den gewählten Eintrag (Tipp ins Suchfeld öffnet alle neu)
   let bikesSeq = 0, dropSeq2 = 0, bikeInfoSeq = 0, dropInfoSeq = 0, routeSeq = 0;
   let bkLast = null;   // v1.4.12: letztes fertiges Ergebnis fuer "Als Route-Reiter übernehmen"
   let bikeListN = BIKE_ROW_N * 2, bikesAnchorKey = "";   // v1.6.8: sichtbare Räder je Suche (Start 12, je "mehr" +12), Ruecksetzung bei Startwechsel
@@ -13546,6 +13554,7 @@ function openBikeDlg(which, ctx) {
       return;
     }
     if (!curBike()) bkst.bikeId = st.bikes[0].id;   // Auswahl-Default: das naechste Rad
+    bkst.bikeOpen = true;   // v1.6.9: frischer Start/Pool: Liste wieder auf (ein neues Rad ist wählbar)
     renderBikeList();
     fillBikeInfo();
     fillBkWheelBox();   // v1.4.17: Zähler + ausklappbare Stations-Rad-Liste unter Punkt 2
@@ -13561,6 +13570,19 @@ function openBikeDlg(which, ctx) {
     const byName = bikeByNameEl.checked || !!bkst.fixSt;
     st.bikesVisible = [];
     const bikes = st.bikes || [];
+    if (!bkst.bikeOpen) {   // v1.6.9: nach der Wahl zusammengeklappt: nur das gewählte Rad, Tipp (Suchfeld/Knopf) klappt alle wieder auf
+      const v = curBike();
+      if (v) {
+        bikeListEl.innerHTML = '<button class="bkhi on" data-bid="' + escapeHtml(String(v.id)) +
+          '" title="Gewähltes Abholrad (Liste zusammengeklappt); ins Suchfeld tippen oder den Knopf darunter antippen für alle Räder und Stationen">' +
+          (v.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") +
+          (v.n ? " " + escapeHtml(String(v.n)) : "") +
+          (v.fu != null ? " · Akku " + v.fu + " %" : "") + " · " + fmtDm(v.dm) + donkeyDlChip(v) + "</button>" +
+          '<button class="bkmor" data-bkopen="bike" title="Liste wieder aufklappen: alle Räder und Abhol-Stationen der Suche anzeigen">— alle Räder und Stationen anzeigen —</button>';
+        return;
+      }
+      bkst.bikeOpen = true;   // kein gewähltes Rad: kein Grund, zusammengeklappt zu bleiben
+    }
     const gres = bkGroupBikes(bikes, bkStnOf, qq, byName);
     let budget = qq ? Math.max(bikeListN, 72) : bikeListN;
     let hidden = 0, h = "";
@@ -13665,6 +13687,7 @@ function openBikeDlg(which, ctx) {
       .sort((x, y) => x.dm - y.dm);
     if (!st.drops.length) { dropListEl.innerHTML = '<div class="bkempty">(keine Stationen im Feed)</div>'; return; }
     if (!curDrop()) bkst.dropId = st.drops[0].s.id;   // Auswahl-Default: die naechste
+    bkst.dropOpen = true;   // v1.6.9: frisches Ziel/Pool: Liste wieder auf (eine andere Station ist wählbar)
     renderDropList();
     fillDropInfo();
   }
@@ -13676,6 +13699,14 @@ function openBikeDlg(which, ctx) {
     if (!drops.length) return;
     const qq = dropQEl.value.trim().toLowerCase();
     const cur = curDrop();
+    if (!bkst.dropOpen && cur) {   // v1.6.9: nach der Wahl zusammengeklappt: nur die gewählte Station, Tipp (Suchfeld/Knopf) klappt alle wieder auf
+      dropListEl.innerHTML = '<button class="bkhi on" data-did="' + escapeHtml(String(cur.s.id)) +
+        '" title="Gewählte Rückgabe-Station (Liste zusammengeklappt); ins Suchfeld tippen oder den Knopf darunter antippen für alle Rückgabe-Stationen">' +
+        "✓ " + escapeHtml(String(cur.s.name)) + " · " + fmtDm(cur.dm) + " zum Ziel" +
+        (cur.s.cap != null ? " · " + cur.s.cap + " Stellplätze" : "") + "</button>" +
+        '<button class="bkmor" data-bkopen="drop" title="Liste wieder aufklappen: alle Rückgabe-Stationen anzeigen">— alle Rückgabe-Stationen anzeigen —</button>';
+      return;
+    }
     let rows = !qq ? drops.slice(0, BK_DROP_N)
       : drops.filter(x => String((x.s && x.s.name) || "").toLowerCase().includes(qq)).slice(0, 60);
     let h = "";
@@ -13740,9 +13771,13 @@ function openBikeDlg(which, ctx) {
   // v1.6.8: Auswahl in den beiden Suchlisten (Delegation für Rad-, Stations-
   // und Rückgabe-Zeilen). Esel-Links (a) zählen nicht als Wahl. Die Suche
   // aktualisiert Liste und Rad-Info live (uMap-Chip zeigt die sichtbare Auswahl).
-  bikeQEl.addEventListener("input", () => { renderBikeList(); fillBikeInfo(); });
-  bikeByNameEl.addEventListener("change", () => { renderBikeList(); fillBikeInfo(); });
-  dropQEl.addEventListener("input", renderDropList);
+  // v1.6.9: Tipp ins Suchfeld (focus) oder Tippen (input) klappt die zusammen-
+  // geklappte Liste wieder auf: alle Räder/Stationen sind neu wählbar.
+  bikeQEl.addEventListener("focus", () => { if (!bkst.bikeOpen) { bkst.bikeOpen = true; renderBikeList(); } });
+  bikeQEl.addEventListener("input", () => { bkst.bikeOpen = true; renderBikeList(); fillBikeInfo(); });
+  bikeByNameEl.addEventListener("change", () => { bkst.bikeOpen = true; renderBikeList(); fillBikeInfo(); });
+  dropQEl.addEventListener("focus", () => { if (!bkst.dropOpen) { bkst.dropOpen = true; renderDropList(); } });
+  dropQEl.addEventListener("input", () => { bkst.dropOpen = true; renderDropList(); });
   wrap.addEventListener("click", e => {
     if (e.target.closest("a")) return;   // Donkey-Esel-Link: kein Klick auf die Zeile dahinter
     const hi = e.target.closest("#bkBikeList [data-bid]");
@@ -13751,6 +13786,12 @@ function openBikeDlg(which, ctx) {
     if (gr) { bkst.bikeId = gr.dataset.best; afterBikePick(); return; }
     const mo = e.target.closest("#bkBikeList [data-bkmor]");
     if (mo) { bikeListN += BIKE_ROW_N * 2; renderBikeList(); fillBikeInfo(); return; }
+    const ob = e.target.closest("[data-bkopen]");   // v1.6.9: zusammengeklappte Liste wieder aufklappen
+    if (ob) {
+      if (ob.dataset.bkopen === "drop") { bkst.dropOpen = true; renderDropList(); }
+      else { bkst.bikeOpen = true; renderBikeList(); fillBikeInfo(); }
+      return;
+    }
     const di = e.target.closest("#bkDropList [data-did]");
     if (di) { bkst.dropId = di.dataset.did; afterDropPick(); }
   });
@@ -13946,53 +13987,136 @@ function mmPredArr(mm) {
 function mmDelaySpanHTML(dmin, hasPred) {
   if (!hasPred || dmin == null)
     return ' <span class="tdelay" id="mmdelayspan" title="ohne Live-Ortung (oder abseits der Route) gilt die geplante Ankunft"></span>';
-  const cls = dmin > 0 ? "up" : dmin < 0 ? "down" : "ok";
+  // v1.6.9: dieselbe Farbskala wie die Raum-Zeit-Werte der Verläufe:
+  // gelb = knapp, rot ab 5 min, blau = zu früh, grün = pünktlich
+  const cls = dmin > 0 ? (dmin >= SZT_WATCH_LATE_MIN ? "sztw-late" : "sztw-warn") : dmin < 0 ? "sztw-early" : "sztw-ok";
   const txt = dmin > 0 ? "+" + dmin + "m" : dmin < 0 ? dmin + "m" : "0m";
-  return ' <span class="tdelay ' + cls + '" id="mmdelayspan" title="Verspätung gegen die geplante Ankunft, aus der Raum-Zeit-Voraussage der eigenen GPS-Bewegung">' + txt + "</span>";
+  return ' <span class="tdelay ' + cls + '" id="mmdelayspan" title="Verspätung gegen die geplante Ankunft, aus der Raum-Zeit-Voraussage der eigenen GPS-Bewegung (gelb = knapp, rot ab 5 min, blau = zu früh, grün = pünktlich)">' + txt + "</span>";
 }
-// Der MM-Fahrtverlauf wie ein normaler Routen-Block: Kopfzeile mit geplanter
-// Ankunft GANZ LINKS und aktueller Voraussage daneben (kursiv = Raum-Zeit),
-// darunter der gruene Strahl mit Start-Ring, Abholrad, Ausleih-Strich,
-// Rueckgabe-Ring, Ziel-Ring und dem wandernden GPS-Punkt, am Ende die Links.
-function mmJourneyHTML(mm) {   // v1.4.14: das mm-Objekt direkt (liegt im MM-Reiter, nicht mehr im Route-Reiter)
+// v1.6.9: Voraussage der Ankunft an JEDEM Punkt der MM-Route aus der eigenen
+// GPS-Bewegung (Raum-Zeit; ohne Fahrplan bestimmt das GPS die aktuellen Zahlen
+// allein): bike = Abholrad, ride = Beginn der Radfahrt nach Ausleihen,
+// drop = Rückgabe-Station, dest = Ziel. Vergangene Punkte sind null, die
+// Ziel-Voraussage ist identisch mit mmPredArr (dieselbe Leih-/Rückgabe-Puffer-
+// Rechnung: volle Zeit vor dem Rad-Bein, halbe während der Fahrt, keine danach).
+function mmPredPoints(mm) {
+  if (!(gpsState === "on" && myPos)) return null;
+  const pr = mmProject(mm, myPos);
+  if (!pr) return null;
+  const L = [mm.w1 || 0, mm.rb || 0, mm.w2 || 0], H = mm.handle || 0, now = Date.now();
+  const rem = s => s < pr.seg ? 0 : s === pr.seg ? (1 - pr.frac) * L[s] : L[s];
+  if (pr.seg === 0) {
+    const bike = now + rem(0) * 60000, ride = bike + H * 60000,
+      drop = ride + rem(1) * 60000;
+    return { bike: bike, ride: ride, drop: drop, dest: drop + rem(2) * 60000 };
+  }
+  if (pr.seg === 1)
+    return { bike: null, ride: null, drop: now + rem(1) * 60000,
+      dest: now + (rem(1) + rem(2)) * 60000 + H * 60000 * 0.5 };
+  return { bike: null, ride: null, drop: null, dest: now + rem(2) * 60000 };
+}
+// v1.6.9: Abweichungs-Chip + Sekunden-Countdown einer MM-Verlaufs-Zeile:
+// +Xm in der Watch-Farbskala (gelb knapp, rot ab 5 min, blau zu früh, grün
+// pünktlich), dahinter der Countdown primär auf die Planzeit, kursiv in
+// Klammern die Raum-Zeit-Voraussage (Gleicheit mit den Verläufen: nur im
+// 3-Minuten-Fenster, Format M:SS, 1-s-Ticker pflegt data-cd, mmTick setzt die
+// Ziele alle 500 ms neu).
+function mmRowXtraHTML(planMs, predMs) {
+  let x = "";
+  if (predMs != null) {
+    const d = Math.round((predMs - planMs) / 60000);
+    const cls = d > 0 ? (d >= SZT_WATCH_LATE_MIN ? "sztw-late" : "sztw-warn") : d < 0 ? "sztw-early" : "sztw-ok";
+    x += '<span class="tdelay szt ' + cls + '" title="Abweichung von der Planzeit, aus der Raum-Zeit-Voraussage deiner GPS-Bewegung (gelb = knapp, rot ab 5 min, blau = zu früh, grün = pünktlich)">' +
+      (d > 0 ? "+" + d + "m" : d < 0 ? d + "m" : "0m") + "</span>";
+  }
+  x += tripCdHTML(Date.now(), planMs, predMs);
+  return x;
+}
+// v1.6.9: Eine Zeile des MM-Fahrtverlaufs im Spalten-Schema der Verläufe:
+// Gep. = Planzeit des Punkts (bei Übernahme berechnet), Aktuell = Plan (dim)
+// oder kursiv ≈ die GPS-Voraussage, dahinter Abweichung + Countdown, dann der
+// Name. data-mmplan/data-mmakt/data-mmx tragen die 500-ms-Auffrischung.
+function mmRowHTML(k, planMs, predMs, nameHTML, ttlGep, ttlAkt) {
+  const gep = mmClockOfMs(planMs);
+  const future = predMs != null && predMs > Date.now() - 60000;
+  return '<div class="rtprow" data-mmsrow="' + k + '" data-mmplan="' + Math.round(planMs) + '">' +
+    '<span class="tgep" title="' + (ttlGep || "Geplante Zeit dieses Punkts (bei Übernahme der MM-Route berechnet)") + '">' + escapeHtml(gep) + "</span>" +
+    '<span class="takt ' + (future ? "szt" : "dim") + '" data-mmakt="1" title="' +
+      (ttlAkt || "Aktuelle Voraussage aus deiner GPS-Bewegung (kursiv ≈ = Raum-Zeit, denn einen Fahrplan gibt es hier nicht); ohne Live-Ortung gilt der Plan") + '">' +
+    (future ? "≈" + escapeHtml(mmClockOfMs(predMs)) : escapeHtml(gep)) + "</span>" +
+    '<span class="mmx" data-mmx="1">' + mmRowXtraHTML(planMs, future ? predMs : null) + "</span>" +
+    nameHTML + "</div>";
+}
+// Der MM-Fahrtverlauf im Zeilen-Schema des Einzelfahrts- und Gesamtfahrtver-
+// laufs (v1.6.9): Kopf mit geplanter Ankunft links und aktueller Voraussage
+// daneben (kursiv = Raum-Zeit), unter der Legende Gep./Aktuell die Zeilen
+// Start, Abholung (Station, darunter Radname, Akku, Reichweite und Esel-Link),
+// Ausleihen + Zurückgeben, Rückgabe und Ziel, ohne jede Kurz-ID im Klartext;
+// der grüne Strahl läuft durch und schließt am Ziel-Ring an; am Ende die Links.
+function mmJourneyHTML(mm) {
   const pred = mmPredArr(mm);
+  const predP = mmPredPoints(mm);
   const planC = mmClockOfMs(mm.planArrMs);
   const actC = pred ? mmClockOfMs(pred.arrMs) : planC;
-  const dmin = pred ? Math.round((pred.arrMs - mm.planArrMs) / 60000) : null;
   const t0 = mm.t0ms;
   const t1 = t0 + (mm.w1 || 0) * 60000;
-  const t2 = t1 + (mm.rb || 0) * 60000;
-  const t3 = t2 + (mm.handle || 0) * 60000;
+  const t2 = t1 + (mm.handle || 0) * 60000;
+  const t3 = t2 + (mm.rb || 0) * 60000;
   const esc = escapeHtml;
   const estTxt = (L, min) => (L && L.est ? "~" + min + " min (Luftlinie x 1,3)" : min + " min");
   const legTxt = (L, min) => (L && L.m != null ? formatDist(Math.round(L.m)) + " · " : "") + estTxt(L, min);
+  const now = Date.now();
+  const predOf = key => (predP && predP[key] != null && predP[key] > now - 60000) ? predP[key] : null;
+  const stn = mm.bike.st != null ? mmStationById(mm.bike.st) : null;
+  const abholName = stn && stn.name ? stn.name : "Rad frei abstellbar";
   let h = '<div class="routecon"><div class="rchead">' +
     '<span class="rcdur" title="links die geplante Ankunftszeit der MM-Route (bei Übernahme berechnet: Start plus Fußweg, Radfahrt, Ausleihe und Fußweg), rechts die aktuelle Voraussage">' + planC +
     ' &#8211; <span id="mmaktwrap" class="' + (pred ? "szt" : "dim") + '" title="' +
     (pred ? "Raum-Zeit-Voraussage aus deiner GPS-Bewegung auf der MM-Route, kursiv wie alle Raum-Zeit-Werte" :
       "ohne Live-Ortung gilt die geplante Ankunft") + '">' + actC + '</span></span>' +
-    mmDelaySpanHTML(dmin, !!pred) +
+    mmDelaySpanHTML(pred ? Math.round((pred.arrMs - mm.planArrMs) / 60000) : null, !!pred) +
     '<span class="rtsmall">🚲 Micromobility Routing · ' + mm.tot + ' min · ' +
     (mm.bike.t === "ebike" ? "E-Bike" : "Standardrad") +
     (mm.bike.fu != null ? " · Akku " + mm.bike.fu + " %" : "") + '</span></div>';
-  h += '<div class="rtrail mmrail"><i class="rtspine"></i><i class="rtdot"></i>';
+  h += '<div class="rtrail mmrail"><i class="rtspine"></i><i class="rtdot"></i>' +
+    '<div class="rtlegend" title="Spalten wie im Fahrtverlauf: Geplant (bei Übernahme der MM-Route berechnet), aktuell bzw. prognostiziert (kursiv = Raum-Zeit-Prognose deiner GPS-Bewegung, einen Fahrplan gibt es hier nicht), Abweichung (gelb = knapp, rot ab 5 min, zu früh blau, pünktlich grün), dahinter der Sekunden-Countdown bis 3:00 Minuten"><span class="lgep">Gep.</span><span class="lakt">Aktuell</span></div>';
   const leg = si => '<i class="rtleg"><i class="rfill" data-rsi="' + si + '"></i></i>';
   h += '<div class="routesec" data-rsi="0">' + leg(0) + '<i class="rtc rttop"></i>' +
-    '<div class="rtstop">📍 <b>Start:</b> ' + esc(String(mm.from.name)) + ' <span class="dim">· los ' + mmClockOfMs(t0) + ' Uhr</span></div></div>';
+    '<div class="rtprow" data-mmsrow="0" data-mmplan="' + Math.round(t0) + '">' +
+      '<span class="tgep" title="Moment der Übernahme: geplanter Aufbruch zum Abholrad">' + esc(mmClockOfMs(t0)) + "</span>" +
+      '<span class="takt dim" title="Aufbruch war bei der Übernahme; ohne Fahrplan gibt es hier nichts vorauszusagen">' + esc(mmClockOfMs(t0)) + "</span>" +
+      '<span class="rtnamev">📍 <b>Start:</b> ' + esc(String(mm.from.name)) + "</span></div>" +
+    '<div class="bksub">🚶 Fußweg ' + legTxt(mm.legs && mm.legs[0], mm.w1) + "</div></div>";
   h += '<div class="routesec" data-rsi="1">' + leg(1) + '<i class="rtc rttop"></i>' +
-    '<div class="rtstop">🚲 <b>Abholrad ' + escapeHtml(bikeNameLabel(mm.bike)) + '</b> (' + (mm.bike.t === "ebike" ? "E-Bike" : "Standardrad") + ') <span class="dim">· an ' + mmClockOfMs(t1) + ' Uhr</span>' + donkeyDlChip(mm.bike) + '</div>' +
-    '<div class="bksub">🚶 Fußweg ' + legTxt(mm.legs && mm.legs[0], mm.w1) + '</div></div>';
+    mmRowHTML(1, t1, predOf("bike"),
+      '<span class="rtnamev" title="Abhol-Station des Rads (das Rad selbst steht in der Unterzeile, ohne Kurz-ID im Klartext)">🚲 <b>Abholung:</b> ' + esc(abholName) + "</span>",
+      "Geplante Ankunft am Abholrad (bei Übernahme berechnet)",
+      "Aktuelle Ankunft am Abholrad aus deiner GPS-Bewegung (kursiv = Raum-Zeit); ohne Live-Ortung gilt der Plan") +
+    '<div class="bksub">' + (mm.bike.t === "ebike" ? "⚡ E-Bike" : "🚲 Standardrad") +
+      (mm.bike.n ? " " + esc(String(mm.bike.n)) : "") +
+      (mm.bike.fu != null ? " · Akku " + mm.bike.fu + " %" : "") +
+      (mm.bike.rm != null ? " · ca. " + Math.max(1, Math.round(mm.bike.rm / 1000)) + " km Reichweite" : "") +
+      donkeyDlChip(mm.bike) + "</div></div>";
   h += '<div class="routesec" data-rsi="2">' + '<i class="rtleg"><i class="rfill" data-rsi="1"></i></i><i class="rtlnk"></i>' +
-    '<div class="rtstop">🔧 Ausleihen + Zurückgeben <span class="dim">· +' + mm.handle + ' min</span></div></div>';
+    mmRowHTML(2, t2, predOf("ride"),
+      '<span class="rtnamev">🔧 Ausleihen + Zurückgeben<span class="rtnsub"> · Fahrtbeginn nach +' + mm.handle + " min</span></span>",
+      "Geplanter Beginn der Radfahrt (Ausleihen und Zurückgebens des Rads)",
+      "Aktueller Beginn der Radfahrt aus deiner GPS-Bewegung (kursiv = Raum-Zeit); ohne Live-Ortung gilt der Plan") + "</div>";
   h += '<div class="routesec" data-rsi="3">' + leg(2) + '<i class="rtc rttop"></i>' +
-    '<div class="rtstop">■ <b>Rückgabe:</b> ' + esc(String(mm.drop.name)) + ' <span class="dim">· an ' + mmClockOfMs(t3) + ' Uhr</span></div>' +
-    '<div class="bksub">🚴 Radfahrt ' + legTxt(mm.legs && mm.legs[1], mm.rb) + ' · ' + (mm.bike.t === "ebike" ? "22" : "17") + ' km/h</div></div>';
-  h += '<div class="routesec rtlast" data-rsi="4"><i class="rtc rtbot"></i>' +
-    '<div class="rtstop">🎯 <b>Ziel:</b> ' + esc(String(mm.dest.name)) + ' <span class="dim">· an ' + planC + ' Uhr</span></div>' +
-    '<div class="bksub">🚶 Fußweg ' + legTxt(mm.legs && mm.legs[2], mm.w2) + '</div></div>';
+    mmRowHTML(3, t3, predOf("drop"),
+      '<span class="rtnamev">■ <b>Rückgabe:</b> ' + esc(String(mm.drop.name)) + "</span>",
+      "Geplante Ankunft an der Rückgabe-Station (bei Übernahme berechnet)",
+      "Aktuelle Ankunft an der Rückgabe-Station aus deiner GPS-Bewegung (kursiv = Raum-Zeit); ohne Live-Ortung gilt der Plan") +
+    '<div class="bksub">🚴 Radfahrt ' + legTxt(mm.legs && mm.legs[1], mm.rb) + " · " + (mm.bike.t === "ebike" ? "22" : "17") + " km/h</div></div>";
+  h += '<div class="routesec rtlast" data-rsi="4">' + leg(2) + '<i class="rtc rtbot"></i>' +   // v1.6.9: Bein bis zum Ziel-Ring, der Strahl schließt jetzt physisch an
+    mmRowHTML(4, mm.planArrMs, predOf("dest"),
+      '<span class="rtnamev">🎯 <b>Ziel:</b> ' + esc(String(mm.dest.name)) + "</span>",
+      "Geplante Ankunft am Ziel (bei Übernahme berechnet)",
+      "Aktuelle Ankunft am Ziel aus deiner GPS-Bewegung (kursiv = Raum-Zeit); ohne Live-Ortung gilt der Plan") +
+    '<div class="bksub">🚶 Fußweg ' + legTxt(mm.legs && mm.legs[2], mm.w2) + "</div></div>";
   h += '<div class="routesec" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">' +
     ' <a class="achip" data-uumaplive="1" target="_blank" rel="noopener" href="' + bikeUmapURL(mmUmapFeats(mm), mm.umapCenter) +
-    '" title="4-Punkte-Übersicht auf uMap, beim Öffnen wird die momentane GPS-Position frisch abgefragt und als fünfter Punkt 📍 mitgesetzt (die Berechtigung fragt diese Seite ab, uMap braucht keine eigene)">🗺 uMap: 4-Punkte-Route</a>' +
+    '" title="4-Punkte-Übersicht auf uMap, beim Öffnen wird die momentane GPS-Position frisch abfragt und als fünfter Punkt 📍 mitgesetzt (die Berechtigung fragt diese Seite ab, uMap braucht keine eigene)">🗺 uMap: 4-Punkte-Route</a>' +
     rtAppChipsHTML([mm.from, mm.bike, mm.drop, mm.dest], "bike") +
     "</div>";
   h += "</div></div>";   // rtrail + routecon zu
@@ -14061,6 +14185,30 @@ function mmTick() {
     const de = document.getElementById("mmdelayspan");
     if (de) de.outerHTML = mmDelaySpanHTML(pred ? Math.round((pred.arrMs - mm.planArrMs) / 60000) : null, !!pred);
   }
+  // v1.6.9: Die Zeilen des MM-Fahrtverlaufs (Gep./Aktuell, Abweichung,
+  // Sekunden-Countdown) im selben Takt auffrischen, ohne neu zu rendern:
+  // Aktuell-Uhr kursiv nachführen, Chips und Countdown-Ziele neu setzen (der
+  // 1-s-Ticker pflegt die M:SS-Anzeige zwischen den Ticks).
+  const rows = mmPanel.querySelectorAll("[data-mmsrow]");
+  if (!rows.length) return;
+  const pp = mmPredPoints(mm), nowMs = Date.now();
+  const pOf = k => (pp ? (k === 1 ? pp.bike : k === 2 ? pp.ride : k === 3 ? pp.drop : k === 4 ? pp.dest : null) : null);
+  rows.forEach(row => {
+    const k = Number(row.dataset.mmsrow), planMs = Number(row.dataset.mmplan);
+    if (!(planMs > 0)) return;
+    let predMs = pOf(k);
+    if (predMs != null && predMs <= nowMs - 60000) predMs = null;   // vergangene Punkte gelten als ohne Voraussage
+    const ak = row.querySelector("[data-mmakt]");
+    if (ak) {
+      const t = predMs != null ? "≈" + mmClockOfMs(predMs) : mmClockOfMs(planMs);
+      if (ak.textContent !== t) { ak.textContent = t; ak.className = "takt " + (predMs != null ? "szt" : "dim"); }
+    }
+    const wx = row.querySelector("[data-mmx]");
+    if (wx) {
+      const inner = mmRowXtraHTML(planMs, predMs);
+      if (wx.innerHTML !== inner) wx.innerHTML = inner;
+    }
+  });
 }
 
 // ---------- v1.4.14: MM-Reiter (Micromobility) ----------
@@ -14119,7 +14267,7 @@ function closeMMTab(i) {
 }
 function mmWheelRow(v) {   // v1.4.16: eine Rad-Zeile der Stations-Listen, Donkey-App-Link inline hinter dem Namen
   return '<div class="bkrow"><div class="bkmeta"><div class="bkt">' + (v.t === "ebike" ? "⚡" : "🚲") +
-    " <b>" + escapeHtml(bikeNameLabel(v)) + "</b>" + donkeyDlChip(v) +
+    " <b>" + escapeHtml(bikeNiceLabel(v)) + "</b>" + donkeyDlChip(v) +
     (v.fu != null ? ' <span class="dim">· Akku ' + v.fu + " %</span>" : "") +
     (v.rm != null ? ' <span class="dim">· ca. ' + Math.max(1, Math.round(v.rm / 1000)) + ' km Reichweite</span>' : "") +
     (v.rs ? ' <span class="dim">· reserviert</span>' : "") + (v.dis ? ' <span class="dim">· gesperrt</span>' : "") +
@@ -15242,7 +15390,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.8 · Build: 23.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.9 · Build: 23.11.2026</div>
 </div>
 </body>
 </html>
