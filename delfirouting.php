@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.3
+ * delfirouting.php - v0.2.4
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,12 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.4 Query-Fehlerfix: dfr_route() bekam als zehnten Parameter das
+ *   Zeitlimit als FLOAT (microtime(true) + DFR_TIMEOUT_S), der Signatur-
+ *   Parameter ist aber int und mit strict_types=1 warf PHP einen TypeError
+ *   Fatal, der als leerer HTTP 500 erschien. Erst das v0.2.3-try/catch machte
+ *   ihn sichtbar: Der TypeError war die Ursache der Query-500er vom
+ *   23.11.2026 (nicht der Speicher). Fix: int-Cast an der Aufrufstelle.
  * v0.2.3 Robustheits-Patch nach dem ersten DODP-Vollbau-Lauf (alle Web-Modi
  * sind speicher- und fehlersicher geworden):
  *   - probe zaehlt stops/trips als STROM (fgets) statt count(file()), das
@@ -84,7 +90,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.3';
+const DFR_V          = 'delfirouting 0.2.4';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -1924,7 +1930,9 @@ function dfr_query_run(array $q): void {
         $rt = count($delays);
     }
     $res = dfr_route($ix, $fLa, $fLo, $tLa, $tLo, $depMin, $walk, $limit, $delays,
-        $t0 + DFR_TIMEOUT_S);
+        (int)($t0 + DFR_TIMEOUT_S));   /* v0.2.4: microtime-Sekunden als FLOAT,
+                                          int-Parameter verlangte strict_types einen
+                                          int-Cast (TypeError-Fix der Query-500er) */
     $ms = (int)round((microtime(true) - $t0) * 1000);
     if (isset($res['err'])) {
         $msg = $res['err'] === 'noaccess'
