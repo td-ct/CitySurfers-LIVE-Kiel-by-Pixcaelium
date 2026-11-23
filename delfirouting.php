@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.10
+ * delfirouting.php - v0.2.11
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -10,6 +10,26 @@ declare(strict_types=1);
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
  *
+ * v0.2.11 Verlauf fuer die App + Parent-Parse-Fix (Timo-Report 23.11.2026
+ *   abends: delfirouting liefert Ergebnisse, aber JEDE Fahrt zeigte die
+ *   Linie von Trip 0 (zufaellig "61"), Richtung immer leer ("Richtung ?"
+ *   in der App) und der Fahrtverlauf der Linien war nicht aufklappbar):
+ *   (1) URSAECHLICHER PARSE-BUG seit v0.1.0: Der Parent-Zeiger der Welle
+ *   ist 'j' . trip . '|' . seq . '|' . stop . '|' . dep . '|' . arr
+ *   bzw. 'w' . stop . '|' . walkmin - die Leg-Zusammenlegung exploade('|')
+ *   aber OHNE das 'j'/'w'-Praefix abzutrennen, und (int)'j4157842' ist in
+ *   PHP 0. Detail: $pp[2]/[3]/[4] (Stop/dep/arr) trafen zufaellig die
+ *   richtigen Felder, nur $pp[0] war 'j<trip>' -> Linie/Verzoegerung/Fuss-
+ *   weg-Start UND die Ruckwaerts-Kette nach Umstiegs-Fusswegen liefen auf
+ *   Trip 0 bzw. Stop 0 (jene Conns fielen dann ersatzlos weg). Fix:
+ *   explode('|', substr($pd, 1)) - Indizes bleiben unveraendert.
+ *   (2) Legs jny tragen jetzt 'tid' (TripNr) und 'stops' (Soll-Verlauf des
+ *   eigenen Abschnitts aus dem tprof: seq/board..exit, Name, dep/arr-Times,
+ *   lat/lon) - die App kann den Abschnitts-Verlauf damit direkt aufklappen.
+ *   (3) NEU ?trip=<TripNr>: ganzer Lauf einer Fahrt (profil-sortiert, mit
+ *   seq/dep/arr/name/lat/lon/active) fuer die App-Erweiterung "ganzer
+ *   Lauf" und fuer die spaeter-Halt-Weitestfahren-Pruefung. Kein Index-/
+ *   Format-Aufwand, Deploy reicht.
  * v0.2.10 fgets-Schutz (Timo-Report 23.11.2026 nachmittag: manuelle
  *   delfirouting-Wahl in der App warf fatal "TypeError: fgets(): Argument
  *   #1 ($stream) must be of type resource, false given"): (1) Im Query-Pfad
@@ -177,7 +197,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.10';
+const DFR_V          = 'delfirouting 0.2.11';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -1619,6 +1639,93 @@ function dfr_trip_headsign(DfrIdx $ix, int $tripNr): string {
     return $hsCache[$tripNr];
 }
 
+/** v0.2.11: Soll-Verlauf eines Abschnitts aus dem tprof: alle Halt-Eintraege
+ *  von der Zustiegs-Seq bis zur Ausstiegs-Station (erste passende nach Seq),
+ *  je {name, dep, arr, lat, lon}; Zeilen sind tprof-Sortierung = Seq steigend.
+ *  dep/arr je Eintrag in Tagesminuten inkl. Delay-Anteil dM (Soll + Delay);
+ *  erster Eintrag uebernimmt die Leg-dep, letzter die Leg-arr (Original der
+ *  Welle, inkl. Clamp). Fallback: nur Zustieg + Ausstieg. */
+function dfr_trip_seg(DfrIdx $ix, int $tripNr, int $boardSeq, int $boardStop,
+    int $exitStop, int $depMin, int $arrMin, int $dM): array {
+    $mk = function (int $stop, ?int $dep, ?int $arr) use ($ix): array {
+        $ll = dfr_stop_ll($ix, $stop);
+        return ['name' => dfr_stop_name($ix, $stop),
+            'dep' => $dep === null ? null : dfr_min2hm($dep),
+            'arr' => $arr === null ? null : dfr_min2hm($arr),
+            'lat' => $ll === null ? null : round($ll[0], 5),
+            'lon' => $ll === null ? null : round($ll[1], 5)];
+    };
+    $d = dfr_tprof($ix, $tripNr);
+    if ($d === null || $d[0] < 1)
+        return [$mk($boardStop, $depMin, null), $mk($exitStop, null, $arrMin)];
+    [$cnt, $pr] = $d;
+    $i0 = -1;
+    for ($i = 0; $i < $cnt; $i++) {
+        $r = unpack('vseq/vdep/varr/Vstop', substr($pr, $i * 10, 10));
+        if ($r === false) break;
+        if ((int)$r['seq'] === $boardSeq) { $i0 = $i; break; }
+        if ((int)$r['seq'] > $boardSeq && $i0 < 0) $i0 = $i;   /* Seq fehlt: naechste nehmen */
+    }
+    if ($i0 < 0)
+        return [$mk($boardStop, $depMin, null), $mk($exitStop, null, $arrMin)];
+    /* Ausstieg: erste Station nach der Zustiegs-Seq mit passendem Ziel (bei
+     * Rundkursen vorzugsweise die mit uebereinstimmender Ankunftszeit). */
+    $i1 = -1; $i1t = -1;
+    for ($i = $i0 + 1; $i < $cnt; $i++) {
+        $r = unpack('vseq/vdep/varr/Vstop', substr($pr, $i * 10, 10));
+        if ($r === false) break;
+        if ((int)$r['stop'] !== $exitStop) continue;
+        $ar = (int)$r['arr'] + $dM;
+        if ($ar > 65535) $ar = 65535;
+        if ($i1 < 0) $i1 = $i;
+        if ($ar === $arrMin) { $i1t = $i; break; }
+    }
+    if ($i1t >= 0) $i1 = $i1t;
+    if ($i1 < 0) {   /* Ausstieg nicht im Profil (sollte nicht passieren): Mindest-Liste */
+        $out = [$mk($boardStop, $depMin, null)];
+        if ($exitStop !== $boardStop) $out[] = $mk($exitStop, null, $arrMin);
+        return $out;
+    }
+    $out = [];
+    for ($i = $i0; $i <= $i1; $i++) {
+        $r = unpack('vseq/vdep/varr/Vstop', substr($pr, $i * 10, 10));
+        if ($r === false) break;
+        $dp = ((int)$r['dep'] + $dM) & 0xFFFF;
+        $ar = (int)$r['arr'] + $dM;
+        if ($ar > 65535) $ar = 65535;
+        $e = $mk((int)$r['stop'], $dp, $ar);
+        if ($i === $i0) $e['dep'] = dfr_min2hm($depMin);       /* Leg-dep uebernehmen */
+        if ($i === $i1) $e['arr'] = dfr_min2hm($arrMin);       /* Leg-arr uebernehmen */
+        $out[] = $e;
+    }
+    return $out;
+}
+
+/** v0.2.11: Ganzer Lauf einer Fahrt (?trip=<TripNr>): profil-sortierte
+ *  Soll-Halteliste mit seq/dep/arr/name/lat/lon plus line/dir/active. */
+function dfr_trip_out(DfrIdx $ix, int $tripNr): array {
+    $stops = [];
+    $d = dfr_tprof($ix, $tripNr);
+    if ($d !== null) {
+        [$cnt, $pr] = $d;
+        for ($i = 0; $i < $cnt; $i++) {
+            $r = unpack('vseq/vdep/varr/Vstop', substr($pr, $i * 10, 10));
+            if ($r === false) break;
+            $ll = dfr_stop_ll($ix, (int)$r['stop']);
+            $stops[] = ['seq' => (int)$r['seq'],
+                'dep' => dfr_min2hm((int)$r['dep']),
+                'arr' => dfr_min2hm((int)$r['arr']),
+                'name' => dfr_stop_name($ix, (int)$r['stop']),
+                'lat' => $ll === null ? null : round($ll[0], 5),
+                'lon' => $ll === null ? null : round($ll[1], 5)];
+        }
+    }
+    return ['ok' => true, 'v' => DFR_V, 'src' => $ix->src, 'day' => $ix->day,
+        'trip' => $tripNr, 'line' => dfr_trip_label($ix, $tripNr),
+        'dir' => dfr_trip_headsign($ix, $tripNr),
+        'active' => dfr_trip_active($ix, $tripNr), 'stops' => $stops];
+}
+
 /** Zubringerstops um einen Punkt (3x3 Grid-Zellen, gecacht, naechste zuerst). */
 function dfr_near_stops(DfrIdx $ix, float $lat, float $lon, int $radius, int $maxN): array {
     $key = sprintf('%.5f|%.5f|%d', $lat, $lon, $radius);
@@ -1932,7 +2039,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
             if ($pd === null) break;
             $at = $pd[0];
             if ($at === 'j') {
-                $pp = explode('|', $pd);
+                $pp = explode('|', substr($pd, 1));   /* v0.2.11: 'j'<trip>-Praefix abtrennen, (int)'j123' waere sonst 0 */
                 $legs = array_merge([[
                     'k' => 'jny',
                     'line' => dfr_trip_label($ix, (int)$pp[0]),
@@ -1942,12 +2049,16 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                     'dep' => dfr_min2hm((int)$pp[3]),
                     'arr' => dfr_min2hm((int)$pp[4]),
                     'dD' => $delays[(int)$pp[0]] ?? null,
+                    'tid' => (int)$pp[0],   /* v0.2.11: TripNr fuer ?trip= (ganzer Lauf) */
+                    'stops' => dfr_trip_seg($ix, (int)$pp[0], (int)$pp[1], (int)$pp[2],
+                        $cur, (int)$pp[3], (int)$pp[4],
+                        (($delays[(int)$pp[0]] ?? 0) > 0) ? intdiv((int)$delays[(int)$pp[0]], 60) : 0),
                 ]], $legs);
                 $sig[] = 'j' . $pp[0] . '@' . $pp[2];
                 $lines++;
                 $cur = (int)$pp[2];
             } else {
-                $pp = explode('|', $pd);
+                $pp = explode('|', substr($pd, 1));   /* v0.2.11: 'w'<stop>-Praefix abtrennen */
                 $legs = array_merge([[
                     'k' => 'walk',
                     'from' => dfr_stop_name($ix, (int)$pp[0]),
@@ -2276,6 +2387,7 @@ function dfr_query_run(array $q): void {
     elseif (isset($q['warm'])) $mode = 'warm';
     elseif (isset($q['probe'])) $mode = 'probe';
     elseif (isset($q['diag'])) $mode = 'diag';
+    elseif (isset($q['trip'])) $mode = 'trip';   /* v0.2.11: ganzer Lauf einer Fahrt */
 
     /* v0.2.3: Fatale Fehler (TypeError/ValueError/Exception usw.) vorher wurden
      * zum leeren HTTP 500 (display_errors aus); sie kommen jetzt als JSON
@@ -2310,6 +2422,14 @@ function dfr_query_run(array $q): void {
         case 'diag':
             @set_time_limit(60);   /* v0.2.5: Bitmap-Strom + Block-Samples */
             dfr_out(dfr_diag());
+        case 'trip':   /* v0.2.11: ?trip=<TripNr> - ganzer Lauf (Soll, aus tprof) */
+            @set_time_limit(30);
+            $ixT = dfr_idx();
+            if ($ixT->dir === '') {
+                dfr_out(['ok' => false, 'code' => 'nodata', 'v' => DFR_V,
+                    'msg' => 'Noch kein Tagesindex. Erst import=1 bzw. warm=1 ausfuehren.']);
+            }
+            dfr_out(dfr_trip_out($ixT, (int)($q['trip'] ?? 0)));
         default:
             if (isset($q['from']) && isset($q['to'])) {
                 @ini_set('memory_limit', DFR_MEM);
