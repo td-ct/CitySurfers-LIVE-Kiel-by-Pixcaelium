@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.2
+ * delfirouting.php - v0.2.3
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -9,6 +9,22 @@ declare(strict_types=1);
  * fv/rv/nv (CC-BY, Datenbasis DELFI) bleiben als Failsafe drin, falls kein
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
  * Fusswege als Luftlinie 1,3x mit 5 km/h.
+ *
+ * v0.2.3 Robustheits-Patch nach dem ersten DODP-Vollbau-Lauf (alle Web-Modi
+ * sind speicher- und fehlersicher geworden):
+ *   - probe zaehlt stops/trips als STROM (fgets) statt count(file()), das
+ *     lud die kompletten TSVs (1,3 Mio bzw. 1,9 Mio Zeilen) als Array in den
+ *     RAM und starb am Web-SAPI-Limit mit HTTP 500 ohne Body; probe nennt
+ *     jetzt zusaetzlich Dateigroessen, DONE-Stand, PHP-SAPI, memory_limit und
+ *     ob gerade ein Bau-Prozess laeuft (build.lock).
+ *   - dfr_trip_active liest das Aktiv-Bit per fseek+EIN Byte aus tripday.bin
+ *     statt die komplette Datei (rund 30 MB) als String zu laden.
+ *   - dfr_build haelt ein LOCK_EX|LOCK_NB auf build.lock: GENU EIN Bau-Prozess;
+ *     warm=1 antwortet waehrend eines laufenden Imports mit code:busy, statt
+ *     sich mit den Resume-Zaichern desselben Baus zu verheddern. Das Lock
+ *     endet mit dem Prozess (auch bei kill), es bleibt kein Rest zurueck.
+ *   - Alle Web-Modi melden Fatale Fehler als JSON {ok:false,code:fatal,...}
+ *     mit Klasse, Meldung und Zeile statt als leerer HTTP 500.
  *
  * Projekt CitySurfers LIVE @ Kiel by Pixcaelium (td-ct) - Timo Damm.
  * Web: pixcaelium.timo-damm.de/apps/citysurfers/ (liegt parallel zu
@@ -68,7 +84,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.2';
+const DFR_V          = 'delfirouting 0.2.3';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -382,6 +398,17 @@ function dfr_build(int $budgetS): array {
         return ['ok' => false, 'code' => 'nozip',
             'msg' => 'PHP-ZipArchive fehlt; Extension zip wird benoetigt.'];
     }
+    /* v0.2.3: Bau-Lock: GENU EIN bauender Prozess (Import-Langlaeufer ODER
+     * warm-Runde). Ohne Lock schrieb ein warm=1 waehrend des laufenden Imports
+     * mit denselben Resume-Zaehnern in diesselben Dateien. Das Lock gilt fuer
+     * die Lebensdauer des Prozesses (auch bei kill sofort frei, kein Rest). */
+    if (!is_dir(dfr_base())) @mkdir(dfr_base(), 0755, true);
+    $lf = @fopen(dfr_base() . '/build.lock', 'c');
+    if ($lf === false || !flock($lf, LOCK_EX | LOCK_NB)) {
+        return ['ok' => false, 'code' => 'busy',
+            'msg' => 'Ein Bau-Prozess (Import/warm) ist bereits aktiv; ohne Aenderungen beendet.'];
+    }
+    register_shutdown_function(function () use ($lf) { @flock($lf, LOCK_UN); });
     if ($budgetS > 0) @set_time_limit($budgetS + 30); else @set_time_limit(0);
     @ini_set('memory_limit', '1024M');
     $tEnd = $budgetS > 0 ? time() + $budgetS : PHP_INT_MAX;
@@ -1240,7 +1267,7 @@ class DfrIdx {
     public string $day0 = '';          /* dodp: erster Index-Tag */
     public int $dayIdx = 0;           /* dodp: heutiger Tag 0..127 */
     public string $validUntil = '';   /* dodp: letzter gueltiger Tag */
-    public ?string $tripday = null;   /* dodp: tripday.bin lazy geladen */
+    public ?string $tripday = null;   /* dodp: seit v0.2.3 ungenutzt (Handle-Zugriff), bleibt aus Kompatibilitaet */
     /** @var resource|null */
     public $fhC = null;              /* Handle-Cache: path => resource */
     public array $h = [];
@@ -1300,17 +1327,18 @@ function dfr_idx(): DfrIdx {
     return $idx;
 }
 
-/** DODP: laeuft die Fahrt laut 128-Tage-Bitmaske am heutigen Index-Tag? */
+/** DODP: laeuft die Fahrt laut 128-Tage-Bitmaske am heutigen Index-Tag?
+ *  v0.2.3: Handle + fseek + EIN Byte statt file_get_contents der kompletten
+ *  tripday.bin (rund 30 MB bei 1,9 Mio Trips) je Anfrage. */
 function dfr_trip_active(DfrIdx $ix, int $tripNr): bool {
     if ($ix->src !== 'dodp') return true;
-    if ($ix->tripday === null) {
-        $p = $ix->dir . '/tripday.bin';
-        $ix->tripday = is_file($p) ? (string)file_get_contents($p) : '';
-    }
-    if ($ix->tripday === '') return true;   /* Fehlschutz: Bitmaske weg */
+    $fh = dfr_fopen($ix->dir . '/tripday.bin');
+    if ($fh === null) return true;   /* Fehlschutz: Bitmaske weg */
     $o = $tripNr * 16 + ($ix->dayIdx >> 3);
-    if ($o >= strlen($ix->tripday)) return false;
-    return ((ord($ix->tripday[$o]) >> ($ix->dayIdx & 7)) & 1) === 1;
+    if (@fseek($fh, $o) !== 0) return false;   /* Fehler: Trip hinter Dateiende => nicht aktiv */
+    $b = @fread($fh, 1);
+    if ($b === false || $b === '') return false;   /* hinter dem Dateiende: nicht aktiv */
+    return ((ord($b) >> ($ix->dayIdx & 7)) & 1) === 1;
 }
 function dfr_fopen(string $path) {
     global $_dfr_handles;
@@ -1783,6 +1811,23 @@ function dfr_out(array $j, int $httpCode = 200): void {
     exit;
 }
 
+/** v0.2.3: Zeilen als STROM zaehlen (O(1) RAM). count(file()) haelt die
+ *  komplette Datei als Array von Strings, DODP-Stand sind 1,3 Mio bzw.
+ *  1,9 Mio Zeilen; am Speicher-Limit eines Web-SAPI war das ein sofortiger
+ *  Memory-Fatal (HTTP 500 ohne Body). Rueckgabe -1 = nicht lesbar. */
+function dfr_linecount(string $p): int {
+    $fh = @fopen($p, 'rb');
+    if ($fh === false) return -1;
+    $n = 0;
+    while (fgets($fh, 8192) !== false) $n++;
+    @fclose($fh);
+    return $n;
+}
+/** v0.2.3: Dateigroesse in MiB (gerundet), 0.0 bei Fehler. */
+function dfr_mb(string $p): float {
+    $sz = @filesize($p);
+    return ($sz === false) ? 0.0 : round($sz / 1048576.0, 1);
+}
 function dfr_probe(): array {
     $ix = dfr_idx();
     $st = dfr_state_get();
@@ -1794,25 +1839,45 @@ function dfr_probe(): array {
             'src' => $ix->src,
             'is_today' => $ix->day === dfr_day_zo(),
             'stops' => null, 'trips' => null,
+            'done' => is_file($ix->dir . '/DONE'),   /* v0.2.3: fin-Stand des Index */
         ];
         if ($ix->src === 'dodp') {
             $idx['day0'] = $ix->day0;
             $idx['valid_until'] = $ix->validUntil;
             $idx['day_index'] = $ix->dayIdx;
         }
-        if (is_file($ix->dir . '/stops.tsv')) $idx['stops'] = count(file($ix->dir . '/stops.tsv'));
-        if (is_file($ix->dir . '/trips.tsv')) $idx['trips'] = count(file($ix->dir . '/trips.tsv'));
+        /* v0.2.3: Strom-Zaehlung + Groessen statt count(file()) */
+        if (is_file($ix->dir . '/stops.tsv')) {
+            $idx['stops'] = dfr_linecount($ix->dir . '/stops.tsv');
+            $idx['stops_mb'] = dfr_mb($ix->dir . '/stops.tsv');
+        }
+        if (is_file($ix->dir . '/trips.tsv')) {
+            $idx['trips'] = dfr_linecount($ix->dir . '/trips.tsv');
+            $idx['trips_mb'] = dfr_mb($ix->dir . '/trips.tsv');
+        }
+        if (is_file($ix->dir . '/tripday.bin')) $idx['tripday_mb'] = dfr_mb($ix->dir . '/tripday.bin');
     }
     $dz = null;
     $dz2 = dfr_dodp_find();
     if ($dz2 !== null)
         $dz = ['file' => basename($dz2[0]), 'age_h' => (int)((time() - $dz2[1]) / 3600)];
+    /* v0.2.3: laeuft gerade ein Bau-Prozess (Import/warm)? build.lock anfassen,
+     * ohne ihn zu halten: Erwerb gelingt nur, wenn KEIN anderer Baeuer ihn haelt. */
+    $lf = @fopen(dfr_base() . '/build.lock', 'c');
+    $building = null;
+    if ($lf !== false) {
+        $building = !@flock($lf, LOCK_EX | LOCK_NB);
+        if (!$building) @flock($lf, LOCK_UN);   /* nur geprueft, sofort wieder frei */
+        @fclose($lf);
+    }
     return ['ok' => true, 'v' => DFR_V,
         'src' => $ix->dir !== '' ? $ix->src : 'none',
         'phase' => $st['phase'] ?? 'idle',
         'state_day' => $st['day'] ?? '', 'state_day0' => $st['day0'] ?? '',
         'idx' => $idx, 'dodp_zip' => $dz,
-        'php' => PHP_VERSION, 'zip' => class_exists('ZipArchive')];
+        'building' => $building,
+        'php' => PHP_VERSION, 'zip' => class_exists('ZipArchive'),
+        'sapi' => PHP_SAPI, 'mem' => @ini_get('memory_limit')];
 }
 
 function dfr_query_run(array $q): void {
@@ -1906,6 +1971,12 @@ function dfr_query_run(array $q): void {
     elseif (isset($q['warm'])) $mode = 'warm';
     elseif (isset($q['probe'])) $mode = 'probe';
 
+    /* v0.2.3: Fatale Fehler (TypeError/ValueError/Exception usw.) vorher wurden
+     * zum leeren HTTP 500 (display_errors aus); sie kommen jetzt als JSON
+     * {ok:false,code:fatal} mit Klasse, Meldung und Zeile zurueck. Ein
+     * Memory-Fatal bleibt weiterhin unaufhaltbar leer - die bekannten
+     * Riesen-Ladungen sind dafuer in dieser Version beseitigt. */
+    try {
     switch ($mode) {
         case 'import':
             if (!$cli) {
@@ -1923,10 +1994,11 @@ function dfr_query_run(array $q): void {
             exit(($r['ok'] ?? false) ? 0 : 1);
         case 'warm':
             @set_time_limit(DFR_BUDGET_S + 30);
-            @ini_set('memory_limit', DFR_MEM);
+            @ini_set('memory_limit', '1024M');   /* v0.2.3: wie import; die Resume-Pfade laden stopmap+tripmap, an 512M starb das */
             $r = dfr_build(DFR_BUDGET_S);
             dfr_out($r);
         case 'probe':
+            @set_time_limit(90);   /* v0.2.3: Strom-Zaehlung von bis zu 3,2 Mio Zeilen */
             dfr_out(dfr_probe());
         default:
             if (isset($q['from']) && isset($q['to'])) {
@@ -1935,5 +2007,12 @@ function dfr_query_run(array $q): void {
             }
             dfr_out(['ok' => false, 'code' => 'params',
                 'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 | probe=1 | warm=1']);
+    }
+    } catch (Throwable $e) {
+        dfr_out(['ok' => false, 'code' => 'fatal',
+            'msg' => get_class($e) . ': ' . $e->getMessage(),
+            'file' => basename($e->getFile()), 'line' => $e->getLine(),
+            'v' => DFR_V, 'php' => PHP_VERSION, 'sapi' => PHP_SAPI,
+            'mem' => @ini_get('memory_limit')]);
     }
 })();
