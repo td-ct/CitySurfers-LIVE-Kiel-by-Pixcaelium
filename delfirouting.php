@@ -11,6 +11,38 @@ declare(strict_types=1);
  * Zubringer-/Ziellaeufe OSRM-geroutet (FOSSGIS, Fallback Luftlinie 1,3x mit
  * 5 km/h), Modi &vm=walk|bike|ebike|scoot (17/22/18 km/h, +2 min Handhabung).
  *
+ * v0.2.13 Echtzeit-Katalog fuer den DODP-Index (Timo 24.11.2026 abends: "mit
+ *   Delfirouting eine gute Planung und trotzdem VBB/Echtzeit einblenden; IDs
+ *   matchen? Katalog bauen!" - Der App-Output traegt dD je Fahrt schon seit
+ *   v0.2.11, rt war aber IMMER 0, weil der bisherige Join nur den gtfs.de-free-
+ *   Strom kannte, dessen anonymisierte Kurz-IDs NUR zum free-Index passen).
+ *   Neu ist eine zweistufige Zuordnung gegen den echten DELFI-Pool ( dieselbe
+ *   Mobilithek-Subscription wie delfiproxy.php, mit deren mTLS-Zertifikaten aus
+ *   ../delficerts, gemeinsame Strom-Datei ../pool.pb mit flock-Verriegelung,
+ *   so dass beide Proxies sich abwechseln, ohne sich zu stoeszen):
+ *   Stufe 1 EXAKT: Pool-Trip-ID == DODP-trips.tsv-Trip-ID (beide offizielle
+ *   DELFI-Kenner; Treffer tendiert gegen 100 % und geht VOR der Welle in die
+ *   Fahrzeiten), Stufe 2 HEURISTIK (der "Katalog"): je Fahrteintrag im Pool-
+ *   Strom wird stop_id (de:-Kenner) + geplante Abfahrt (departure-ts minus
+ *   delay) indiziert; fuer Fahrt-Legs OHNE exakten Treffer wird am Einstiegs-
+ *   Halt die haltestellen-und-minutengenaue Passage gegen den Index geprueft
+ *   (+/- 4 min Fenster, naechster gewinnt) und die Verspaetung nachgereicht
+ *   (nachtraeglich, Anzeige-Ebene). Antwort sagt rt (Anzahl), rt_src
+ *   (pool|pool+heur|free) und Pool-Trip-ID-Proben in probe=1 (rtcat: raw Trips,
+ *   exakte Joins, Katalog-Stopzahl) - so sieht man nach dem Deploy sofort,
+ *   ob Stufe 1 greift.
+ *   ZWEITE Heilung (Timo: "S-Bahn mit weit entfernten Zielen und die Ringbahn
+ *   anpassen, durchgehende Verbindung nach Potsdam"): Der Wellen-Markierer
+ *   kappt bei Ueberlauf die markierten Stops auf die DFR_MARK_CAP fruehesten
+ *   (tau-sortiert) - fernen Durchfahrts-Halten (spaete tau, z. B. Potsdam Hbf
+ *   nach durchgehender S7) wird damit der Anschluss-Weg abgeschnitten und die
+ *   Rekonstruktion verknotet sich durch Bus/Ring-Kaskaden. Neu: das Kappt-
+ *   Stueck haelt ZUSAETZLICH (a) die DFR_MARK_TAIL spaetesten Stops als
+ *   Ferne-Frontier ( Durchfahrt-Ketten laufen weiter), (b) ALLE Ziel-
+ *   Zubringerstops (walkTo) unkappbar und (c) optional &dbg=1 in der Antwort
+ *   ein dbg-Block (je Welle: rein/gekappt/head+tail+acc, bestFinish-Minuten),
+ *   damit Potsdam-artige Faelle nach Deploy im Blick bleiben.
+ *   Zusaetzlich DFR_ROUNDS 8 -> 9.
  * v0.2.12 Keine Hop-Doppelung im Endlauf + OSRM-echte Zubringerdauern +
  *   Modi bike/ebike/scoot (Timo-Report 24.11.2026): (1) Der Ziellauf einer
  *   Verbindung lief als HOP-KETTE von Haltestellen (Beispiel Bremerskamp ->
@@ -227,7 +259,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.12';
+const DFR_V          = 'delfirouting 0.2.13';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -243,10 +275,15 @@ const DFR_IMPORT_S  = 900;     /* import: Budget eines Cron-Slots */
 const DFR_TIMEOUT_S = 25;      /* harte Obergrenze je Routing-Anfrage */
 const DFR_TRANS_M   = 600;     /* Geo-Transferradius Fussweg (m) */
 const DFR_TRANS_MAX = 14;      /* max. naechste Transferpartner je Stop */
-const DFR_ROUNDS    = 8;       /* Wellen der Routing-Engine */
+const DFR_ROUNDS    = 9;       /* Wellen der Routing-Engine (v0.2.13: +1 f. Ferne-Frontier) */
 const DFR_SCAN_MIN  = 240;     /* Abfahrtsfenster je Stop (Minuten) */
 const DFR_RESULTS   = 6;       /* max. Verbindungen */
-const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle */
+const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle (frueheste tau) */
+const DFR_MARK_TAIL = 600;     /* v0.2.13: Ferne-Frontier: zusaetzlich die SPAETESTEN tau */
+const DFR_POOL_TTL  = 90;       /* v0.2.13: DELFI-Pool-Strom-Flussalter (s) */
+const DFR_POOL_MIN  = 400000;      /* v0.2.13: Plausibilitaet Pool-Strom (~4..40 MB) */
+const DFR_POOL_MAX  = 40000000;
+const DFR_HEUR_WIN  = 240;         /* v0.2.13: Heuristik-Fenster geplante Passage (s) */
 const DFR_GRID_FH   = 512;     /* max. offene Grid-Zellen-Dateien (ulimit-Schutz) */
 const DFR_MT_TTL    = 60;      /* Echtzeit-Cache (Sekunden) */
 const DFR_ACC_MAX   = 32;      /* Zubringerstops je Endpunkt */
@@ -2037,6 +2074,249 @@ function dfr_rt_delays(DfrIdx $ix): array {
     return $delays;
 }
 
+/** v0.2.13: DELFI-Pool-Strom fuer den DODP-Index - gemeinsame Datei mit
+ *  delfiproxy.php (../pool.pb) plus eigenem mTLS-Pull bei Bedarf. */
+function dfr_rt_pool_file(): string {
+    return dirname(dfr_base()) . '/pool.pb';
+}
+function dfr_rt_pool_certdir(): string {
+    return dirname(__DIR__) . '/delficerts';   /* apps/citysurfers/delficerts */
+}
+function dfr_rt_pool_age(): ?int {
+    $p = dfr_rt_pool_file();
+    $m = @filemtime($p);
+    return $m === false ? null : (time() - (int)$m);
+}
+function dfr_rt_pool_fetch(): bool {
+    $dest = dfr_rt_pool_file();
+    $cert = dfr_rt_pool_certdir() . '/cert.pem';
+    $key  = dfr_rt_pool_certdir() . '/key.pem';
+    if (!is_file($cert) || !is_file($key)) return false;
+    $tmp = $dest . '.dfr';
+    $ok = false;
+    if (function_exists('curl_init')) {
+        $fh = @fopen($tmp, 'wb');
+        if ($fh === false) return false;
+        $ch = curl_init('https://mobilithek.info:8443/mobilithek/api/v1.0/container/subscription?subscriptionID=1061368693622788096');
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fh,
+            CURLOPT_TIMEOUT => 12,          /* v0.2.13: unter dem Anfrage-Budget */
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_USERAGENT => 'pixcaelium-delfirouting/0.2',
+            CURLOPT_SSLCERT => $cert,
+            CURLOPT_SSLKEY => $key,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        $ok = (bool)curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        fclose($fh);
+        if (!$ok || $code !== 200) $ok = false;
+    } else {
+        $combo = dirname($dest) . '/dfr.certkey.pem';
+        $c = @file_get_contents($cert); $k = @file_get_contents($key);
+        if (!is_string($c) || !is_string($k)) return false;
+        if (@file_put_contents($combo, $c . "\n" . $k, LOCK_EX) === false) return false;
+        @chmod($combo, 0600);
+        $ctx = stream_context_create(['ssl' => [
+            'local_cert' => $combo,
+            'verify_peer' => true, 'verify_peer_name' => true,
+        ], 'http' => ['timeout' => 12]]);
+        $src = @fopen('https://mobilithek.info:8443/mobilithek/api/v1.0/container/subscription?subscriptionID=1061368693622788096', 'rb', false, $ctx);
+        if (!$src) return false;
+        $dst = @fopen($tmp, 'wb');
+        if ($dst === false) { fclose($src); return false; }
+        $ok = true;
+        while (!feof($src)) {
+            $chunk = fread($src, 1048576);
+            if ($chunk === false || $chunk === '') continue;
+            if (fwrite($dst, $chunk) === false) { $ok = false; break; }
+        }
+        fclose($src); fclose($dst);
+    }
+    $sz = $ok ? @filesize($tmp) : false;
+    if ($sz === false || $sz < DFR_POOL_MIN || $sz > DFR_POOL_MAX) {
+        @unlink($tmp);
+        return false;
+    }
+    return @rename($tmp, $dest);   /* atomar: ggf. laufende Leser behalten den alten Strom */
+}
+
+/** v0.2.13: Pool-Strom-Parse nach dem PROVEN Feld-Baum von delfiproxy.php.
+ *  Rueckgabe: ['trips' => id=>delayS, 'stops' => sid=>[[ts,del],..], 'n' => ..]
+ *  - FeedEntity: feld 1 = id (string), feld 3 = TripUpdate
+ *  - TripUpdate: feld 1 = TripDescriptor (1 trip_id, 2 start, 3 start_date,
+ *    5 route_id), feld 2 = StopTimeUpdate (1 seq, 3 StopEvent {1 delay,
+ *    2 time}, 4 stop_id, 5 schedule_relationship), zusaetzlich klassisch
+ *    TripUpdate.delay = 5 (varint) falls der Strom viaje hat.
+ *  - delay-Praeferenz: TripUpdate.delay, sonst ERSTE StopEvent-Abfahrts-delay,
+ *    sonst negativ-verspaetete Restauffassung entfaellt (keine geplante Zeit).
+ *  - 'stops'-Katalog-Eintrag nur, wenn StopEvent.time + delay vorliegen:
+ *    geplante Passage = time - delay (Sekeliste je stop_id). */
+function dfr_rt_pool_parse(string $pb): array {
+    $trips = []; $stops = []; $n = 0;
+    $today = date('Ymd');
+    $yest  = date('Ymd', time() - 86400);
+    /* FeedMessage: 1 = Header, 2 = FeedEntity; FeedEntity: 1 = id,
+     * 3 = TripUpdate (Feld-Baum wie im bewaehrten delfiproxy.php-Parser). */
+    foreach (dfr_pb_scan($pb) as [$fe, , $entBlk]) {
+        if ($fe !== 2 || !is_string($entBlk)) continue;   /* FeedEntity */
+        foreach (dfr_pb_scan($entBlk) as [$f1, , $d1]) {
+            if ($f1 !== 3 || !is_string($d1)) continue;   /* FeedEntity.trip_update = 3 */
+        $n++;
+        $tripId = null; $tag = null; $tuDelay = null; $firstStop = null;
+        foreach (dfr_pb_scan($d1) as [$f2, , $d2]) {
+            if ($f2 === 1 && is_string($d2)) {          /* TripUpdate.trip (TripDescriptor) */
+                foreach (dfr_pb_scan($d2) as [$f3, , $d3]) {
+                    if ($f3 === 1 && is_string($d3)) $tripId = $d3;
+                    elseif ($f3 === 3 && is_string($d3)) $tag = $d3;
+                }
+            } elseif ($f2 === 5 && is_int($d2)) {        /* TripUpdate.delay */
+                $tuDelay = $d2;
+            } elseif ($f2 === 2 && is_string($d2)) {     /* StopTimeUpdate */
+                $seq = null; $delay = null; $time = null; $ref = null;
+                foreach (dfr_pb_scan($d2) as [$f4, , $d4]) {
+                    if ($f4 === 1 && is_int($d4)) $seq = $d4;
+                    elseif ($f4 === 4 && is_string($d4)) $ref = $d4;
+                    elseif ($f4 === 3 && is_string($d4)) {   /* StopEvent (dep/arr) */
+                        foreach (dfr_pb_scan($d4) as [$f5, , $d5]) {
+                            if ($f5 === 1 && is_int($d5)) $delay = $d5;
+                            elseif ($f5 === 2 && is_int($d5)) $time = $d5;
+                        }
+                    }
+                }
+                if ($ref !== null && $time !== null && $delay !== null)
+                    $stops[$ref][] = [$time - $delay, $delay];   /* geplante Passage + Verspaetung */
+                if ($seq !== null && (int)$seq <= 1 && $delay !== null && $firstStop === null)
+                    $firstStop = $delay;
+            }
+        }
+        if ($tag !== null && $tag !== $today && $tag !== $yest) continue;
+        $d = $tuDelay;
+        if ($d === null) $d = $firstStop;
+        if ($tripId !== null && $d !== null && $d > -3600 && $d < 21600)
+            $trips[$tripId] = $d;
+        }
+    }
+    return ['trips' => $trips, 'stops' => $stops, 'n' => $n];
+}
+
+/** v0.2.13: Katalog-Zustand (TTL DFR_MT_TTL): Pool-Strom + exakter
+ *  DODP-Join. Rueckgabe: ['delays'=>nr=>delayS, 'trips'=>poolIdMap,
+ *  'cat'=>sid=>[[ts,delay],...], 'exact'=>n, 'raw'=>n, 'poolAge'=>s|null]. */
+function dfr_rt_dodp(DfrIdx $ix): array {
+    static $cache = null; static $t0 = 0;
+    if ($cache !== null && time() - $t0 < DFR_MT_TTL) return $cache;
+    $empty = ['delays' => [], 'trips' => [], 'cat' => [],
+        'exact' => 0, 'raw' => 0, 'poolAge' => null, 'catStops' => 0, 'ids' => []];
+    $age = dfr_rt_pool_age();
+    if ($age === null || $age > DFR_POOL_TTL) {
+        $lk = @fopen(dfr_rt_pool_file() . '.lock', 'c');   /* gemeinsames Lock mit delfiproxy.php */
+        if ($lk) {
+            flock($lk, LOCK_EX);
+            $age = dfr_rt_pool_age();
+            if ($age === null || $age > DFR_POOL_TTL) dfr_rt_pool_fetch();
+            $age = dfr_rt_pool_age();
+            flock($lk, LOCK_UN);
+            fclose($lk);
+        }
+    }
+    if ($age === null) { $cache = $empty; $t0 = time(); return $cache; }
+    $pb = (string)@file_get_contents(dfr_rt_pool_file());
+    if (strlen($pb) < DFR_POOL_MIN) {
+        $empty['poolAge'] = $age; $cache = $empty; $t0 = time(); return $cache;
+    }
+    $p = dfr_rt_pool_parse($pb);
+    $delays = [];
+    if ($p['trips']) {
+        $fh = fopen($ix->dir . '/trips.tsv', 'rb');   /* Join trip_id -> tripNr */
+        if ($fh !== false) {
+            $nr = 0;
+            while (($ln = fgets($fh, 4096)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"));
+                if (count($t) >= 2 && isset($p['trips'][$t[1]]))
+                    $delays[$nr] = $p['trips'][$t[1]];
+                $nr++;
+            }
+            fclose($fh);
+        }
+    }
+    $out = ['delays' => $delays, 'trips' => $p['trips'], 'cat' => $p['stops'],
+        'exact' => count($delays), 'raw' => $p['n'], 'poolAge' => $age,
+        'catStops' => count($p['stops']),
+        'ids' => array_slice(array_keys($p['trips']), 0, 3)];
+    $cache = $out; $t0 = time();
+    return $out;
+}
+
+/** v0.2.13: Heuristik-Stufe des Katalogs - fuer Fahrt-Legs OHNE exakten
+ *  Join wird am EINSTIEG die Passage gegen den Pool-Stop-Katalog geprueft
+ *  (stop_id gleich, geplante Passage im DFR_HEUR_WIN-Fenster). Nachgetragen
+ *  werden dD (Sekunden) und die +delay-Minuten in dep/arr der Leg. */
+function dfr_rt_heur_apply(DfrIdx $ix, array $conns, array $cat): array {
+    if (!$cat || !$conns) return $conns;
+    static $stopIds = null;
+    $used = [];
+    foreach ($conns as $c) foreach (($c['legs'] ?? []) as $lg)
+        if (($lg['k'] ?? '') === 'jny' && ($lg['dD'] ?? 0) === null
+            && $lg['tid'] !== null) $used[(int)$lg['tid']] = true;
+    if (!$used) return $conns;
+    if ($stopIds === null) {                    /* stopNr -> stop_id, einmal je Prozess */
+        $stopIds = [];
+        $fh = @fopen($ix->dir . '/stops.tsv', 'rb');
+        if ($fh !== false) {
+            while (($ln = fgets($fh, 1024)) !== false) {
+                $t = explode("\t", rtrim($ln, "\n"), 3);
+                if (count($t) >= 2) $stopIds[] = $t[1];   /* Zeilennummer = stopNr */
+            }
+            fclose($fh);
+        }
+    }
+    $d0 = DateTimeImmutable::createFromFormat('!Ymd', $ix->day, new DateTimeZone('Europe/Berlin'));
+    $day0 = $d0 === false ? 0 : (int)$d0->getTimestamp();
+    if ($day0 <= 0) return $conns;
+    $hm2m = function (string $hm): int {
+        $m = explode(':', $hm, 2);
+        return count($m) === 2 ? (((int)$m[0]) * 60 + (int)$m[1]) : 0;
+    };
+    foreach (array_keys($used) as $tripNr) {
+        $prof = dfr_tprof($ix, (int)$tripNr);
+        if ($prof === null) continue;
+        [, $pr] = $prof;
+        $r = unpack('vseq/vdep/varr/Vstop', substr($pr, 0, 10));
+        if ($r === false) continue;
+        $sid = $stopIds[(int)$r['stop']] ?? null;
+        if ($sid === null || !isset($cat[$sid])) continue;
+        $plan = $day0 + (((int)$r['dep']) * 60);
+        $best = null;
+        foreach ($cat[$sid] as [$ts, $del]) {
+            if ($ts + 43200 < $plan || $ts - 43200 > $plan) continue;   /* Tagesrand */
+            $diff = abs($plan - $ts);
+            if ($diff <= DFR_HEUR_WIN && ($best === null || $diff < $best[0]))
+                $best = [$diff, $del];
+        }
+        if ($best === null) continue;
+        $used[$tripNr] = $best[1];               /* delayS uebernehmen */
+    }
+    foreach ($conns as $ci => $c) {
+        foreach ($c['legs'] ?? [] as $li => $lg) {
+            if (($lg['k'] ?? '') !== 'jny' || $lg['tid'] === null
+                || !is_int($used[(int)$lg['tid']] ?? null)) continue;
+            $dS = $used[(int)$lg['tid']];
+            $dM = $dS > 0 ? intdiv($dS, 60) : 0;
+            $conns[$ci]['legs'][$li]['dD'] = $dS;
+            if ($dM > 0) {
+                $dep = dfr_min2hm(min(2879, $hm2m($lg['dep'] ?? '00:00') + $dM));
+                $arr = dfr_min2hm(min(2879, $hm2m($lg['arr'] ?? '00:00') + $dM));
+                $conns[$ci]['legs'][$li]['dep'] = $dep;
+                $conns[$ci]['legs'][$li]['arr'] = $arr;
+            }
+        }
+    }
+    return $conns;
+}
+
 /* ========================================================== ROUTING */
 
 /**
@@ -2045,7 +2325,7 @@ function dfr_rt_delays(DfrIdx $ix): array {
  */
 function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
     int $depMin, int $walkR, int $limit, array $delays, int $tEnd,
-    string $vm = 'walk'): array {
+    string $vm = 'walk', bool $dbgOn = false, ?array &$dbg = null): array {
     $accFrom = dfr_near_stops($ix, $fLa, $fLo, $walkR, DFR_ACC_MAX);
     $accTo = dfr_near_stops($ix, $tLa, $tLo, $walkR, DFR_ACC_MAX);
     if (!$accFrom || !$accTo) return ['err' => 'noaccess'];
@@ -2064,13 +2344,39 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
         }
     }
     $bestFinish = [];
+    if ($dbgOn) $dbg = [];
     for ($r = 0; $r < DFR_ROUNDS; $r++) {
         if (!$marked) break;
+        $markedIn = count($marked);
         if (count($marked) > DFR_MARK_CAP) {
             $marked = array_values(array_unique($marked));
-            usort($marked, fn($a, $b) => $tau[$a] <=> $tau[$b]);
-            if (count($marked) > DFR_MARK_CAP)
-                $marked = array_slice($marked, 0, DFR_MARK_CAP);
+            usort($marked, fn($a, $b) => ($tau[$a] ?? 26100) <=> ($tau[$b] ?? 26100));
+            if (count($marked) > DFR_MARK_CAP) {
+                /* v0.2.13: Kappen VORHER: nur frueheste tau - fernen
+                 * Durchfahrts-Halten wurde der Anschluss abgeschnitten.
+                 * Neu: (a) Ferne-Frontier = die DFR_MARK_TAIL SPAETESTEN
+                 * (Durchfahrts-Ketten laufen weiter, z. B. durchgehende
+                 * S-Bahn/Ringbahn nach Potsdam), (b) Ziel-Zubringerstops
+                 * (walkTo) sind unkappbar. */
+                $head = array_slice($marked, 0, DFR_MARK_CAP);
+                $tail = count($marked) > DFR_MARK_TAIL
+                    ? array_slice($marked, -DFR_MARK_TAIL) : [];
+                $acc = [];
+                $seenAcc = [];
+                foreach ($marked as $s) {
+                    if (isset($walkTo[$s]) && !isset($seenAcc[$s])) {
+                        $seenAcc[$s] = 1;
+                        $acc[] = $s;
+                    }
+                }
+                $marked = array_values(array_unique(array_merge($head, $tail, $acc)));
+                if ($dbgOn) $dbg[] = ['round' => $r, 'in' => $markedIn,
+                    'head' => count($head), 'tail' => count($tail),
+                    'acc' => count($acc)];
+            }
+        } elseif ($dbgOn) {
+            $dbg[] = ['round' => $r, 'in' => $markedIn, 'head' => $markedIn,
+                'tail' => 0, 'acc' => 0];
         }
         $nxt = []; $nxtSet = []; $tripSeq = [];
         foreach ($marked as $stop) {
@@ -2144,6 +2450,11 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                 if (!isset($bestFinish[$tStop]) || $fin < $bestFinish[$tStop])
                     $bestFinish[$tStop] = $fin;
             }
+        }
+        if ($dbgOn) {
+            $bestFin = $bestFinish ? min($bestFinish) : null;
+            $cnt = count($dbg) - 1;
+            $dbg[$cnt] = array_merge($dbg[$cnt] ?? [], ['nxt' => count($nxt), 'fin' => $bestFin]);
         }
     }
     if (!$bestFinish) return ['err' => 'noconns'];
@@ -2358,11 +2669,27 @@ function dfr_probe(): array {
         if (!$building) @flock($lf, LOCK_UN);   /* nur geprueft, sofort wieder frei */
         @fclose($lf);
     }
+    /* v0.2.13: Echtzeit-Katalog-Zustand (DELFI-Pool, exakter DODP-Join).
+     * probe ist Wartungsoberflaeche: Nach dem Deploy zeigt 'exact' sofort,
+     * ob die Pool-Trip-IDs die DODP-trips.tsv-IDs treffen (Soll: > 0,
+     * realistisch: grosser Anteil von raw); 'ids' gibt drei Pool-Proben zum
+     * Abgleich mit trips.tsv-Spalte 2. */
+    $rtcat = ['pool_age' => dfr_rt_pool_age(),
+        'pool_size' => is_file(dfr_rt_pool_file()) ? @filesize(dfr_rt_pool_file()) : null,
+        'certs' => is_file(dfr_rt_pool_certdir() . '/cert.pem')
+            && is_file(dfr_rt_pool_certdir() . '/key.pem')];
+    if ($ix->dir !== '' && $ix->src === 'dodp' && $ix->day === dfr_day_zo()) {
+        $cat = dfr_rt_dodp($ix);
+        $rtcat['raw'] = $cat['raw'];
+        $rtcat['exact'] = $cat['exact'];
+        $rtcat['cat_stops'] = $cat['catStops'];
+        $rtcat['pool_ids'] = $cat['ids'];
+    }
     return ['ok' => true, 'v' => DFR_V,
         'src' => $ix->dir !== '' ? $ix->src : 'none',
         'phase' => $st['phase'] ?? 'idle',
         'state_day' => $st['day'] ?? '', 'state_day0' => $st['day0'] ?? '',
-        'idx' => $idx, 'dodp_zip' => $dz,
+        'idx' => $idx, 'dodp_zip' => $dz, 'rtcat' => $rtcat,
         'building' => $building,
         'php' => PHP_VERSION, 'zip' => class_exists('ZipArchive'),
         'sapi' => PHP_SAPI, 'mem' => @ini_get('memory_limit')];
@@ -2515,13 +2842,25 @@ function dfr_query_run(array $q): void {
     }
     $delays = [];
     $rt = 0;
-    if ($ix->src === 'free' && $ix->day === dfr_day_zo()) {
-        /* Echtzeit: nur free-Modus + heutiger Index (RT-IDs passen nur dort) */
-        $delays = dfr_rt_delays($ix);
-        $rt = count($delays);
+    $rtSrc = '';
+    $heur = 0;
+    $cat = null;
+    if ($ix->day === dfr_day_zo()) {
+        if ($ix->src === 'free') {
+            $delays = dfr_rt_delays($ix);    /* free: gtfs.de-Strom, Kurz-IDs */
+            $rt = count($delays);
+            if ($rt > 0) $rtSrc = 'free';
+        } else {                              /* DODP: DELFI-Pool-Katalog (v0.2.13) */
+            $cat = dfr_rt_dodp($ix);
+            $delays = $cat['delays'];
+            $rt = count($delays);
+            if ($rt > 0 || $cat['raw'] > 0) $rtSrc = 'pool';
+        }
     }
+    $dbg = [];
+    $wantDbg = isset($q['dbg']);
     $res = dfr_route($ix, $fLa, $fLo, $tLa, $tLo, $depMin, $walk, $limit, $delays,
-        (int)($t0 + DFR_TIMEOUT_S), $vm);   /* v0.2.4: microtime-Sekunden als FLOAT,
+        (int)($t0 + DFR_TIMEOUT_S), $vm, $wantDbg, $dbg);   /* v0.2.4: microtime-Sekunden als FLOAT,
                                           int-Parameter verlangte strict_types einen
                                           int-Cast (TypeError-Fix der Query-500er) */
     $ms = (int)round((microtime(true) - $t0) * 1000);
@@ -2534,13 +2873,30 @@ function dfr_query_run(array $q): void {
         dfr_out(['ok' => false, 'code' => $res['err'],
             'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);
     }
+    $conns = $res['conns'];
+    /* v0.2.13: Heuristik-Stufe des Katalogs NACH der Welle (Anzeige-Ebene):
+       Legs mit tid, aber ohne exakten Pool-Join, bekommen die Verspaetung
+       aus dem stop_id-/Zeitfenster-Katalog nachgetragen. */
+    if ($cat !== null && $cat['cat']) {
+        $cntD = function (array $cs): int {
+            $n = 0;
+            foreach ($cs as $c) foreach (($c['legs'] ?? []) as $lg)
+                if (($lg['k'] ?? '') === 'jny' && ($lg['dD'] ?? null) !== null) $n++;
+            return $n;
+        };
+        $b = $cntD($conns);
+        $conns = dfr_rt_heur_apply($ix, $conns, $cat['cat']);
+        $heur = $cntD($conns) - $b;
+        if ($heur > 0) $rtSrc = $rtSrc === '' ? 'pool-heur' : 'pool+heur';
+    }
     $out = [
         'ok' => true, 'v' => DFR_V, 'day' => $ix->day,
         'src' => $ix->src,
-        'rt' => $rt, 'ms' => $ms,
+        'rt' => $rt, 'rt_src' => $rtSrc, 'rt_heur' => $heur, 'ms' => $ms,
         'dep_min' => $depMin, 'walk' => $walk, 'vm' => $vm,
-        'conns' => array_slice($res['conns'], 0, $limit),
+        'conns' => array_slice($conns, 0, $limit),
     ];
+    if ($wantDbg && is_array($dbg)) $out['dbg'] = $dbg;   /* v0.2.13: &dbg=1 */
     if ($ix->src === 'dodp') {
         $out['day0'] = $ix->day0;
         $out['valid_until'] = $ix->validUntil;
@@ -2619,7 +2975,7 @@ function dfr_query_run(array $q): void {
                 dfr_query_run($q);
             }
             dfr_out(['ok' => false, 'code' => 'params',
-                'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 vm=walk|bike|ebike|scoot | probe=1 | warm=1 | trip=<TripNr>']);
+                'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 vm=walk|bike|ebike|scoot dbg=1 | probe=1 | warm=1 | trip=<TripNr>']);
     }
     } catch (Throwable $e) {
         dfr_out(['ok' => false, 'code' => 'fatal',
