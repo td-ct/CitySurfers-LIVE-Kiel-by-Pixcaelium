@@ -1,15 +1,44 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.11
+ * delfirouting.php - v0.2.12
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
  * Fahrt, danach KEIN taeglicher Bau-Cron mehr); die gtfs.de-free-Feeds
  * fv/rv/nv (CC-BY, Datenbasis DELFI) bleiben als Failsafe drin, falls kein
  * frisches DODP-Zip vorliegt. Echtzeit gtfs.de-realtime-free im free-Modus,
- * Fusswege als Luftlinie 1,3x mit 5 km/h.
+ * Zubringer-/Ziellaeufe OSRM-geroutet (FOSSGIS, Fallback Luftlinie 1,3x mit
+ * 5 km/h), Modi &vm=walk|bike|ebike|scoot (17/22/18 km/h, +2 min Handhabung).
  *
+ * v0.2.12 Keine Hop-Doppelung im Endlauf + OSRM-echte Zubringerdauern +
+ *   Modi bike/ebike/scoot (Timo-Report 24.11.2026): (1) Der Ziellauf einer
+ *   Verbindung lief als HOP-KETTE von Haltestellen (Beispiel Bremerskamp ->
+ *   Botanischer Garten -> Ziel, 8 + 2 min, statt EINEM ~10-min-Lauf), weil
+ *   die Welle das Ziel nur ueber Zubringerstops (accTo) erreicht und die
+ *   Kette dorthin ueber Geo-Umstiege laeuft. Abhilfe ohne Aenderung der
+ *   Indexformate: Rekonstruktion sammelt die Kette erst mit STOP-NUMMERN
+ *   ein, dann werden Fuss-/Modus-Ketten an BEIDEN Enden zu EINEM Lauf
+ *   zusammengelegt (Einstieg: Start -> Zustiegshaltestelle; Ausstieg:
+ *   Ausstiegshaltestelle -> Ziel; ohne OEPNV: Start -> Ziel; echte
+ *   Zwischen-Umstiege zwischen zwei Fahrten bleiben eigene Legs) und die
+ *   Signatur dedupliziert nur noch Transit-Legs (Hop-Zwillinge entfallen).
+ * (2) Diese zusammengelegten Laeufe werden serverseitig ueber FOSSGIS-OSRM
+ *   geroutet (routing.openstreetmap.de/routed-foot bzw. -bike, je Modus;
+ *   Datei-Cache 30 Tage unter dfrouting/osrm/, 1-m-Koordinatenraster,
+ *   Groessenlimit 4000 Dateien mit aelteste-Trimmen, Breaker: 3 Fehler
+ *   oder 6 s kumuliert je Anfrage; Fallback Luftlinie 1,3x, walk 5 km/h):
+ *   dist/mins in der Leg sind echt, arr/dur werden aus echtem Ausstieg +
+ *   echtem Ziellauf NEU gerechnet, die Verbindungen sortieren nach echter
+ *   Ankunft. Fahrrad/E-Bike/Roller: OSRM-bike-DISTANZ zur eigenen
+ *   Geschwindigkeit (17/22/18 km/h) plus 2 min Handhabung.
+ * (3) NEU &vm=walk|bike|ebike|scoot (Default walk, alles andere -> walk):
+ *   Zubringer-/Ziellauf UND Geo-Umstiege laufen im Modus-Tempo (lediglich
+ *   die Parent-Paare aus transfers.txt haben keine Meter und werden aus
+ *   der Gehzeit skaliert: ceil(walkMin*5/kmh)+2); Wellenseeds,
+ *   Umstiegs-Dauern und Parent-'w'-Werte tragen Modus-Minuten. Antwort
+ *   traegt vm, jede Bewegungsleg ein vm-Feld. Kein Format-/Rebuild-
+ *   Aufwand, Deploy reicht.
  * v0.2.11 Verlauf fuer die App + Parent-Parse-Fix (Timo-Report 23.11.2026
  *   abends: delfirouting liefert Ergebnisse, aber JEDE Fahrt zeigte die
  *   Linie von Trip 0 (zufaellig "61"), Richtung immer leer ("Richtung ?"
@@ -144,6 +173,7 @@ declare(strict_types=1);
  *
  * Schnittstellen:
  *   HTTP: ?from=lat,lon&to=lat,lon&dep=HH:MM[&walk=200..5000][&limit=1..8]
+ *         [&vm=walk|bike|ebike|scoot]  Zubringer-/Ziellauf im Modus-Tempo
  *         Antwort JSON, Fehler als {"ok":false,...} mit HTTP 200.
  *         ?probe=1   Status/Index-Info
  *         ?diag=1    Tiefen-Diagnose des Index (Bitmap/dprof/tprof/trans)
@@ -197,7 +227,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.11';
+const DFR_V          = 'delfirouting 0.2.12';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -220,6 +250,12 @@ const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle */
 const DFR_GRID_FH   = 512;     /* max. offene Grid-Zellen-Dateien (ulimit-Schutz) */
 const DFR_MT_TTL    = 60;      /* Echtzeit-Cache (Sekunden) */
 const DFR_ACC_MAX   = 32;      /* Zubringerstops je Endpunkt */
+const DFR_OSRM_TTL  = 2592000;      /* v0.2.12: OSRM-Dauer-Cache in s (30 Tage) */
+const DFR_OSRM_MS   = 6000.0;       /* v0.2.12: OSRM-Gesamtbudget je Anfrage (ms) */
+const DFR_OSRM_MAXM = 12000;        /* v0.2.12: Luftlinien-Grenze fuer OSRM-Routen (m) */
+const DFR_OSRM_MAXF = 4000;         /* v0.2.12: OSRM-Cache-Dateien, danach Trimmen */
+const DFR_OSRM_TRIM = 1200;         /* v0.2.12: Zahl aeltester Dateien beim Trimmen */
+const DFR_VM_KMH    = ['bike' => 17.0, 'ebike' => 22.0, 'scoot' => 18.0];
 const DFR_MEM       = '512M';
 
 /** Basisverzeichnis: eigener Bereich INNERHALB des delfidata-Ordners von
@@ -258,6 +294,85 @@ function dfr_dist_m(float $la1, float $lo1, float $la2, float $lo2): float {
 }
 function dfr_walkmin(float $m): int {
     return max(1, (int)ceil($m * 1.3 / 5000.0 * 60.0));
+}
+
+/** v0.2.12: Wellen-Dauer eines Zubringer-/Umstiegslaufs im Modus-Tempo.
+ *  walk: Gehzeit unveraendert; bike/ebike/scoot: aus Metern (Geo-Umstieg:
+ *  Luftlinie x 1,3) auf kmh plus 2 min Handhabung; Parent-Paare aus
+ *  transfers.txt kommen OHNE Meter und werden aus der Gehzeit skaliert. */
+function dfr_vm_wave(string $vm, int $walkMin, ?float $meters): int {
+    if ($vm === 'walk') return $walkMin;
+    $kmh = DFR_VM_KMH[$vm] ?? 17.0;
+    if ($meters !== null && $meters > 0.0)
+        $m = (int)ceil($meters * 1.3 / ($kmh * 1000.0) * 60.0) + 2;
+    else
+        $m = (int)ceil($walkMin * 5.0 / $kmh) + 2;
+    return max(1, $m);
+}
+
+/** v0.2.12: OSRM-Routing eines Laufs (FOSSGIS-Server, Profil foot/bike).
+ *  Rueckgabe [dist_m, dur_min] oder null bei Fehler/Distanz. Datei-Cache
+ *  30 Tage (1-m-Raster); statischer Breaker: 3 Fehlschlaege oder 6 s
+ *  kumuliert -> fuer den Rest DER ANFRAGE Luftlinien-Schaetzung. */
+function dfr_osrm(string $prof, float $la1, float $lo1,
+    float $la2, float $lo2): ?array {
+    static $fails = 0; static $spend = 0.0;
+    if ($fails >= 3 || $spend >= DFR_OSRM_MS) return null;
+    $k = md5(sprintf('%s|%.5f|%.5f|%.5f|%.5f', $prof, $la1, $lo1, $la2, $lo2));
+    $cf = dfr_base() . '/osrm/' . $k . '.json';
+    if (is_file($cf) && time() - (int)filemtime($cf) < DFR_OSRM_TTL) {
+        $j = json_decode((string)@file_get_contents($cf), true);
+        if (is_array($j) && ($j[0] ?? 0) > 0) return $j;   /* [dist_m, dur_min] */
+    }
+    if (dfr_dist_m($la1, $lo1, $la2, $lo2) > DFR_OSRM_MAXM) return null;
+    $t0 = microtime(true);
+    $url = 'https://routing.openstreetmap.de/routed-' . $prof .
+        '/route/v1/' . $prof . '/' .
+        sprintf('%.5f,%.5f;%.5f,%.5f', $lo1, $la1, $lo2, $la2) .
+        '?overview=false&steps=false&alternatives=false';
+    $ctx = stream_context_create(['http' => ['timeout' => 5,
+        'user_agent' => 'pixcaelium-delfirouting/0.2']]);
+    $raw = @file_get_contents($url, false, $ctx);
+    $spend += (microtime(true) - $t0) * 1000.0;
+    if (!is_string($raw) || strlen($raw) < 30) { $fails++; return null; }
+    $j = json_decode($raw, true);
+    if (!is_array($j) || ($j['code'] ?? '') !== 'Ok' ||
+        !isset($j['routes'][0]['distance'], $j['routes'][0]['duration'])) {
+        $fails++; return null;
+    }
+    $res = [(int)round((float)$j['routes'][0]['distance']),
+        max(1, (int)ceil((float)$j['routes'][0]['duration'] / 60.0))];
+    if (!is_dir(dirname($cf))) @mkdir(dirname($cf), 0755, true);
+    @file_put_contents($cf, json_encode($res));
+    if (random_int(0, 99) === 0) {                /* Cache-Groesse begrenzen */
+        $fs = glob(dirname($cf) . '/*.json') ?: [];
+        if (count($fs) > DFR_OSRM_MAXF) {
+            usort($fs, fn($x, $y) => (int)@filemtime($x) <=> (int)@filemtime($y));
+            for ($i = 0; $i < DFR_OSRM_TRIM && $i < count($fs); $i++)
+                @unlink($fs[$i]);
+        }
+    }
+    return $res;
+}
+
+/** v0.2.12: Dauer/Distanz eines zusammengelegten Zubringer-/Ziellaufs je
+ *  Modus: walk = OSRM-Fuss-Dauer; bike/ebike/scoot = OSRM-bike-Distanz zur
+ *  eigenen Geschwindigkeit plus 2 min Handhabung; Fallback Luftlinie x 1,3.
+ *  Rueckgabe [dist_m, mins]. */
+function dfr_leg_calc(string $vm, float $la1, float $lo1,
+    float $la2, float $lo2): array {
+    $os = dfr_osrm($vm === 'walk' ? 'foot' : 'bike', $la1, $lo1, $la2, $lo2);
+    if ($os !== null) {
+        if ($vm === 'walk') return $os;
+        $kmh = DFR_VM_KMH[$vm] ?? 17.0;
+        return [$os[0], max(1, (int)ceil($os[0] / ($kmh * 1000.0) * 60.0)) + 2];
+    }
+    $hv = dfr_dist_m($la1, $lo1, $la2, $lo2);
+    if ($vm === 'walk')
+        return [(int)round($hv), max(1, (int)ceil($hv * 1.3 / 5000.0 * 60.0))];
+    $kmh = DFR_VM_KMH[$vm] ?? 17.0;
+    return [(int)round($hv),
+        max(1, (int)ceil($hv * 1.3 / ($kmh * 1000.0) * 60.0)) + 2];
 }
 
 /* --------------------------------------------------- State (atomar) */
@@ -1789,7 +1904,7 @@ function dfr_trans_near(DfrIdx $ix, int $stopNr): array {
     if (isset($ix->transCache[$stopNr])) return $ix->transCache[$stopNr];
     $out = [];
     foreach (dfr_trans_block($ix, $stopNr) as [$b2, $m]) {
-        if ($b2 !== $stopNr) $out[$b2] = $m;
+        if ($b2 !== $stopNr) $out[$b2] = [$m, null];   /* v0.2.12: [min, meter] */
     }
     $ll = dfr_stop_ll($ix, $stopNr);
     if ($ll !== null) {
@@ -1805,16 +1920,16 @@ function dfr_trans_near(DfrIdx $ix, int $stopNr): array {
             $d = dfr_dist_m($la, $lo, $e[0], $e[1]);
             if ($d <= DFR_TRANS_M) {
                 $wm = dfr_walkmin($d);
-                if (!isset($out[$nr]) || $wm < $out[$nr]) $out[$nr] = $wm;
+                if (!isset($out[$nr]) || $wm < $out[$nr][0]) $out[$nr] = [$wm, $d];
             }
         }
     }
-    asort($out);
+    uasort($out, fn($a, $b) => $a[0] <=> $b[0]);
     $res = [];
     $i = 0;
-    foreach ($out as $b2 => $m) {
+    foreach ($out as $b2 => $mo) {
         if ($i++ >= DFR_TRANS_MAX) break;
-        $res[] = [(int)$b2, (int)$m];
+        $res[] = [(int)$b2, (int)$mo[0], $mo[1]];
     }
     $ix->transCache[$stopNr] = $res;
     return $res;
@@ -1929,17 +2044,20 @@ function dfr_rt_delays(DfrIdx $ix): array {
  * Rueckgabe: ['conns' => [...]] oder ['err' => 'noaccess'|'noconns'].
  */
 function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
-    int $depMin, int $walkR, int $limit, array $delays, int $tEnd): array {
+    int $depMin, int $walkR, int $limit, array $delays, int $tEnd,
+    string $vm = 'walk'): array {
     $accFrom = dfr_near_stops($ix, $fLa, $fLo, $walkR, DFR_ACC_MAX);
     $accTo = dfr_near_stops($ix, $tLa, $tLo, $walkR, DFR_ACC_MAX);
     if (!$accFrom || !$accTo) return ['err' => 'noaccess'];
     $walkTo = []; $walkFrom = [];
-    foreach ($accTo as $a) $walkTo[$a[0]] = $a[3];
-    foreach ($accFrom as $a) $walkFrom[$a[0]] = [$a[3], $a[2], $a[1]];
+    foreach ($accTo as $a)
+        $walkTo[$a[0]] = dfr_vm_wave($vm, $a[3], (float)$a[2]);   /* v0.2.12 */
+    foreach ($accFrom as $a)
+        $walkFrom[$a[0]] = [dfr_vm_wave($vm, $a[3], (float)$a[2]), $a[2], $a[1]];
 
     $tau = []; $parent = []; $marked = [];
     foreach ($accFrom as $a) {
-        $t = $depMin + $a[3];
+        $t = $depMin + dfr_vm_wave($vm, $a[3], (float)$a[2]);
         if (!isset($tau[$a[0]]) || $t < $tau[$a[0]]) {
             $tau[$a[0]] = $t;
             $marked[] = $a[0];
@@ -2008,11 +2126,12 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
         foreach ($nxt as $hs) {
             $tCur = $tau[$hs] ?? null;
             if ($tCur === null) continue;
-            foreach (dfr_trans_near($ix, $hs) as [$g, $wm]) {
-                $t2 = $tCur + $wm;
+            foreach (dfr_trans_near($ix, $hs) as [$g, $wm, $tm]) {
+                $mm = dfr_vm_wave($vm, $wm, $tm);   /* v0.2.12: Modus-Minuten */
+                $t2 = $tCur + $mm;
                 if (!isset($tau[$g]) || $t2 < $tau[$g]) {
                     $tau[$g] = $t2;
-                    $parent[$g] = 'w' . $hs . '|' . $wm;
+                    $parent[$g] = 'w' . $hs . '|' . $mm;
                     if (!isset($nxtSet[$g])) { $nxtSet[$g] = 1; $nxt[] = $g; }
                 }
             }
@@ -2029,70 +2148,132 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
     }
     if (!$bestFinish) return ['err' => 'noconns'];
     asort($bestFinish);
-    $conns = []; $seen = [];
+    /* v0.2.12: Kette je Ziellauf zuerst MIT Stop-Nummern einsammeln, Leg-
+     * Aufbau danach mit Merge der Fuss-/Modus-Ketten an BEIDEN Enden. */
+    $raw = []; $seen = [];
     foreach ($bestFinish as $tStop => $fin) {
-        if (count($conns) >= $limit) break;
-        $legs = []; $cur = (int)$tStop; $sig = []; $lines = 0;
-        $ok = false;
-        for ($n = 0; $n < 40; $n++) {
+        if (count($raw) >= $limit) break;
+        $chain = []; $lines = 0;
+        $cur = (int)$tStop;
+        for ($n = 0; $n < 40; $n++) {   /* Kette rueckwaerts, REVERSE unten */
             $pd = $parent[$cur] ?? null;
             if ($pd === null) break;
-            $at = $pd[0];
-            if ($at === 'j') {
-                $pp = explode('|', substr($pd, 1));   /* v0.2.11: 'j'<trip>-Praefix abtrennen, (int)'j123' waere sonst 0 */
-                $legs = array_merge([[
-                    'k' => 'jny',
-                    'line' => dfr_trip_label($ix, (int)$pp[0]),
-                    'dir' => dfr_trip_headsign($ix, (int)$pp[0]),   /* v0.2.9: Richtung = Kopfziel der Fahrt */
-                    'from' => dfr_stop_name($ix, (int)$pp[2]),
-                    'to' => dfr_stop_name($ix, $cur),
-                    'dep' => dfr_min2hm((int)$pp[3]),
-                    'arr' => dfr_min2hm((int)$pp[4]),
-                    'dD' => $delays[(int)$pp[0]] ?? null,
-                    'tid' => (int)$pp[0],   /* v0.2.11: TripNr fuer ?trip= (ganzer Lauf) */
-                    'stops' => dfr_trip_seg($ix, (int)$pp[0], (int)$pp[1], (int)$pp[2],
-                        $cur, (int)$pp[3], (int)$pp[4],
-                        (($delays[(int)$pp[0]] ?? 0) > 0) ? intdiv((int)$delays[(int)$pp[0]], 60) : 0),
-                ]], $legs);
-                $sig[] = 'j' . $pp[0] . '@' . $pp[2];
+            if ($pd[0] === 'j') {
+                $pp = explode('|', substr($pd, 1));   /* v0.2.11: Praefix-Abtrennung */
+                $chain[] = ['k' => 'jny', 'trip' => (int)$pp[0],
+                    'seq' => (int)$pp[1], 'stop' => (int)$pp[2],
+                    'dep' => (int)$pp[3], 'arr' => (int)$pp[4], 'cur' => $cur];
                 $lines++;
                 $cur = (int)$pp[2];
             } else {
-                $pp = explode('|', substr($pd, 1));   /* v0.2.11: 'w'<stop>-Praefix abtrennen */
-                $legs = array_merge([[
-                    'k' => 'walk',
-                    'from' => dfr_stop_name($ix, (int)$pp[0]),
-                    'to' => dfr_stop_name($ix, $cur),
-                    'mins' => (int)$pp[1],
-                    'dist' => null,
-                ]], $legs);
-                $sig[] = 'w' . $pp[0] . '@' . $cur;
+                $pp = explode('|', substr($pd, 1));   /* v0.2.11: Praefix-Abtrennung */
+                $chain[] = ['k' => 'walk', 'from' => (int)$pp[0], 'cur' => $cur,
+                    'mins' => (int)$pp[1]];
                 $cur = (int)$pp[0];
             }
         }
         if (!isset($walkFrom[$cur])) continue;
-        [$w0, $dist, $nm] = $walkFrom[$cur];
-        $legs = array_merge([[
-            'k' => 'walk', 'from' => 'Start', 'to' => $nm,
-            'mins' => $w0, 'dist' => $dist,
-        ]], $legs);
-        $legs[] = ['k' => 'walk', 'from' => dfr_stop_name($ix, (int)$tStop),
-            'to' => 'Ziel', 'mins' => $walkTo[$tStop], 'dist' => null];
+        $steps = array_merge(
+            [['k' => 'start', 'stop' => $cur,
+              'mins' => (int)$walkFrom[$cur][0], 'dist' => (int)$walkFrom[$cur][1],
+              'name' => $walkFrom[$cur][2]]],
+            array_reverse($chain),
+            [['k' => 'finish', 'stop' => (int)$tStop,
+              'mins' => (int)$walkTo[$tStop]]]);
+        $sig = [];
+        foreach ($steps as $st2)
+            if ($st2['k'] === 'jny') $sig[] = 'j' . $st2['trip'] . '@' . $st2['stop'];
+        /* v0.2.12: Dedupe nur ueber Transit-Legs (Hop-Zwillinge entfallen) */
         $sigKey = implode('|', $sig);
         if (isset($seen[$sigKey])) continue;
         $seen[$sigKey] = 1;
-        $dep = null;
-        foreach ($legs as $lg) if ($lg['k'] === 'jny') { $dep = $lg['dep']; break; }
-        if ($dep === null) $dep = dfr_min2hm($depMin);
-        $conns[] = [
-            'dep' => $dep, 'arr' => dfr_min2hm($fin),
-            'dur' => ($fin >= $depMin) ? $fin - $depMin : $fin + 2880 - $depMin,
-            'chg' => max(0, $lines - 1), 'legs' => $legs,
-        ];
+        $raw[] = [$steps, $lines, (int)$fin];
     }
-    if (!$conns) return ['err' => 'noconns'];
-    usort($conns, fn($a, $b) => strcmp($a['dep'], $b['dep']));
-    return ['conns' => $conns];
+    if (!$raw) return ['err' => 'noconns'];
+    $conns = [];
+    foreach ($raw as [$steps, $lines, $fin]) {
+        $fj = -1; $lj = -1;
+        $ns = count($steps);
+        for ($i = 0; $i < $ns; $i++) {
+            if ($steps[$i]['k'] === 'jny') { if ($fj < 0) $fj = $i; $lj = $i; }
+        }
+        $arrMin = $fin;
+        if ($fj < 0) {
+            /* kompletter Lauf ohne OEPNV: EINE Laufleg Start -> Ziel */
+            [$dd, $mm] = dfr_leg_calc($vm, $fLa, $fLo, $tLa, $tLo);
+            $legs = [['k' => 'walk', 'from' => 'Start', 'to' => 'Ziel',
+                'mins' => $mm, 'dist' => $dd, 'vm' => $vm]];
+            $arrMin = $depMin + $mm;
+        } else {
+            $legs = [];
+            $board = (int)$steps[$fj]['stop'];
+            $alight = (int)$steps[$lj]['cur'];
+            $bll = dfr_stop_ll($ix, $board);
+            if ($bll !== null) {
+                [$dd, $mm] = dfr_leg_calc($vm, $fLa, $fLo, $bll[0], $bll[1]);
+                $legs[] = ['k' => 'walk', 'from' => 'Start',
+                    'to' => dfr_stop_name($ix, $board),
+                    'mins' => $mm, 'dist' => $dd, 'vm' => $vm];
+            } else {
+                $legs[] = ['k' => 'walk', 'from' => 'Start',
+                    'to' => dfr_stop_name($ix, $board),
+                    'mins' => (int)$steps[0]['mins'],
+                    'dist' => (int)$steps[0]['dist'], 'vm' => $vm];
+            }
+            for ($i = $fj; $i <= $lj; $i++) {
+                $st = $steps[$i];
+                if ($st['k'] === 'jny') {
+                    $dl = $delays[$st['trip']] ?? null;
+                    $legs[] = ['k' => 'jny',
+                        'line' => dfr_trip_label($ix, $st['trip']),
+                        'dir' => dfr_trip_headsign($ix, $st['trip']),
+                        'from' => dfr_stop_name($ix, $st['stop']),
+                        'to' => dfr_stop_name($ix, $st['cur']),
+                        'dep' => dfr_min2hm($st['dep']),
+                        'arr' => dfr_min2hm($st['arr']),
+                        'dD' => $dl,
+                        'tid' => $st['trip'],
+                        'stops' => dfr_trip_seg($ix, $st['trip'], $st['seq'],
+                            $st['stop'], $st['cur'], $st['dep'], $st['arr'],
+                            ($dl !== null && $dl > 0) ? intdiv((int)$dl, 60) : 0),
+                    ];
+                } else {
+                    $legs[] = ['k' => 'walk',
+                        'from' => dfr_stop_name($ix, $st['from']),
+                        'to' => dfr_stop_name($ix, $st['cur']),
+                        'mins' => (int)$st['mins'], 'dist' => null,
+                        'vm' => $vm];
+                }
+            }
+            $arrMin = (int)$steps[$lj]['arr'];
+            $all2 = dfr_stop_ll($ix, $alight);
+            if ($all2 !== null) {
+                [$dd, $mm] = dfr_leg_calc($vm, $all2[0], $all2[1], $tLa, $tLo);
+                $legs[] = ['k' => 'walk',
+                    'from' => dfr_stop_name($ix, $alight), 'to' => 'Ziel',
+                    'mins' => $mm, 'dist' => $dd, 'vm' => $vm];
+                $arrMin += $mm;
+            } else {
+                $mm = 0;
+                for ($i = $lj + 1; $i < $ns; $i++)
+                    $mm += (int)$steps[$i]['mins'];
+                $legs[] = ['k' => 'walk',
+                    'from' => dfr_stop_name($ix, $alight), 'to' => 'Ziel',
+                    'mins' => $mm, 'dist' => null, 'vm' => $vm];
+                $arrMin += $mm;
+            }
+        }
+        $depL = null;
+        foreach ($legs as $lg) if ($lg['k'] === 'jny') { $depL = $lg['dep']; break; }
+        if ($depL === null) $depL = dfr_min2hm($depMin);
+        $dur = ($arrMin >= $depMin) ? $arrMin - $depMin : $arrMin + 2880 - $depMin;
+        $conns[] = [$arrMin, ['dep' => $depL, 'arr' => dfr_min2hm($arrMin),
+            'dur' => $dur, 'chg' => max(0, $lines - 1), 'legs' => $legs]];
+    }
+    usort($conns, fn($a, $b) => $a[0] <=> $b[0]);   /* v0.2.12: nach echter Ankunft */
+    $outC = [];
+    foreach ($conns as $c) $outC[] = $c[1];
+    return ['conns' => $outC];
 }
 
 /* ============================================================= I/O */
@@ -2305,10 +2486,12 @@ function dfr_query_run(array $q): void {
     $depS = $q['dep'] ?? '';
     $walk = (int)($q['walk'] ?? 1500);
     $limit = (int)($q['limit'] ?? DFR_RESULTS);
+    $vm = strtolower(trim((string)($q['vm'] ?? 'walk')));
     if ($walk < 200) $walk = 200;
     if ($walk > 5000) $walk = 5000;
     if ($limit < 1) $limit = 1;
     if ($limit > 8) $limit = 8;
+    if ($vm !== 'walk' && !isset(DFR_VM_KMH[$vm])) $vm = 'walk';   /* v0.2.12 */
     $fm = explode(',', $from); $tm = explode(',', $to);
     if (count($fm) !== 2 || count($tm) !== 2 ||
         !is_numeric($fm[0]) || !is_numeric($fm[1]) ||
@@ -2338,7 +2521,7 @@ function dfr_query_run(array $q): void {
         $rt = count($delays);
     }
     $res = dfr_route($ix, $fLa, $fLo, $tLa, $tLo, $depMin, $walk, $limit, $delays,
-        (int)($t0 + DFR_TIMEOUT_S));   /* v0.2.4: microtime-Sekunden als FLOAT,
+        (int)($t0 + DFR_TIMEOUT_S), $vm);   /* v0.2.4: microtime-Sekunden als FLOAT,
                                           int-Parameter verlangte strict_types einen
                                           int-Cast (TypeError-Fix der Query-500er) */
     $ms = (int)round((microtime(true) - $t0) * 1000);
@@ -2355,7 +2538,7 @@ function dfr_query_run(array $q): void {
         'ok' => true, 'v' => DFR_V, 'day' => $ix->day,
         'src' => $ix->src,
         'rt' => $rt, 'ms' => $ms,
-        'dep_min' => $depMin, 'walk' => $walk,
+        'dep_min' => $depMin, 'walk' => $walk, 'vm' => $vm,
         'conns' => array_slice($res['conns'], 0, $limit),
     ];
     if ($ix->src === 'dodp') {
@@ -2436,7 +2619,7 @@ function dfr_query_run(array $q): void {
                 dfr_query_run($q);
             }
             dfr_out(['ok' => false, 'code' => 'params',
-                'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 | probe=1 | warm=1']);
+                'msg' => 'Parameter: from=lat,lon to=lat,lon dep=HH:MM walk=200..5000 limit=1..8 vm=walk|bike|ebike|scoot | probe=1 | warm=1 | trip=<TripNr>']);
     }
     } catch (Throwable $e) {
         dfr_out(['ok' => false, 'code' => 'fatal',
