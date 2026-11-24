@@ -87,6 +87,12 @@ class MainActivity : Activity() {
                     // mailto:-Links (Support/Bugreport, Impressum) an das installierte
                     // E-Mail-Programm weiterreichen; ohne Mail-App bleibt alles wie vorher.
                     try { startActivity(Intent(Intent.ACTION_SENDTO, u)); true } catch (e: Exception) { false }
+                } else if (u.scheme == "intent") {
+                    // v1.6.19: App-Deep-Links (Leihroller-Anbieter voi/dott/bolt
+                    // im Unter-Reiter einer gewaehlten Verbindung) an das System
+                    // reichen: Android oeffnet die App, ohne installierte App
+                    // greift der im Link hinterlegte Play-Store-Fallback.
+                    try { startActivity(Intent(Intent.ACTION_VIEW, u)); true } catch (e: Exception) { false }
                 } else if (u.scheme == "geo" || u.scheme == "om" || u.scheme == "organicmaps" ||
                     u.scheme == "osmand" || u.scheme == "ge0") {
                     // v1.4.6: Karten-/Navigations-Links des Leihfahrrad-Dialogs
