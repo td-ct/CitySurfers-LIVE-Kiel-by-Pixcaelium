@@ -11,8 +11,8 @@ android {
         applicationId 'de.timodamm.citysurfers'
         minSdk 24
         targetSdk 34
-        versionCode 136
-        versionName '1.6.9'
+        versionCode 137
+        versionName '1.6.10'
         manifestPlaceholders = [appLabel: "@string/app_name"]
     }
 
@@ -43,5 +43,3 @@ android {
 dependencies {
     implementation 'com.google.android.gms:play-services-location:21.3.0'
 }
-
-
