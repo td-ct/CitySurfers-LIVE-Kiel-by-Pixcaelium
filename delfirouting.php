@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.12
+ * delfirouting.php - v0.2.14
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -11,6 +11,27 @@ declare(strict_types=1);
  * Zubringer-/Ziellaeufe OSRM-geroutet (FOSSGIS, Fallback Luftlinie 1,3x mit
  * 5 km/h), Modi &vm=walk|bike|ebike|scoot (17/22/18 km/h, +2 min Handhabung).
  *
+ * v0.2.14 Tages-Anfragen im Budget (Timo 25.11.2026: Alex->Potsdam ging
+ *   ueber VBB, delfirouting aber NICHT; auch tagsueber generell 25-s-Timings
+ *   bzw. 502). Diagnose per &dbg=1: Nachts konvergiert die Welle frueh
+ *   (Kiel 23:00: 5,4 s, Wellen 4-7 fast leer), tagsueber bei 3,2 Mio
+ *   aktiven Fahrten laufen dagegen ALLE 9 Wellen gegen die Mark-Cap, jeder
+ *   Stop scannt Abfahrten im DFR_SCAN_MIN=240-min-Fenster und laedt je
+ *   Unique-Trip ein Platten-tprofil - Summe > 25 s, im Berlin-Dichtenetz
+ *   additionally Speicher-Druck bis zum FPM-Absturz (502). Vier Hebel,
+ *   Ergebnis-Qualitaet bewusst unangetastet:
+ *   (a) ZIEL-PRUNING: Stops, deren fruehester tau bereits >= beste
+ *       Zielankunft + DFR_KEEP_SLACK (60 min) liegt, koennen keine
+ *       Verbindung im Arsenal mehr beitragen und werden nicht mehr
+ *       gescannt (erst ab Welle 1, wenn es eine Zielankunft gibt; die
+ *       v0.2.13-Ferne-Frontier bleibt intakt: Durchfahrts-Ketten, die
+ *       spaeter am Ziel ankommen als bestFin+60, sind ohnehin tot).
+ *   (b) STAGNATIONS-ABBRUCH: 2 Wellen ohne Verbesserung der besten
+ *       Zielankunft (ab Welle 4) beenden die Suche - die Spaetwellen sind
+ *       genau die teuersten.
+ *   (c) DFR_SCAN_MIN 240 -> 120 Minuten: Zwei Stunden Abfahrtsfenster
+ *       je Stop reichen fuer frueheste-Ankunft plus Alternativen locker.
+ *   (d) SPEICHER-NOTKAPPE: tCache-Flash ab 400.000 Eintraegen (502-).
  * v0.2.13 Echtzeit-Katalog fuer den DODP-Index (Timo 24.11.2026 abends: "mit
  *   Delfirouting eine gute Planung und trotzdem VBB/Echtzeit einblenden; IDs
  *   matchen? Katalog bauen!" - Der App-Output traegt dD je Fahrt schon seit
@@ -259,7 +280,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.13';
+const DFR_V          = 'delfirouting 0.2.14';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -276,10 +297,12 @@ const DFR_TIMEOUT_S = 25;      /* harte Obergrenze je Routing-Anfrage */
 const DFR_TRANS_M   = 600;     /* Geo-Transferradius Fussweg (m) */
 const DFR_TRANS_MAX = 14;      /* max. naechste Transferpartner je Stop */
 const DFR_ROUNDS    = 9;       /* Wellen der Routing-Engine (v0.2.13: +1 f. Ferne-Frontier) */
-const DFR_SCAN_MIN  = 240;     /* Abfahrtsfenster je Stop (Minuten) */
+const DFR_SCAN_MIN  = 120;     /* Abfahrtsfenster je Stop (Minuten; v0.2.14: war 240, Uhrzeit des Zeitbudgets) */
 const DFR_RESULTS   = 6;       /* max. Verbindungen */
 const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle (frueheste tau) */
 const DFR_MARK_TAIL = 600;     /* v0.2.13: Ferne-Frontier: zusaetzlich die SPAETESTEN tau */
+const DFR_KEEP_SLACK = 60;    /* v0.2.14: Ziel-Pruning: tau >= bestFin+X wird nicht mehr gescannt */
+const DFR_STAG_ROUNDS = 2;   /* v0.2.14: Abbruch nach X Wellen ohne bestFinish-Verbesserung (ab Welle 4) */
 const DFR_POOL_TTL  = 90;       /* v0.2.13: DELFI-Pool-Strom-Flussalter (s) */
 const DFR_POOL_MIN  = 400000;      /* v0.2.13: Plausibilitaet Pool-Strom (~4..40 MB) */
 const DFR_POOL_MAX  = 40000000;
@@ -2336,6 +2359,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
         $walkFrom[$a[0]] = [dfr_vm_wave($vm, $a[3], (float)$a[2]), $a[2], $a[1]];
 
     $tau = []; $parent = []; $marked = [];
+    $finCut = 26100; $prevMinFin = -1; $stag = 0;   /* v0.2.14: Pruning/Stagnation */
     foreach ($accFrom as $a) {
         $t = $depMin + dfr_vm_wave($vm, $a[3], (float)$a[2]);
         if (!isset($tau[$a[0]]) || $t < $tau[$a[0]]) {
@@ -2382,6 +2406,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
         foreach ($marked as $stop) {
             if (time() > $tEnd) return ['err' => 'timeout'];
             $ts = $tau[$stop];
+            if ($ts >= $finCut) continue;   /* v0.2.14: Ziel-Pruning (bestFin+KEEP_SLACK reicht nie ans Ziel) */
             $skey = 's' . $stop;
             if (!array_key_exists($skey, $ix->tCache)) $ix->tCache[$skey] = dfr_dprof($ix, $stop);
             $blk = $ix->tCache[$skey];
@@ -2405,8 +2430,10 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                 if (!dfr_trip_active($ix, $u['trip']))
                     continue;                           /* DODP: nur heute aktive Fahrten */
                 $tripSeq[$u['trip']] = $u['seq'];
-                if (!array_key_exists($u['trip'], $ix->tCache))
+                if (!array_key_exists($u['trip'], $ix->tCache)) {
+                    if (count($ix->tCache) > 400000) $ix->tCache = [];   /* v0.2.14: Speicher-Notkappe (502-Defense) */
                     $ix->tCache[$u['trip']] = dfr_tprof($ix, $u['trip']);
+                }
                 $prof = $ix->tCache[$u['trip']];
                 if ($prof === null) continue;
                 [$stops, $pr] = $prof;
@@ -2450,6 +2477,13 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                 if (!isset($bestFinish[$tStop]) || $fin < $bestFinish[$tStop])
                     $bestFinish[$tStop] = $fin;
             }
+        }
+        if ($bestFinish) {   /* v0.2.14: finCut nachfuehren + Stagnations-Abbruch */
+            $minFin = min($bestFinish);
+            $finCut = $minFin + DFR_KEEP_SLACK;
+            $stag = ($prevMinFin >= 0 && $minFin >= $prevMinFin) ? $stag + 1 : 0;
+            $prevMinFin = $minFin;
+            if ($r >= 3 && $stag >= DFR_STAG_ROUNDS) { if ($dbgOn) $dbg[] = ['round' => $r, 'stag_break' => 1]; break; }
         }
         if ($dbgOn) {
             $bestFin = $bestFinish ? min($bestFinish) : null;
