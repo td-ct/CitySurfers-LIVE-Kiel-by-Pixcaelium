@@ -62,7 +62,8 @@
   #addrClearBtn { right: 146px; }
   .chip.mini { padding: 1px 6px; font-size: 0.72rem; border-radius: 6px; }
   .chip.mini.dim2 { background: #0b1222; border-color: #1e3a5f; color: #94a3b8; }
-  .tname[data-stopopen] { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
+  .tname[data-stopopen], .tname[data-stoprt] { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
+  .rtstop .tstopname { cursor: pointer; text-decoration: underline dotted rgba(148, 163, 184, 0.6); }
   .bigbtns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px 0 2px; }
   /* v1.4.16: Alle Knoepfe sind exakt so breit wie die der obersten Zeile (--bbw wird
      von updateBigBtnsLayout gesetzt), eine nicht ganz gefuellte Zeile steht mittig.
@@ -566,6 +567,8 @@
     margin-top: -5.5px; width: 10px; height: 10px; border-radius: 50%;
     background: #0b1222; border: 2px solid #38bdf8; box-sizing: border-box; z-index: 3; }
   .trip .trow.done::after { border-color: #475569; }
+  .trip .trow.tpass::after { background: #7dd3fc; border-color: #7dd3fc;   /* v1.6.23: GPS-Strahl-Port aus dem Gesamtfahrtverlauf, EINE Farbe */
+    box-shadow: 0 0 6px rgba(125, 211, 252, .45); }
   .trip .trow.here::after { background: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, .25); }
   .trip .trow.done { color: #64748b; }
   /* Erweiterung auf den ganzen Lauf: Zeilen vor dem Zustieg / nach dem
@@ -4928,14 +4931,23 @@ function tripSectionHTML() {
     const hereIdx = currentTrip.atIdx != null ? currentTrip.atIdx : done;
     const rowCls = (i <= done && i !== currentTrip.atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === theFrom ? " frow" : "") + (i === last ? " lrow" : "");
-    const canOpen = stops.some(x => x.shortName === s.shortName);   // klickbar -> neuer Reiter
+    const canOpen = stops.some(x => x.shortName === s.shortName);   // KVG-Station: direkter Reiter
+    // v1.6.23 (Timo): JEDE im Verlauf angezeigte Station oeffnet per Namens-
+    // Tipp einen Reiter: KVG direkt (data-stopopen wie bisher), alle anderen
+    // (Fern-Stationen, DB/VBB-Strecken) per Zuordnung ueber data-stoprt.
+    const nm = String(s.name || "").trim();
+    const openAttr = canOpen
+      ? ' data-stopopen="' + escapeHtml(s.shortName) + '"'
+      : (nm ? ' data-stoprt="' + escapeHtml(nm) + '"' +
+          (s.lat != null ? ' data-stoplat="' + escapeHtml(s.lat) + '"' : "") +
+          (s.lon != null ? ' data-stoplon="' + escapeHtml(s.lon) + '"' : "") : "");
+    const openTitle = openAttr
+      ? ' title="Antippen: Station "' + escapeHtml(s.name) + '" als eigenen Reiter öffnen"' : "";
     html += '<div class="trow' + rowCls + '" data-tri="' + i + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
       '<span class="takt' + (i === currentTrip.atIdx && !(mark && mark.idx === i && mark.etaTs && mark.etaTs > Date.now() + 1500) ? " blinkclock" : "") + '">' + sztRowAktuell + "</span>" +
       delayHtml + sztRowChip + cdHTML +
-      '<span class="tname' + (canOpen ? " tnameclick" : "") + '"' +
-        (canOpen ? ' data-stopopen="' + escapeHtml(s.shortName) +
-          '" title="Antippen: Station "' + escapeHtml(s.name) + '" als eigenen Reiter öffnen"' : "") +
+      '<span class="tname' + (openAttr ? " tnameclick" : "") + '"' + openAttr + openTitle +
         '>' + escapeHtml(s.name) + (s.isArr ? ' <span class="tarr">(an)</span>' : "") + "</span>" +
       "</div>";
   }
@@ -6145,7 +6157,7 @@ const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font
 function saveView() {
   try {
     saveActiveTab();   // sichert auch den aktiven Route-Reiter in sein Objekt
-    localStorage.setItem("kvg-view", JSON.stringify({
+    const payload = {   // v1.6.23: erst Objekt bauen, dann speichern (Quota-Fallback unten)
       tabs: tabs.map(t => {
         const trips = (t.trips || []).map(b =>
           ({ sn: b.sn, tripId: b.tripId, tripOpen: !!b.tripOpen }));
@@ -6158,14 +6170,29 @@ function saveView() {
             extId: t.remote.extId || "", svc: t.remote.svc || "nahsh",
             rId: t.remote.rId || null } : null) };   // v1.5.0: Fern-Stationen überdauern Neustart/Import
       }),
-      rtabs: routeTabs.map(rt => ({ name: rt.name || "", uid: rt.uid || "", sel: rt.sel })),
+      // v1.6.23 (Timo): Route-Reiter ueberleben den Neustart MIT ihrem Inhalt -
+      // Trefferliste, gewaehlte Verbindung (Signatur + Verlaufszustand), Fehler.
+      rtabs: routeTabs.map(rt => ({ name: rt.name || "", uid: rt.uid || "", sel: rt.sel,
+        sub: (rt.sub == null ? -1 : rt.sub), searched: !!rt.searched, err: rt.err || null,
+        cons: rt.cons || [],
+        chosen: (rt.chosen || []).map(ch => ({
+          sig: (ch && ch.sig) || "",
+          secOpen: (ch && Array.isArray(ch.secOpen)) ? ch.secOpen : [] })) })),
+      slim: 0,
       mmtabs: mmTabs.map(mt => ({ uid: mt.uid || "", stId: (mt.stId == null ? null : mt.stId),   // v1.5.6: MM-Reiter samt Routen
         name: mt.name || "", routes: (mt.routes || []).filter(mm => mm && typeof mm === "object"),
         active: (mt.active == null ? -1 : mt.active), more: (mt.more || {}) })),
       mmactive: mmActiveTab, mmactiveOn: mmTabActive ? 1 : 0,
       ractive: routeActiveTab, ractiveOn: routeTabActive ? 1 : 0,
       ord: barOrd,
-      active: Math.max(0, activeTab) }));
+      active: Math.max(0, activeTab) };
+    try {
+      localStorage.setItem("kvg-view", JSON.stringify(payload));
+    } catch (q) {   // Quota: Route-Reiter ohne Ergebnis-Inhalt (Start/Ziel steht trotzdem wieder da)
+      payload.rtabs = payload.rtabs.map(rt => ({ name: rt.name, uid: rt.uid, sel: rt.sel }));
+      payload.slim = 1;
+      try { localStorage.setItem("kvg-view", JSON.stringify(payload)); } catch (q2) {}
+    }
   } catch (e) {}
 }
 function kvgExportState() {
@@ -6179,6 +6206,13 @@ function kvgExportState() {
 }
 // Von der Android-App aufgerufen: Sprung aus einer Wecker-Benachrichtigung
 // direkt in den Reiter des Weckers (aus MainActivity, Intent-Extra "tab").
+// v1.6.23 (Timo): Reiter-Inhalt soll das Beenden der App ueberleben - deshalb
+// wird der Zustand auch beim Verstecken der Seite und beim pagehide gesichert
+// (Android killt den Prozess oft ohne weiteren JS-Tick mehr).
+window.addEventListener("pagehide", () => { try { saveActiveTab(); saveView(); } catch (e) {} });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { try { saveActiveTab(); saveView(); } catch (e) {} }
+});
 window.kvgGotoTab = function (sn) {
   try {
     if (!sn) return "err";
@@ -6622,6 +6656,8 @@ busPanel.addEventListener("click", e => {
   }
   const so = e.target.closest("[data-stopopen]");
   if (so) { openTab(so.dataset.stopopen); return; }   // Stationsname -> neuer Reiter
+  const srq = e.target.closest("[data-stoprt]");
+  if (srq) { rtStopOpenTap(srq.dataset.stoprt, srq.dataset.stoplat, srq.dataset.stoplon); return; }   // v1.6.23: Fern-Station zuzuordnen
   const al = e.target.closest("[data-alarmtrip]");
   if (al) {
     openAlarmDialog(al.dataset.alarmtrip);   // Glocke im Fahrtverlauf: Dialog mit Stationsauswahl
@@ -8975,11 +9011,27 @@ try {
   } else if (sv && sv.sn && stops.find(s => s.shortName === sv.sn)) {
     openOne(sv.sn, sv.bus);   // altes Format (einzelner Reiter, v1.0.10)
   }
-  if (sv && Array.isArray(sv.rtabs)) {   // parallele Route-Reiter: Start/Ziel/Name stehen wieder, Suche läuft beim Antippen
+  if (sv && Array.isArray(sv.rtabs)) {
+    // parallele Route-Reiter: seit v1.6.23 MIT Inhalt (Treffer, gewaehlte
+    // Verbindung, offene Verlaeufe, Fehler). Signatur -> Treffer-Objekt,
+    // secOpen stellt die auf-/zugeklappten Verlaeufe wieder her. Altes Format:
+    // Start/Ziel steht wieder, Suche laeuft beim Antippen (altes Verhalten).
     for (const rt of (sv.rtabs || [])) {
       if (!rt || !rt.sel || !rt.sel.start || !rt.sel.dest) continue;
+      const cons = (Array.isArray(rt.cons) ? rt.cons : []).filter(c => c && Array.isArray(c.secs));
+      const chosen = [];
+      for (const chS of (Array.isArray(rt.chosen) ? rt.chosen : [])) {
+        if (!chS || !chS.sig) continue;
+        const con = cons.find(c => { try { return routeSig(c) === chS.sig; } catch (e) { return false; } });
+        if (con) chosen.push({ sig: chS.sig, con: con,
+          secOpen: (Array.isArray(chS.secOpen) && chS.secOpen.length === con.secs.length) ? chS.secOpen : con.secs.map(() => false),
+          at: [], prog: [] });
+      }
       routeTabs.push({ uid: rt.uid || newTabUid(), name: rt.name || "", sel: rt.sel,
-        cons: [], chosen: [], sub: -1, err: null, loading: false, searched: false, searching: null,
+        cons: cons, chosen: chosen,
+        sub: (rt.sub != null && chosen[rt.sub]) ? rt.sub : -1,
+        err: rt.err || null, loading: false,
+        searched: !!(rt.searched && cons.length), searching: null,
         topOpen: true, subOpen: true, fold: false, frozen: false, cachedTop: "", cachedSub: "" });
     }
     if (Array.isArray(sv.ord) && sv.ord.length) barOrd = sv.ord.slice();   // gemeinsame Reihenfolge
@@ -10602,6 +10654,49 @@ function routeScrollToSubtabs() {   // sanft zu den geöffneten Route-Unter-Reit
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 // HAFAS-Haltestellenname -> KVG-Stationskürzel (antippbar im ausklappbaren Verlauf)
+// v1.6.23 (Timo): JEDER Stationsname in jedem Fahrtverlauf (Station-Reiter UND
+// Route-Reiter, Zeilen wie ab/an-Zeilen) oeffnet per Tipp einen Reiter. KVG-
+// Stationen direkt; alle anderen werden zugeordnet: erst bekannte Fern-Stationen
+// (remoteStops, exakter Name), dann LocMatch (rsSearch fuellt den Cache), der
+// Treffer mit passendem Namen und - wenn die Zeile Koordinaten mitbringt - mit
+// hoechstens 500 m Abstand dazu. Ohne eindeutigen Treffer: ehrlicher Hinweis.
+async function rtStopOpenTap(name, lat, lon) {
+  const q0 = String(name || "").trim();
+  if (!q0) return;
+  const kvg = routeStopMatch(q0);
+  if (kvg) { openTab(kvg); return; }
+  for (const rs of remoteStops.values())
+    if (rs && rs.name && rsFold(rs.name) === rsFold(q0)) { openRemoteTab(rs); return; }
+  const la = (lat != null && lat !== "") ? Number(lat) : null;
+  const lo = (lon != null && lon !== "") ? Number(lon) : null;
+  setLocNote("Suche Station „" + q0 + "“ fuers eigene Reiter-Opening …");
+  try { await rsSearch(q0); } catch (e) {}
+  const c = rsSearchCache.get(q0.toLowerCase());
+  let best = null, bestScore = -1;
+  for (const h of ((c && c.hits) || [])) {
+    if (!h || !h.name) continue;
+    let sc = rsFold(h.name) === rsFold(q0) ? 2 : 1;
+    if (la != null && h.lat != null && dist({ lat: la, lon: lo }, h) > 500) sc = 0;   // Zeilen-Koordinate widerspricht
+    if (sc > bestScore) { bestScore = sc; best = h; }
+  }
+  if (best && bestScore >= 1) { openRemoteTab(rsNormalizeHit(best)); return; }
+  setLocNote("Station „" + q0 + "“ laesst sich nicht eindeutig als eigenen Reiter oeffnen.");
+}
+// ab/an-Zeile der gewaehlten Route: Stationsname klickbar (KVG direkt, sonst
+// Zuordnung; Koordinaten der Verlaufs-Station mitgeben, wenn es sie gibt).
+function rtStopNameHTML(name, sec) {
+  const nm = String(name || "").trim();
+  if (!nm || nm === "?") return escapeHtml(nm || "?");
+  const kvg = routeStopMatch(nm);
+  if (kvg) return '<span class="tstopname" data-stopopen="' + escapeHtml(kvg) +
+    '" title="Antippen: Station als eigenen Reiter oeffnen">' + escapeHtml(nm) + "</span>";
+  let st = null;
+  try { st = ((sec && sec.stops) || []).find(x => x && x.name && rsFold(x.name) === rsFold(nm)); } catch (e) {}
+  return '<span class="tstopname" data-stoprt="' + escapeHtml(nm) + '"' +
+    (st && st.lat != null ? ' data-stoplat="' + escapeHtml(st.lat) + '"' : "") +
+    (st && st.lon != null ? ' data-stoplon="' + escapeHtml(st.lon) + '"' : "") +
+    '" title="Antippen: Station als eigenen Reiter oeffnen">' + escapeHtml(nm) + "</span>";
+}
 function routeStopMatch(nm) {
   const norm = q => String(q || "").toLowerCase().replace(/\(db\)/g, "").replace(/[^a-zäöüß0-9]/g, "");
   const n = norm(nm);
@@ -10919,7 +11014,7 @@ function updateTripBeam() {
   if (!beam) return;
   const tstops = currentTrip && currentTrip.stops;
   const use = !!(wrapEl && tstops && tstops.length && currentBus && currentBus.tripOpen !== false);
-  if (!use) { beam.style.display = "none"; return; }
+  if (!use) { beam.style.display = "none"; wrapEl.querySelectorAll(".trow.tpass").forEach(el => el.classList.remove("tpass")); return; }
   const rows = {};
   wrapEl.querySelectorAll(".trow[data-tri]").forEach(el => { rows[Number(el.dataset.tri)] = el; });
   const vis = Object.keys(rows).map(Number).sort((x, y) => x - y);
@@ -10962,8 +11057,15 @@ function updateTripBeam() {
       y += geo.f * (gr1.top + gr1.height / 2 - wr.top - (gr0.top + gr0.height / 2 - wr.top));
     }
   }
-  if (y == null) { beam.style.display = "none"; return; }
+  if (y == null) { beam.style.display = "none"; wrapEl.querySelectorAll(".trow.tpass").forEach(el => el.classList.remove("tpass")); return; }
   y = Math.max(y0, Math.min(y1, y));
+  // v1.6.23 (Timo): Port aus dem Gesamtfahrtverlauf - der Strahl aktiviert die
+  // Stationskreise STATIONSSYNCHRON, jeder Kreis genau im Moment des geometri-
+  // schen Passierens, vor und zurueck mitlaufend. EINE Farbe wie der Strahl.
+  vis.forEach(i => {
+    const r2 = rows[i].getBoundingClientRect();
+    rows[i].classList.toggle("tpass", (r2.top + r2.height / 2 - wr.top) <= y + 0.5);
+  });
   beam.style.display = "";
   beam.style.top = y0 + "px";
   beam.style.height = Math.max(0, Math.round(y - y0)) + "px";
@@ -11341,7 +11443,7 @@ function rtJnyHTML(sec, tail, attrs, pre, cls, stopsHTML, lineAttrs) {   // Bus-
   // aufgeklappter Verlauf (stopsHTML) schiebt sich ZWISCHEN Linien-Zeile und Anastation;
   // lineAttrs (v1.5.6) legt den Auf-/einklapp-Schalter auf die Linien-Zeile selbst
   return '<div class="routesec rtjny' + (cls ? " " + cls : "") + '"' + (attrs || "") + ">" + (pre || "") +
-    '<div class="rtstop">ab ' + escapeHtml(sec.from || "?") + " " + escapeHtml(sec.dep || "–") +
+    '<div class="rtstop">ab ' + rtStopNameHTML(sec.from, sec) + " " + escapeHtml(sec.dep || "–") +
     rtDelaySpan(sec.depDelay) + "</div>" +
     '<div class="rtline"' + (lineAttrs || "") + '><span class="rtbadge">' + escapeHtml(sec.line || "?") + "</span> Richtung " +
     escapeHtml(sec.dir || "?") +
@@ -11355,7 +11457,7 @@ function rtJnyHTML(sec, tail, attrs, pre, cls, stopsHTML, lineAttrs) {   // Bus-
       (sec.depDelay != null && sec.depDelay !== 0 ? rtDelaySpan(sec.depDelay) : "")) + "</span>" +
     (tail || "") + "</div>" +
     (stopsHTML || "") +
-    '<div class="rtstop">an ' + escapeHtml(sec.to || "?") + " " + escapeHtml(sec.arr || "–") +
+    '<div class="rtstop">an ' + rtStopNameHTML(sec.to, sec) + " " + escapeHtml(sec.arr || "–") +
     rtDelaySpan(sec.arrDelay) + "</div>" +
     "</div>";
 }
@@ -11636,11 +11738,17 @@ function routeSecStopsHTML(rc, si) {
   const done = rc.prog[si] == null ? -1 : rc.prog[si];
   const extRow = (st, cls, rstIdx) => {   // Erweiterungs-Zeile: nur Planzeit, gedimmt, klickbare Station (rstIdx = Stationssynchron-Nummer der Zeile)
     const kvg = routeStopMatch(st.name);
+    const nmE = String(st.name || "").trim();   // v1.6.23: jede Station oeffnet einen Reiter (auch Fern)
+    const openAttr = kvg
+      ? ' data-stopopen="' + escapeHtml(kvg) + '"'
+      : (nmE ? ' data-stoprt="' + escapeHtml(nmE) + '"' +
+          (st.lat != null ? ' data-stoplat="' + escapeHtml(st.lat) + '"' : "") +
+          (st.lon != null ? ' data-stoplon="' + escapeHtml(st.lon) + '"' : "") : "");
     return '<div class="trow ext' + (cls ? " " + cls : "") + '"' + (rstIdx != null ? ' data-rsst="' + rstIdx + '"' : "") + '">' +
       '<span class="tgep">' + escapeHtml(st.dS || st.aS || "–") + "</span>" +
       '<span class="takt">–</span>' +
-      '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
-        (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
+      '<span class="tname' + (openAttr ? " tnameclick" : "") + '"' + openAttr +
+        (openAttr ? ' title="Antippen: Station als eigenen Reiter öffnen"' : "") +
         ">" + escapeHtml(st.name) + "</span></div>";
   };
   let html = '<div class="trip" data-rtsi="' + si + '">' +
@@ -11736,12 +11844,18 @@ function routeSecStopsHTML(rc, si) {
     const rowCls = (i <= done && i !== atIdx ? " done" : "") + (i === hereIdx ? " here" : "") +
       (i === 0 && !extUp.length ? " frow" : "") + (i === last && !extDn.length ? " lrow" : "");
     const kvg = routeStopMatch(st.name);
+    const nmR = String(st.name || "").trim();   // v1.6.23: jede Station oeffnet einen Reiter
+    const openAttr = kvg
+      ? ' data-stopopen="' + escapeHtml(kvg) + '"'
+      : (nmR ? ' data-stoprt="' + escapeHtml(nmR) + '"' +
+          (st.lat != null ? ' data-stoplat="' + escapeHtml(st.lat) + '"' : "") +
+          (st.lon != null ? ' data-stoplon="' + escapeHtml(st.lon) + '"' : "") : "");
     html += '<div class="trow' + rowCls + '" data-rsst="' + ((extOn ? sec.extFrom : 0) + i) + '">' +
       '<span class="tgep">' + escapeHtml(planned || "–") + "</span>" +
       '<span class="takt' + (i === atIdx && !etaActive ? " blinkclock" : "") + '">' + sztRowAktuell + "</span>" +
       delayHtml + cdHTML +
-      '<span class="tname' + (kvg ? " tnameclick" : "") + '"' +
-        (kvg ? ' data-stopopen="' + escapeHtml(kvg) + '" title="Antippen: Station als eigenen Reiter öffnen"' : "") +
+      '<span class="tname' + (openAttr ? " tnameclick" : "") + '"' + openAttr +
+        (openAttr ? ' title="Antippen: Station als eigenen Reiter öffnen"' : "") +
         ">" + escapeHtml(st.name) + "</span></div>";
   }
   // Kompakte Raum-Zeit-Ankunft UNTER der Ausstiegs-Station dieses Abschnitts:
@@ -13700,6 +13814,8 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>CitySurfers LIVE – On-Demand-Suche, Direktweg zuerst und ☂ Regenschirm (v1.6.12):</b> Die Verbindungssuche des Route-Reiters aktualisiert ihre Ergebnisse <b>NIE von selbst</b> – auch nicht bei laufender GPS-Quelle: Eine neue Suche läuft ausschließlich, wenn du den <b>▶-Knopf</b> drückst, ein Steuer-Element oben im Reiter änderst (Start/Ziel, Router, Zeit, Modus, Sortierung) oder den ↻-Knopf der gewählten Route antippst; zwischen den Suchen bleibt die Anzeige ruhig stehen. Oben im Route-Reiter stehen jetzt <b>alle Kontrollen des Route-Dialogs</b> direkt bereit: Start und Ziel (mit Auswahl-Dialogen, GPS-Übernahme, ✕ und ⇅ Tauschen samt NAH.SH-Abgleich), die Router-Chips, Abfahrt/Ankunft-Zeit, Produktfilter, Zubringer-Modus und der ☂-Haken – so lässt sich die gegebene Suche direkt verfeinern, ganz ohne den Dialog. Neu ist die <b>Direktweg-Karte</b>: Ein Fuß-, Rad- oder Rollerweg unter 5 Minuten zwischen Start und Ziel wird immer angeboten und ganz oben angezeigt; auch ein gegenüber jeder ÖPNV- und Mikromobilitäts-Verbindung schnellerer Direktweg steht ganz oben, die übrigen Verbindungen bleiben dahinter (v1.6.13: der Direktweg verdrängt nie die Liste). Das <b>☂-Regenschirm-Häkchen</b> minimiert darüber hinaus ganz allgemein die Zeit im Freien (außerhalb von ÖPNV und Bahn): Die Bewertung (⭐ Beste) zieht Fuß-, Rad- und Roller-Minuten dann stark herauf. Ohne ÖPNV-Treffer bleibt der Direktweg immer das letzte Angebot."); h += P("<b>CitySurfers LIVE – Leih-Modus-Direktweg mit Ausleih- und Rückgabestation (v1.6.13):</b> Timos Korrektur vom 24.11.2026 abends: (1) Der schnellere Direktweg steht zwar weiterhin ganz oben, aber er verdrängt die ÖPNV- und Mikromobilitäts-Liste nicht mehr – alle Verbindungen bleiben sichtbar und wählbar, der Hinweis über den Karten nennt nur noch die Reihenfolge. (2) Damit der Direktweg im Leih-Modus (🚲 Fahrrad oder 🛴 Roller) nicht vom Rad am Start ausgeht, das nie dort stand, rechnet er jetzt die echten Donkey-Stationen mit: Fußweg zur Ausleih-Station mit dem nächsten freien Fahrrad (je nach Ausleihe-Häkchen plus 2 Minuten Holen), Fahrt zur dem Ziel nächsten Rückgabestation (Radstrecke über OSRM gemessen, sonst Luftlinie × 1,3, Leihfahrrad 17, Leihroller 18 km/h) und Fußweg ans Ziel (plus 2 Minuten Abstellen). Steht gerade kein freies Fahrrad im Feed, bleibt als Direktweg der ehrliche Fußweg; sind die Leihrad-Daten nicht erreichbar, nennt der Fußweg-Hinweis das. Die Direktweg-Karte zeigt alle Beine wie eine normale Verbindung (öffnen als Unter-Reiter, Countdown, ＋ Weitere wirft sie nicht weg)."); h += P("<b>CitySurfers LIVE – Zusatz-Verbindungen ab der Haltestelle neben dir (v1.6.14):</b> Timos Befund vom 24.11.2026: Vom GPS-Start „Am Botanischen Garten 18“, nur rund 200 m von der Haltestelle Botanischer Garten entfernt, zeigte die Verbindungssuche auf einmal keine Fahrt mehr ab dieser Haltestelle. Ursache ist der NAH.SH-Router selbst: Ab etwa 150 m Abstand sammelt er nur noch Alternativen mit längeren Fußwegen zu entfernteren Haltestellen (weil deren Fahrten mit dem kürzeren Ziel-Weg rechnerisch früher ankommen) und liefert die nahen Einstiege schlicht nicht mit. Die App heilt das jetzt: Liegt der Start (Adresse oder GPS-Position) höchstens 300 m Luftlinie von einer KVG-Haltestelle, startet die Suche zusätzlich eine zweite Runde ab genau dieser Haltestelle und stellt jedem Treffer den Zubringer-Fußweg davor (Aufbruchzeit und Countdown entsprechend früher, Hinweis am Weg-Abschnitt nennt die Haltestelle). Dubletten fliegen vor dem Mischen raus (NAH.SH hat die Fahrt doch angeboten), und nur Treffer bis 25 Minuten nach der besten Verbindungsankunft nehmen teil (maximal 6 Stück). Nur im Fuß-Modus, nur bei Abfahrtssuche, nur beim Router Alle (früher Auto) oder NAH.SH."); h += P("<b>CitySurfers LIVE \u2013 delfirouting-Aufbruchzeiten, echte Bahnhöfe, zwei Zubringer-Schalter (v1.6.15):</b> Timos Befunde vom 24.11.2026, Screenshots \u201eAm Botanischen Garten → UKSH\u201c: (1) delfirouting übernahm als Abfahrtszeit die erste ÖPNV-Teilstrecke statt des echten Aufbruchs und rechnete die Dauer ohne Datum; die App rechnet jetzt selbst: Aufbruch = erste Fahrt minus vorangegangene Zubringer-Minuten, Ankunft = letzte Fahrt plus nachlaufende Zubringer, Dauer aus echten absoluten Zeiten mit Datum, und auch Fahrrad-/Roller-Beine erscheinen im Tempo der Schalter (eigen 15/20/25 km/h, Leihfahrrad 17 km/h inkl. 2 min Ausleihe, E-Bike 22 km/h, Roller 18 km/h inkl. 2 min). (2) Der Router \u201eBahnhöfe\u201c legte Start und Ziel per Adress-Text über LocMatch an zufällige Orte (\u201eKiel Kieler Straße\u201c); jetzt sucht die App per Umkreis um die Koordinate echte Schienen-Stationen (LocGeoPos, bevorzugt reine Bahnhöfe, keine Bushaltestellen) und filtert die Fahrten auf Schienenverkehr. (3) Der Drei-Modi-Schalter und das Ausleihe-Häkchen wichen den zwei getrennten Fahrrad-/Roller-Schaltern (Details im Zubringer-Schalter-Absatz); Donkey-Stationen rechnet der Direktweg nur noch im Leihfahrrad-Zustand ein."); h += P("<b>CitySurfers LIVE – GPS-ehrlicher Aufbruch-Hinweis, Strahl im Verlauf, VBB-Wunschzeit (v1.6.16):</b> Timos Screenshot vom 24.11.2026 abends (X60, 18:02 geplant, GPS-Punkt klar an der Haltestelle): (1) Der rote Warnkasten \u201eAufbruch verpasst\u201c zog bisher allein den Uhr-Vergleich, das GPS blieb unber\u00fccksichtigt. Jetzt pr\u00fcft er den echten Fortschritts-Zustand mit: Ist der Zubringer laut GPS-Rechnung erledigt oder stehst du bereits an der Einstiegs-Haltestelle, erscheint der gr\u00fcne Hinweis \u201eSchon aufgebrochen\u201c stattdessen, und auch der Countdown-Chip am Weg-Abschnitt meldet dann neutral \u201eunterwegs\u201c statt \u201eAufbruch verpasst\u201c. Rot bleibt der Kasten nur noch, wenn wirklich ohne Position gegen die Uhr verpasst wurde. (2) Im aufgeklappten Bus-/Bahn-Fahrtverlauf der gew\u00e4hlten Route l\u00e4uft jetzt ein eigener hellblauer Fortschritts-Strahl zwischen den Stations-Kreisen mit: Die Zeilen zeichnen eigene Leisten-Segmente \u00fcber der Abschnitts-F\u00fcllung, deshalb war der Strahl dort bisher unsichtbar, obwohl die Kreise blau wurden; er f\u00fcllt stationssynchron bis zur Punkt-Position, l\u00e4uft mit der GPS-Projektion auch r\u00fcckw\u00e4rts (v1.6.17: Die Spitze zeigt exakt die GPS-Projektion; die Zeit entscheidet nur noch in unsicheren F\u00e4llen.) (3) Der VBB-Dienst ignoriert den bisher gesendeten \u201ewhen\u201c-Parameter still und lieferte Verbindungen ab Server-Jetztzeit; die App fragt jetzt mit \u201edeparture\u201c und damit wirklich ab der gew\u00e4hlten Wunschzeit."); h += P("<b>CitySurfers LIVE – Exakte Strahl-Spitze und Route-Dialog-Reparatur (v1.6.17):</b> Timos Wünsche vom 24.11.2026 spät: (1) Die Spitze des hellblauen Fortschritts-Strahls zeigt jetzt <b>haargenau deine Position auf der Projektion deiner Route</b>, sowohl im Fahrtverlauf eines Stations-Reiters als auch im Gesamtfahrtverlauf einer gewählten Route: Die App berechnet die Abstände der aktuellen GPS-Position zu allen Stationen der Route, nimmt die zwei nächsten und legt die Strahl-Spitze genau dorthin, wie sich die Abstände zueinander verhalten, zwischen diesen beiden Stationen, mitlaufend vorwärts wie rückwärts. Die Zeit (Raum-Zeit-Prognose aus Live-Ist und beobachteter Verspätung) fließt nur noch in unsicheren Fällen ein, in denen die Geometrie nicht eindeutig ist: kein GPS-Signal, Position weit abseits der Route oder eine Strecke, die auf sich selbst zurückführt (derselbe Bus fährt denselben Weg zurück). In diesen Fällen läuft die Spitze zeitproportional; in allen anderen (<95 % der Fälle) entscheidet allein die Geometrie. Im Gesamtfahrtverlauf einer Route bleiben die Farben wie gewohnt: Fußwege (Zubringer) in Pink, Bus-/Bahn-Abschnitte in Hellblau, die Stations-Punkte leuchten weiter blau, nichts wird ausgegraut. (2) Reparatur: Beim \u00d6ffnen des Route-Dialogs erschien \u201eInterner Fehler: routeRain is not defined\u201c \u2013 der Regenschirm-Schalter (Zeit im Freien minimieren) hatte in der v1.6.16-Reparatur seine Deklaration verloren; der ☂-Haken funktioniert jetzt wieder, auch sein gespeicherter Zustand bleibt erhalten."); h += P("<b>CitySurfers LIVE – Vielfaeltige Verbindungssuche und Sortier-Block (v1.6.18):</b> Timos Wuensche vom 24.11.2026 nachts: (1) Die Verbindungssuche sammelt jetzt <b>mindestens 10 verschiedene Verbindungen</b> mit echter Vielfalt statt dreier Varianten desselben Busses: Sie blaettert so lange weiter, bis die Ergebnisliste neben der Zielzahl auch mindestens <b>drei verschiedene erste Fahrten</b> (Einstiege) enthaelt, und waehlt aus der Suchausbeute die 10 Angebotenen so, dass je Sortierart (⏱ Ankunft, 🚀 Fahrzeit, 🔁 Umstiege, ⭐ Beste) die jeweils zwei besten dastehen und die Einstiege reihum ueber verschiedene erste Fahrten verteilt sind. (2) Damit naehere Einstiege nicht hinter einem einzigen weit entfernten Bus verschwinden, Sucht die App jetzt von den <b>bis zu drei naechsten Haltestellen</b> neben dem Start jeweils gesondert (bis zu drei Treffer je Station, hoechstens 6 gesamt); und in duennen Ergebnissen (spaete Stunden, weniger als 10 Treffer) weitet sich das Toleranzfenster von 25 auf 75 Minuten aus, damit spaehere und dafuer viel naehere Verbindungen gegen den einzigen 12-Minuten-Fussweg-Bus gewinnen, gerade auch im ☂-Modus. (3) Die vier Sortier-Knoepfe sind <b>nur Sortierregeln</b>: Sie sortieren die fertige Liste sofort neu, ohne eine neue Suche zu starten (so war es technisch schon, jetzt auch sichtbar). Als eigener Block <b>\u201eSortierung\u201e</b> stehen sie direkt ueber der Ergebnisliste, unterhalb der Such-Steuerung."); h += P("<b>CitySurfers LIVE - Fahrrad- und Roller-Beine auf allen Routern + Scooter-App-Deep-Links (v1.6.19):</b> Timos Befund vom 25.11.2026: Mit aktiviertem Fahrrad- oder Roller-Schalter blieben alle Zubringer und Umstiege Fusswege, NAH.SH plant solche Beine naemlich nur zu Fuss (getIV liefert nur reine Ganzstrecken-Varianten, keinen gemischten Bike-Zubringer, im Live-Test geprueft). Die App rechnet deshalb jetzt bei JEDEM Router (NAH.SH, VBB, delfirouting, Bahnhof-Zug-Routing) die Fuss-Beine selbst um: Ab mehr als 7 Gehminuten Strecke wird der Weg zum Fahrrad- oder Roller-Bein mit App-Tempo (eigenes Fahrrad 15/20/25 km/h, Leihfahrrad 17 km/h, Roller 18 km/h, im Leih-Zustand jeweils inklusive 2 Minuten Holen und Abstellen - die zwei Minuten sind damit auch bei den neuen Rollern ueberall mitgerechnet), kuerzere Wege bleiben ehrlich zu Fuss. Der erste Zubringer verschiebt die Aufbruchzeit nach hinten (schneller = spaeter los), der letzte bringt eine fruehere Ankunft, und in der MITTE bleibt die Bus- oder Bahnzeit fest: dort waechst der Umstiegs-Puffer. Bei der Bahnhof-Abfrage gilt dasselbe, auch dort zaehlen lange Umstiege jetzt im gewaehlten Modus. Und die Links der Leihrroller-Anbieter (Voi, Dott, Bolt) sind keine Webseiten-Links mehr: Auf dem Handy oeffnen sie per intent-Link direkt die jeweilige App, fehlt die App, oeffnet der Link ihre Play-Store-Seite; die Android-App der CitySurfers reicht die intent-Links ans System weiter. Die Links stehen jetzt NUR im Unter-Reiter einer gewaehlten Verbindung mit Roller-Bein (Leih-Modus), nicht mehr an jeder Karte der Verbindungssuche."); h += P("<b>CitySurfers LIVE - JETZT-Modus und Erreichbarkeit der Ergebnisse (v1.6.20):</b> Timos Befund vom 25.11.2026: Eine Suche mit zurueckliegender Zeit endete bisher in der roten Meldung „Keine der gefundenen Verbindungen ist mit dem Zubringerweg zeitig zu schaffen“. Das ist jetzt hoechstens noch eine Warnung, nie ein Abbruch. Der neue <b>🕓 JETZT-Schalter</b> neben dem Zeitfeld (Route-Reiter und Route-Dialog, Standard eingeschaltet) laesst Datum und Uhrzeit kontinuierlich mitlaufen, die Suche plant immer ab jetzt. Aenderst du Datum oder Uhrzeit selbst, schaltet der Modus automatisch ab: Dann bleibt die gewaehlte Zeit stehen, auch in der Vergangenheit, und die Ergebnisliste zeigt ALLE Verbindungen bedingungslos - nicht mehr Schaffbare tragen rote „vor X min.“-Markierungen. Im JETZT-Modus blendet die Liste nicht mehr schaffbare Verbindungen standardmaessig aus; der Link <b>„Zeige nicht erreichbare (n)“</b> direkt ueber der ersten Karte blendet sie auf Rueckruf ein (und wieder aus). Die Sortier-Knoepfe ueber der Liste sind reine Listensortierer: Sie sortieren sofort um, ohne neue Abfrage (so war es technisch schon, jetzt auch beschriftet); zusaetzlich bekommt die gewaehlte Sortierart bei der Suche-Vielfalt drei statt zwei Vertreter, damit der Wunsch schon beim Anfragen zaehlt. Der Sortier-Block ist jetzt per Abtrennlinie vom Suchfeld darueber abgesetzt.");
   h += P("<b>CitySurfers LIVE - Mehr Treffer, Blättern an der Liste, ▶ statt Auto-Suche (v1.6.21):</b> Timos Wünsche vom 25.11.2026 abends: (1) Die Verbindungssuche zeigt normalerweise wieder <b>fünf bis sechs Routen</b>: Reicht die erste Suchausbeute dafür nicht (wenige erreichbare Verbindungen im JETZT-Modus), blättert die Suche automatisch weiter (bis zu vier zusätzliche Runden), bis mindestens sechs erreichbare Verbindungen stehen. (2) Über und unter der Ergebnisliste stehen die Blätter-Knöpfe <b>◀ Frühere</b> und <b>＋ Weitere</b>: Sie laden frühere bzw. spätere Verbindungen NACH und fügen sie sofort einsortiert in die bestehende Liste ein, ohne die bisherigen Ergebnisse neu zu laden; frisch nachgeladene Karten sind leicht bläulich hinterlegt. Während des Nachladens bleibt die Liste stehen und an der Knopf-Stelle erscheint kurz der Hinweis „Suche Verbindungen (… Router …)“. (3) Die Kontrollen oben lösen <b>keine Suche mehr von selbst</b> aus: Zubringer-Schalter (🚲/🛴 mit 🅛), Fahrrad-Tempo, Spar-Schwelle und ☂ Regenschirm ändern nur die Einstellung (☂ bewertet die fertige Liste sofort neu), gestartet wird grundsätzlich über den <b>▶-Knopf</b>. Der ▶-Knopf steht im Route-Reiter jetzt klar rechts am Ende der Kontroll-Reihe, im Routen-Dialog groß rechts unten, und der ☂-Haken ist im Dialog in die Zeit-Zeile gewandert (mit dem ▶ getauscht).");
   h += P("<b>CitySurfers LIVE - Router Alle (parallel) und kurze Verpasst-Hinweise (v1.6.22):</b> Timos Wünsche vom 25.11.2026 spät: (1) Der Router <b>Alle</b> (bisher 🤖 Auto) fragt jetzt <b>alle passenden Router gleichzeitig</b> ab - NAH.SH und VBB mit Echtzeit, delfirouting (Soll-Fahrplan, bundesweit) und die Zug-Verbindungen zwischen den nächstgelegenen Bahnhöfen. Dubletten (dieselbe Fahrt über zwei Router) fliegen raus, die gemeinsame Sortierung (⏱/🚀/🔁/⭐) bewertet alle Treffer gleich, und die Vielfalt-Auswahl zieht aus dem ganzen Pool die 10 Karten. Ein gescheiterter Router blockiert die anderen nicht mehr, und unter der Liste steht kurz, wie viele Treffer jeder Router beigesteuert hat. (2) Die Warnhinweise der gewählten Verbindung sind jetzt kurz und nicht mehr definitiv: Der rote Kasten sagt nur noch <b>Aufbruch ggf. verpasst!</b>, der grüne <b>Schon aufgebrochen: Der Zubringer ist erledigt, du wartet bereits an der Haltestelle</b>. Kam der grüne Hinweis, erscheint die Meldung „wird nicht mehr angeboten“ nicht mehr; erst wenn laut Uhr eine Abfahrt im Routenverlauf bereits abgefahren ist und das GPS noch davor steht, heißt es <b>Anschluss ggf. verpasst</b>.");
+  h += P("<b>CitySurfers LIVE - Verlaufs-Strahl im Stations-Reiter, Reiter ueberleben Neustart, jede Station als Reiter (v1.6.23):</b> Timos Wuensche vom 25.11.2026 spaet: (1) Der GPS-Prognose-Strahl des Gesamtfahrtverlaufs funktioniert jetzt auch im Fahrtverlauf der Einzellinien im Station-Reiter, mit dem einzigen Unterschied, dass es dort nur eine Farbe gibt (hellblau): Die Stationskreise aktivieren sich genau im Moment des geometrischen Passierens, vor und zurueck mitlaufend, genau wie in der gewaehlten Route. (2) Alles, was du dir in Station- oder Route-Reitern zurecht gesucht hast, ueberlebt das Beenden der App: Die Route-Reiter stehen nach dem Neustart wieder da, samt Trefferliste, gewaehlter Verbindung, auf- und zugeklappten Fahrverlaeufen und Fehlermeldung, ohne die Suche erneut zu starten (der ↻-Knopf bringt wie immer frische Daten); gesichert wird bei jeder Reiter-Aenderung und zusaetzlich beim Verstecken bzw. Schliessen der Seite. (3) Jede Station, die in einem Fahrverlauf angezeigt wird - im Station-Reiter wie im Route-Reiter, in den Verlaufs-Zeilen und den ab/an-Zeilen der gewaehlten Route - oeffnet auf einen Tipp auf den Namen einen eigenen Stations-Reiter: Kieler Stationen sofort, Fern-Stationen (DB-Volllaeufe, Fernbusse, Verlaeufe ausserhalb Kiels) werden automatisch zugeordnet, bevorzugt per Koordinaten-Abgleich mit dem Verlauf.");
+
 
   h += P("<b>CitySurfers LIVE – Punkt 2 und Punkt 3 als Suchlisten (v1.6.8):</b> Das Abholrad (Punkt 2) und die Rückgabe-Station (Punkt 3) des Micromobility-Routings sind keine Pulldowns mehr, sondern ausklappbare Suchlisten im Stil des Adress- und Stationssuchfelds. <b>Punkt 2</b> gruppiert die freien Räder unter ihrer Abhol-Station wie Buslinien unter ihrer Station: Die Stationen stehen nach Entfernung zum Start sortiert als Kopfzeilen mit der Zahl ihrer E-Bikes und Standardräder, die Räder darunter (E-Bikes nach Akkustand absteigend, Standardräder nach Namen); ein Tipp auf die Stations-Kopfzeile wählt deren bestes Rad, ein Tipp auf die Rad-Zeile genau dieses. Die AID/Kurz-ID ist aus den Zeilen verschwunden: Der Esel-Link zur Donkey-App sitzt weiter hinter jedem Rad, die Kurz-ID bleibt nur für den uMap-Abgleich in der Rad-Info darüber. Räder ohne Stations-Bezug erscheinen in der eigenen Gruppe „Frei abstellbar · ohne Station“. Das Suchfeld oben filtert Abhol-Stationen namentlich, auch weiter entfernte, und ein Knopf am Listenende blättert weitere Räder nach (-- noch N weitere Räder anzeigen --). Der Haken <b>„Rad-Namen“</b> bezieht als Gimmick die von Donkey vergebenen Vornamen wie Frieda in die Suche ein: Treffer stehen dann unter ihrer Station. <b>Punkt 3</b> zeigt standardmäßig die 5 dem Ziel nächsten Rückgabe-Stationen mit ihren Stellplätzen, findet über sein eigenes Suchfeld aber jede weitere, auch weit entfernte; die gewählte Station bleibt markiert und sichtbar, selbst wenn sie weiter weg liegt als die 5 nächsten.");
   h += P("<b>CitySurfers LIVE – MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design (v1.6.9):</b> Der Haken „Rad-Namen“ der Punkt-2-Suche steht jetzt als eigene Zeile UNTER dem Suchfeld (das alte Label am rechten Rand sprengte im schmalen Dialog das Format). Beide Suchlisten klappten nach einer Wahl auf: Nach dem Antippen eines Rads (Punkt 2) oder einer Rückgabe-Station (Punkt 3) zeigt die Liste nur noch den gewählten Eintrag, und ein Tipp ins Suchfeld (oder auf den Knopf darunter) klappt alle Einträge wieder auf, um neu zu wählen; bei frischem Start oder Ziel steht die Liste wieder offen. Im MM-Reiter ist die Kurz-ID aus dem Klartext verschwunden: Die Räder der Abhol-Station tragen nur noch ihren Vornamen (die ID bleibt Karten und uMap-Abgleich vorbehalten), und die Abhol-Zeile des MM-Fahrtverlaufs heißt jetzt „Abholung: STATIONSNAME“ mit der Unterzeile Radtyp, Vorname, Akku und Reichweite samt Esel-Link zur Donkey-App. Der MM-Fahrtverlauf läuft im selben Zeilen-Schema wie der Fahrtverlauf im Stationsreiter und der Gesamtfahrtverlauf im Route-Reiter: Legende Gep./Aktuell, je Punkt die geplante Zeit (bei Übernahme berechnet) und daneben kursiv die aktuelle Voraussage aus der eigenen GPS-Bewegung (einen Fahrplan gibt es hier nicht, das GPS bestimmt die aktuellen Zahlen allein), dahinter farbige Abweichungsminuten (gelb = knapp, rot ab 5 min, blau = zu früh, grün = pünktlich) und sekundengenaue Countdowns im letzten 3-Minuten-Fenster (Format M:SS, am Ziel bis zur Ankunft tickend, in Klammern die Raum-Zeit-Voraussage, wenn sie abweicht); ein Kapitel dabei ist Ausleihen + Zurückgeben mit dem Fahrtbeginn als Planzeit. Und der grüne GPS-Fortschrittsstrahl schließt jetzt lückenlos am Ziel-Ring an.");
@@ -15804,6 +15920,8 @@ routePanel.addEventListener("click", e => {
   }
   const so = e.target.closest("[data-stopopen]");
   if (so) { openTab(so.dataset.stopopen); return; }   // Haltestelle im Abschnitts-Verlauf: eigener Reiter
+  const srq = e.target.closest("[data-stoprt]");
+  if (srq) { rtStopOpenTap(srq.dataset.stoprt, srq.dataset.stoplat, srq.dataset.stoplon); return; }   // v1.6.23: Fern-Station zuzuordnen
   if (e.target.closest("[data-rtnowmode]")) {   // v1.6.20: JETZT-Schalter (Modus, kein Einmal-Knopf)
     routeNowToggle();
     return;
@@ -16484,7 +16602,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.22 · Build: 25.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.23 · Build: 25.11.2026</div>
 </div>
 </body>
 </html>
