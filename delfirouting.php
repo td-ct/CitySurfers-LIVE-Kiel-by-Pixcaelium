@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.14
+ * delfirouting.php - v0.2.15
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -32,6 +32,17 @@ declare(strict_types=1);
  *   (c) DFR_SCAN_MIN 240 -> 120 Minuten: Zwei Stunden Abfahrtsfenster
  *       je Stop reichen fuer frueheste-Ankunft plus Alternativen locker.
  *   (d) SPEICHER-NOTKAPPE: tCache-Flash ab 400.000 Eintraegen (502-).
+ * v0.2.15 Abfahrts-Deckel je Stop (25.11.2026, wenige Stunden nach dem
+ *   v0.2.14-Deploy: Kiel- und Berlin-Binnenrouten liefen jetzt im Budget,
+ *   Alex->Potsdam aber weiter gegen die 25 s; die teuren Wellen laufen VOR
+ *   der ersten Zielankunft, das v0.2.14-Ziel-Pruning greift erst danach).
+ *   RAPTOR-Naeherung: Je markiertem Stop genuegt je Welle die ERSTEN
+ *   DFR_DEP_CAP=15 Abfahrten ab tau (frueheste Ankunft braucht nie die
+ *   spaeteren einer Runde - verbesserter tau markiert den Stop ohnehin
+ *   erneut); dichte Innenstadt-Hubs mit 30-100 Abfahrten im 120-min-Fenster
+ *   verlieren damit ihren Dominanzanteil. Zusaetzlich liefert der Timeout-
+ *   Fehler jetzt den dbg-Block mit (Wellenprofil auch fuer scheiternde
+ *   Anfragen, Diagnose ohne Rebuild).
  * v0.2.13 Echtzeit-Katalog fuer den DODP-Index (Timo 24.11.2026 abends: "mit
  *   Delfirouting eine gute Planung und trotzdem VBB/Echtzeit einblenden; IDs
  *   matchen? Katalog bauen!" - Der App-Output traegt dD je Fahrt schon seit
@@ -280,7 +291,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.14';
+const DFR_V          = 'delfirouting 0.2.15';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -303,6 +314,7 @@ const DFR_MARK_CAP  = 1500;    /* max. markierte Stops je Welle (frueheste tau) 
 const DFR_MARK_TAIL = 600;     /* v0.2.13: Ferne-Frontier: zusaetzlich die SPAETESTEN tau */
 const DFR_KEEP_SLACK = 60;    /* v0.2.14: Ziel-Pruning: tau >= bestFin+X wird nicht mehr gescannt */
 const DFR_STAG_ROUNDS = 2;   /* v0.2.14: Abbruch nach X Wellen ohne bestFinish-Verbesserung (ab Welle 4) */
+const DFR_DEP_CAP    = 15;   /* v0.2.15: je Stop je Welle max. so viele erste Abfahrten scannen (RAPTOR-Naeherung) */
 const DFR_POOL_TTL  = 90;       /* v0.2.13: DELFI-Pool-Strom-Flussalter (s) */
 const DFR_POOL_MIN  = 400000;      /* v0.2.13: Plausibilitaet Pool-Strom (~4..40 MB) */
 const DFR_POOL_MAX  = 40000000;
@@ -2404,7 +2416,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
         }
         $nxt = []; $nxtSet = []; $tripSeq = [];
         foreach ($marked as $stop) {
-            if (time() > $tEnd) return ['err' => 'timeout'];
+            if (time() > $tEnd) return ['err' => 'timeout', 'dbg' => $dbgOn ? $dbg : null];   /* v0.2.15: Wellenprofil auch bei Scheitern */
             $ts = $tau[$stop];
             if ($ts >= $finCut) continue;   /* v0.2.14: Ziel-Pruning (bestFin+KEEP_SLACK reicht nie ans Ziel) */
             $skey = 's' . $stop;
@@ -2419,10 +2431,12 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
                 if ($d >= $ts) { $first = $mid; $hi = $mid - 1; }
                 else $lo = $mid + 1;
             }
+            $seenDep = 0;   /* v0.2.15: RAPTOR-Naeherung, je Welle nur die ersten DFR_DEP_CAP Abfahrten */
             for ($i = $first; $i < $count; $i++) {
                 $o = $i * 8;
                 $dep = unpack('v', substr($recs, $o, 2))[1];
                 if ($dep > $ts + DFR_SCAN_MIN) break;
+                if (++$seenDep > DFR_DEP_CAP) break;
                 $rr = substr($recs, $o, 8);
                 $u = unpack('vdep/Vtrip/vseq', $rr);
                 if (isset($tripSeq[$u['trip']]) && $u['seq'] >= $tripSeq[$u['trip']])
@@ -2904,7 +2918,10 @@ function dfr_query_run(array $q): void {
             : ($res['err'] === 'timeout'
                 ? 'Anfrage ueberschreitet das Zeitlimit; bitte erneut versuchen.'
                 : 'Keine Verbindung gefunden.');
-        dfr_out(['ok' => false, 'code' => $res['err'],
+        if ($res['err'] === 'timeout' && $wantDbg && is_array($res['dbg']))
+            dfr_out(['ok' => false, 'code' => $res['err'], 'dbg' => $res['dbg'],
+                'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);   /* v0.2.15: Diagnose bei Timeout */
+        else dfr_out(['ok' => false, 'code' => $res['err'],
             'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);
     }
     $conns = $res['conns'];
