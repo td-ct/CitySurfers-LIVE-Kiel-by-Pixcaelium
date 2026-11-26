@@ -2,16 +2,11 @@ name: Android-APK bauen
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["index-assemble"]
-    types: [completed]
   push:
     branches: [ main ]
-    paths-ignore: [ ".build/**" ]
 
 jobs:
   apk:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
