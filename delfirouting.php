@@ -32,6 +32,18 @@ declare(strict_types=1);
  *   (c) DFR_SCAN_MIN 240 -> 120 Minuten: Zwei Stunden Abfahrtsfenster
  *       je Stop reichen fuer frueheste-Ankunft plus Alternativen locker.
  *   (d) SPEICHER-NOTKAPPE: tCache-Flash ab 400.000 Eintraegen (502-).
+ * v0.2.17 Abfahrts-Board-Endpoint ?dep=lat,lon (26.11.2026 spaet, Timo: fuer
+ *   den reinen Fahrplan wie ihn der Eichhoernchen-Alarm braucht, als Fallback
+ *   nutzen, plus failsafe Echtzeit): Neu ?dep=lat,lon[&t=HH:MM][&dur=15..1440]
+ *   [&day=YYYYMMDD][&limit=1..200] - Abfahrtsliste der naechsten Haltestelle
+ *   zum Punkt aus dem dprof-Index, je Eintrag line/dir/dep/depMin/seq/trip,
+ *   am Zieldatum aktiv laut tripday-Bitmap (DODP deckt day0+0..127 ab, der
+ *   App-Fahrplan fuer ALLE 7 Wochentage laesst sich also komplett daraus
+ *   speisen). Fuer HEUTE zusaetzlich Echtzeit: dfr_rt_dodp-Pool-Delays je
+ *   TripNr -> dly (min) + depRT. Freier Tagesindex (free) kennt nur heute
+ *   und keine exakten Trip-Joins -> dort ohne rt, day muss ix->day sein.
+ *   Aktiv-Bit-Leser dfr_trip_active_on($ix, $tripNr, $diff) ist die
+ *   verallgemeinerte Form von dfr_trip_active (festes dayIdx).
  * v0.2.16 Abend-noconns + Early-Exit (26.11.2026, Routing-Test 10 Metropolen
  *   intern / 10 Nachbar- / 10 Langstrecken: 5 von 10 Langstrecken plus
  *   Nuernberg->Bamberg liefen abends mit noconns ins Leere, obwohl der
@@ -310,7 +322,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.16';
+const DFR_V          = 'delfirouting 0.2.17';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -1936,6 +1948,118 @@ function dfr_trip_out(DfrIdx $ix, int $tripNr): array {
         'active' => dfr_trip_active($ix, $tripNr), 'stops' => $stops];
 }
 
+/** v0.2.17: Laeuft die Fahrt laut 128-Tage-Bitmap am Tag diff (0 = day0)?
+ *  Verallgemeinerte Form von dfr_trip_active (das feste dayIdx ist hier
+ *  der Spezialfall diff = ix->dayIdx). */
+function dfr_trip_active_on(DfrIdx $ix, int $tripNr, int $diff): bool {
+    if ($ix->src !== 'dodp') return true;
+    if ($diff < 0 || $diff >= DFR_SVC_DAYS) return false;
+    $fh = dfr_fopen($ix->dir . '/tripday.bin');
+    if ($fh === null) return true;   /* Fehlschutz: Bitmaske weg */
+    $o = $tripNr * 16 + ($diff >> 3);
+    if (@fseek($fh, $o) !== 0) return false;
+    $b = @fread($fh, 1);
+    if ($b === false || $b === '') return false;
+    return ((ord($b) >> ($diff & 7)) & 1) === 1;
+}
+
+/** v0.2.17: Abfahrts-Board der naechsten Haltestelle zu lat,lon (?dep=...).
+ *  Soll-Fahrplan aus dem dprof (Eintraege pack('vVv'): dep, tripNr, seq),
+ *  gefiltert auf Aktivitaet am Zieldatum (tripday-Bitmap), Zeitfenster
+ *  t..t+dur Tagesminuten; HEUTE zusaetzlich Pool-Echtzeit je TripNr. */
+function dfr_dep_out(DfrIdx $ix, array $q): array {
+    $today = dfr_day_zo();
+    $day = (string)($q['day'] ?? '');
+    if ($day === '' || !ctype_digit($day) || strlen($day) !== 8) $day = $today;
+    if ($ix->src === 'dodp') {
+        $diff = dfr_day_diff($ix->day0, $day);
+        if ($diff < 0 || $diff >= DFR_SVC_DAYS) {
+            return ['ok' => false, 'code' => 'dayrange', 'v' => DFR_V,
+                'day' => $day, 'day0' => $ix->day0,
+                'validUntil' => $ix->validUntil,
+                'msg' => 'Zieldatum ausserhalb des Index (day0+0..127).'];
+        }
+    } else {
+        $diff = 0;
+        if ($day !== $ix->day) {
+            return ['ok' => false, 'code' => 'dayrange', 'v' => DFR_V,
+                'day' => $day, 'day0' => $ix->day,
+                'msg' => 'Freier Tagesindex kennt nur seinen eigenen Tag.'];
+        }
+    }
+    $ps = (string)($q['dep'] ?? '');
+    $pp = explode(',', $ps);
+    if (count($pp) !== 2 || !is_numeric($pp[0]) || !is_numeric($pp[1])) {
+        return ['ok' => false, 'code' => 'params', 'v' => DFR_V,
+            'msg' => 'dep muss lat,lon sein (dezimal).'];
+    }
+    $la = (float)$pp[0]; $lo = (float)$pp[1];
+    if ($la < 47 || $la > 55.6 || $lo < 5.8 || $lo > 15.2) {
+        return ['ok' => false, 'code' => 'params', 'v' => DFR_V,
+            'msg' => 'Koordinaten ausserhalb Deutschlands.'];
+    }
+    $t = dfr_hm2min((string)($q['t'] ?? ''));
+    if ($t === null) {
+        $n = new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin'));
+        $t = ((int)$n->format('H')) * 60 + (int)$n->format('i');
+    }
+    $dur = (int)($q['dur'] ?? 120);
+    if ($dur < 15) $dur = 15;
+    if ($dur > 1440) $dur = 1440;
+    $limit = (int)($q['limit'] ?? 50);
+    if ($limit < 1) $limit = 1;
+    if ($limit > 200) $limit = 200;
+    $near = dfr_near_stops($ix, $la, $lo, 600, 1);
+    if (!$near) {
+        return ['ok' => false, 'code' => 'noaccess', 'v' => DFR_V, 'day' => $day,
+            'msg' => 'Keine OEPNV-Haltestelle im Umkreis des Punktes.'];
+    }
+    $stopNr = (int)$near[0][0];
+    $d = dfr_dprof($ix, $stopNr);
+    $cnt = ($d === null) ? 0 : (int)$d[0];
+    /* Echtzeit nur fuer HEUTE und nur im DODP-Modus (free-Kurz-IDs passen
+     * nicht auf die TripNrs); Katalog ist prozessweit gecacht. */
+    $delays = null; $rt = 0; $rtSrc = '';
+    if ($ix->src === 'dodp' && $day === $today && $ix->day === $today) {
+        $cat = dfr_rt_dodp($ix);
+        if ($cat && $cat['delays']) {
+            $delays = $cat['delays'];
+            $rt = count($delays);
+            if ($rt > 0) $rtSrc = 'pool';
+        }
+    }
+    $deps = [];
+    for ($i = 0; $i < $cnt; $i++) {
+        $u = unpack('vdep/Vtrip/vseq', substr($d[1], $i * 8, 8));
+        if ($u === false) break;
+        $dep = (int)$u['dep']; $trip = (int)$u['trip'];
+        if ($dep < $t || $dep >= $t + $dur) continue;
+        if (!dfr_trip_active_on($ix, $trip, $diff)) continue;
+        $dM = null;
+        if ($delays !== null && array_key_exists($trip, $delays)) {
+            $dM = (int)round(((int)$delays[$trip]) / 60);
+        }
+        $e = ['line' => dfr_trip_label($ix, $trip),
+            'dir' => dfr_trip_headsign($ix, $trip),
+            'dep' => dfr_min2hm($dep), 'depMin' => $dep,
+            'seq' => (int)$u['seq'], 'trip' => $trip,
+            'dly' => $dM,
+            'depRT' => $dM === null ? null : dfr_min2hm(($dep + $dM) & 0xFFFF)];
+        $deps[] = $e;
+    }
+    usort($deps, fn($a, $b) => $a['depMin'] <=> $b['depMin']);
+    $deps = array_slice($deps, 0, $limit);
+    $ll = dfr_stop_ll($ix, $stopNr);
+    return ['ok' => true, 'v' => DFR_V, 'src' => $ix->src, 'day' => $day,
+        'dayDiff' => $diff,
+        'stop' => ['nr' => $stopNr, 'name' => dfr_stop_name($ix, $stopNr),
+            'lat' => $ll === null ? null : round($ll[0], 5),
+            'lon' => $ll === null ? null : round($ll[1], 5)],
+        't' => $t, 'dur' => $dur,
+        'rt' => $rt, 'rtSrc' => $rtSrc,
+        'n' => count($deps), 'deps' => $deps];
+}
+
 /** Zubringerstops um einen Punkt (3x3 Grid-Zellen, gecacht, naechste zuerst). */
 function dfr_near_stops(DfrIdx $ix, float $lat, float $lon, int $radius, int $maxN): array {
     $key = sprintf('%.5f|%.5f|%d', $lat, $lon, $radius);
@@ -3017,6 +3141,7 @@ function dfr_query_run(array $q): void {
     elseif (isset($q['probe'])) $mode = 'probe';
     elseif (isset($q['diag'])) $mode = 'diag';
     elseif (isset($q['trip'])) $mode = 'trip';   /* v0.2.11: ganzer Lauf einer Fahrt */
+    elseif (isset($q['dep'])) $mode = 'dep';    /* v0.2.17: Abfahrts-Board */
 
     /* v0.2.3: Fatale Fehler (TypeError/ValueError/Exception usw.) vorher wurden
      * zum leeren HTTP 500 (display_errors aus); sie kommen jetzt als JSON
@@ -3059,6 +3184,14 @@ function dfr_query_run(array $q): void {
                     'msg' => 'Noch kein Tagesindex. Erst import=1 bzw. warm=1 ausfuehren.']);
             }
             dfr_out(dfr_trip_out($ixT, (int)($q['trip'] ?? 0)));
+        case 'dep':   /* v0.2.17: ?dep=lat,lon - Abfahrts-Board (Soll + rt heute) */
+            @set_time_limit(30);
+            $ixD = dfr_idx();
+            if ($ixD->dir === '') {
+                dfr_out(['ok' => false, 'code' => 'nodata', 'v' => DFR_V,
+                    'msg' => 'Noch kein Tagesindex. Erst import=1 bzw. warm=1 ausfuehren.']);
+            }
+            dfr_out(dfr_dep_out($ixD, $q));
         default:
             if (isset($q['from']) && isset($q['to'])) {
                 @ini_set('memory_limit', DFR_MEM);
@@ -3075,4 +3208,3 @@ function dfr_query_run(array $q): void {
             'mem' => @ini_get('memory_limit')]);
     }
 })();
-
