@@ -1,0 +1,3000 @@
+        }
+        n++;
+        continue;
+      }
+      const a = alarms.get(aKey);
+      if (!a) continue;
+      firedAlarms.add(aKey);   // Distanz-Wecker bleiben gestellt (stopRinging deaktiviert)
+      syncNativeRinging();    // laufende native Kette ins ⏰-Symbol übernehmen
+      startRinging(aKey, a);   // nur falls noch nicht nativ am Läuten
+      setLocNote("⏰ Wecker: " + a.name + " – Haltestelle erreicht (Geofence, im Hintergrund ausgelöst). Zum Beenden ⏰ antippen.");
+      n++;
+    }
+    if (n) { renderTabs(); renderAlarmInd(); if (currentBus) renderBusPanel(); }
+    return "ok";
+  } catch (e) { return "error"; }
+};
+
+// Beim Wieder-Aktivieren der App: ausgelöste Geofence-Wecker abholen
+function pollGeofenceEvents() {
+  try {
+    if (window.KvgNative && typeof window.KvgNative.pendingGeofenceEvents === "function") {
+      const s = window.KvgNative.pendingGeofenceEvents();
+      if (s && s !== "[]") window.kvgGeofenceEvents(s);
+    }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { pollGeofenceEvents(); updateGpsBtns(); }   // GPS-Knöpfe neu bewerten (gelb, wenn weggewandert)
+});
+
+// ---------- Finde nach Hause: direkte Fahrten zu Favoriten-Zielen finden ----------
+// Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im
+// eingestellten Positions-Umkreis eine Abfahrt hat, für die man spätestens im
+// eingestellten Zeitfenster losgehen muss, und deren Fahrtverlauf eine Station im
+// Ziel-Umkreis des als 🏠
+// markierten Favoriten enthält (ohne Umsteigen). Treffer werden live geprüft und
+// dann gemeldet: Dialog im Stil der Abfahrtsanzeigen + Hinweiston/Vibration
+// (konfigurierbar wie beim Wecker) + Android-System-Benachrichtigung (Kanal
+// "hinweise"). Hinweise lassen sich im Dialog pro Linie oder für das ganze Ziel
+// stummschalten (30 min / 1 Std. / 6 Std. / 1 Tag / Nie).
+const fhStopCfg = JSON.parse(localStorage.getItem("kvg-fhstop") || "{}"); // sn -> cfg
+function saveFhStopCfg() { try { localStorage.setItem("kvg-fhstop", JSON.stringify(fhStopCfg)); } catch (e) {} }
+const FH_MUTES = [["30 Minuten", 30], ["1 Std.", 60], ["6 Std.", 360], ["1 Tag", 1440], ["Nie", Infinity]];
+const fhTripCache = new Map();   // tripId -> { ts, stops: [{sn, name, time}] }
+const fhSeen = new Map();        // "cfgId|route|tripId|sn" -> Ablaufzeit (Meldung nur 1x)
+let fhScanning = false;
+let fhNotifAsked = false;
+
+// Pro Ziel konfigurierbare Radien/Zeitfenster; alte Einträge ohne Werte bekommen die bisherigen Defaults
+function fhDefaults(cfg) {
+  if (cfg.posR == null) cfg.posR = 500;
+  if (cfg.losWin == null) cfg.losWin = 15;
+  if (cfg.tgtR == null) cfg.tgtR = 400;
+}
+// kleines Auswahllisten-HTML (Optionen mit Einheit), direkt im Erklärtext des Dialogs
+function fhSelHtml(cls, opts, val, unit) {
+  if (val == null || opts.indexOf(val) < 0) val = opts[1];   // unbekannt/leer -> Standard 500/15
+  return '<select class="' + cls + '">' +
+    opts.map(o => '<option value="' + o + '"' + (o === val ? " selected" : "") + ">" + o + unit + "</option>").join("") +
+    "</select>";
+}
+function fhTargets() {
+  const ts = [];
+  addrFavs.forEach((f, i) => {
+    if (f.fh && f.fh.on && f.lat != null) { fhDefaults(f.fh);
+      ts.push({ id: "a" + i, name: f.label || f.name, lat: f.lat, lon: f.lon, cfg: f.fh }); }
+  });
+  for (const sn in fhStopCfg) {
+    const c = fhStopCfg[sn];
+    if (!c || !c.on) continue;
+    fhDefaults(c);
+    const s = stops.find(x => x.shortName === sn);
+    if (s) ts.push({ id: "s" + sn, name: s.name, lat: s.lat, lon: s.lon, cfg: c });
+  }
+  return ts;
+}
+function fhMuted(cfg, route) {
+  const now = Date.now();
+  if (cfg.allMutedUntil != null && (cfg.allMutedUntil === Infinity || cfg.allMutedUntil > now)) return true;
+  const m = cfg.muted && cfg.muted[route];
+  return m != null && (m === Infinity || m > now);
+}
+async function fhTripStops(tripId) {
+  const c = fhTripCache.get(tripId);
+  if (c && Date.now() - c.ts < FH_TRIP_CACHE_MS) return c.stops;
+  try {
+    const res = await apiFetch("kvg", TRIP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tripId=" + encodeURIComponent(tripId)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const arr = (data.actual || []).map(p => ({ sn: p.stop.shortName, name: p.stop.name, time: p.actualTime }));
+    fhTripCache.set(tripId, { ts: Date.now(), stops: arr });
+    return arr;
+  } catch (e) { return null; }
+}
+// Minuten-Wert "HH:MM" -> Minuten seit Mitternacht; -1 wenn unlesbar
+function hhmmMin(t) {
+  if (!t) return -1;
+  const [h, m] = String(t).split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? h * 60 + m : -1;
+}
+async function fhScan() {
+  if (fhScanning) return;
+  if (fhOff) return;   // global aus: nicht suchen
+  const pos = (gpsState === "on" && myPos) ? myPos : null;   // nur echte Live-Ortung
+
+  if (!pos || gpsState !== "on" || (pos.accuracy != null && pos.accuracy > GPS_ACC_COARSE_M)) return;
+  const targets = fhTargets();
+  if (!targets.length) return;
+  fhScanning = true;
+  try {
+    // größte eingestellte Werte aller Ziele als grobe Vorfilter
+    const maxPosR = Math.max.apply(null, targets.map(t => t.cfg.posR || 500));
+    const maxLosWin = Math.max.apply(null, targets.map(t => t.cfg.losWin || 15));
+    // 1) nächste Stationen um die eigene Position (Positions-Umkreis des weitesten Ziels)
+    const near = stops
+      .filter(s => !isDB(s.shortName) && dist(pos, s) <= maxPosR)
+      .sort((a, b) => dist(pos, a) - dist(pos, b))
+      .slice(0, FH_MAX_STATIONS);
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    for (const st of near) {
+      const deps = await getDepartures(st.shortName) || [];
+      // 2) Abfahrten im Zeitfenster (Sollzeit = Offline-Fahrplan); grober Vorfilter
+      // über das größte Losgeh-Fenster zuzüglich geschätztem Fußweg (Luftlinie × 1,3)
+      const estWalk = dist(pos, st) * 1.3 / (WALK_SPEED_KMH * 1000 / 60);
+      for (const d of deps) {
+        if (isDB(st.shortName) || String(d.tripId).indexOf("DB:") === 0) continue; // erst nur KVG-Busse
+        const pMin = hhmmMin(d.plannedTime);
+        if (pMin < 0 || pMin < nowMin - 1 || pMin > nowMin + maxLosWin + Math.ceil(estWalk)) continue;
+        const route = d.line + "→" + d.direction;
+        const tStops = await fhTripStops(d.tripId);
+        if (!tStops) continue;
+        // 3) fährt die Fahrt an einem Ziel-Favoriten vorbei?
+        for (const tgt of targets) {
+          if (fhMuted(tgt.cfg, route)) continue;
+          // Zeitfenster: Zeit bis man spätestens losgehen muss (Abfahrt minus geschätzter Fußweg)
+          if (pMin - nowMin - estWalk > (tgt.cfg.losWin || 15)) continue;
+          // günstigste Station der Fahrt am Ziel: nächste im Ziel-Radius
+          let bestS = null, bestD = Infinity;
+          for (const ts2 of tStops) {
+            const s2 = stops.find(x => x.shortName === ts2.sn);
+            if (!s2) continue;
+            const d2 = dist(tgt, s2);
+            if (d2 <= (tgt.cfg.tgtR || 400) && d2 < bestD) { bestD = d2; bestS = s2; }
+          }
+          if (!bestS) continue;
+          // 4) Live-Prüfung: Abfahrt noch da? Ist-Zeit holen
+          depCache.delete(st.shortName);
+          const live = await getDepartures(st.shortName) || [];
+          const ld = live.find(x => x.tripId === d.tripId);
+          if (!ld) continue;   // schon weg oder nicht mehr gelistet
+          const aMin = hhmmMin(ld.actualTime || ld.plannedTime);
+          if (aMin < 0 || aMin < nowMin) continue;   // abgefahren
+          const seenKey = tgt.id + "|" + route + "|" + d.tripId + "|" + st.shortName;
+          if (fhSeen.has(seenKey)) continue;
+          fhSeen.set(seenKey, (aMin + 5) * 60000 + now.setHours(0, 0, 0, 0)); // bis kurz nach Abfahrt
+          fhNotify(tgt, st, ld, aMin, bestS);
+        }
+      }
+    }
+  } finally { fhScanning = false; }
+}
+// Aufräumen: gemeldete Fahrten nach ihrem Ablauf wieder zulassen; zugleich die
+// Sammel-Benachrichtigung regelmäßig aktualisieren (auch ohne neuen Fund).
+const fhCandidates = new Map();   // candKey -> {line, dir, station, clock, los, until}
+function updateFhNotification() {
+  // Abgelaufene Hinweise rausfügen – auch im Browser: Das 🏠-Symbol der
+  // Statusleiste zählt nur aktive Hinweise
+  const now = Date.now();
+  for (const [k, c] of fhCandidates) if (c.until < now) fhCandidates.delete(k);
+  renderFhInd();
+  if (!window.KvgNative) return;
+  if (fhOff) { nativeCall("cancelNotify", "fh-scan"); return; }   // global aus: Nachricht weg
+  if (!fhCandidates.size) { nativeCall("cancelNotify", "fh-scan"); return; }
+  const arr = [...fhCandidates.values()];
+  const title = "🏠 Finde nach Hause: " + arr.length +
+    (arr.length === 1 ? " mögliche Fahrt" : " mögliche Fahrten");
+  const text = arr.map(c => "Linie " + c.line + " → " + c.dir + ", " + c.station +
+    " " + c.clock + " Uhr (" + (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")").join("\n");
+  nativeCall("notify", "fh-scan", title, text, "hinweise");
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, exp] of fhSeen) if (exp < now) fhSeen.delete(k);
+  updateFhNotification();
+}, FH_SCAN_INTERVAL_MS);
+setInterval(fhScan, FH_SCAN_INTERVAL_MS);
+
+// ---------- Fortschritt im aktiven Fahrtverlauf als Android-Benachrichtigung ----------
+// Steht das GPS im Radius einer Station eines offenen Fahrtverlaufs, wird EINE
+// System-Benachrichtigung auf Kanal "fahrtverlauf" laufend aktualisiert (nicht
+// pro Station eine neue): Titel "[Linie] [Endstation]", Text = aktuelle Station
+// plus die nächsten 3 Stationen mit Uhrzeit und Minuten bis Abfahrt.
+function tripStopClock(t, s) {
+  const key = s.key || (s.shortName + "|" + t.tripId);
+  const dl = t.delay[key];
+  return s.time || (dl && dl.actualTime) || s.plannedTime || (dl && dl.plannedTime) || "";
+}
+function tripStopLineTxt(t, s) {
+  const clock = tripStopClock(t, s);
+  let rel = "";
+  if (clock) {
+    const [h, m] = clock.split(":").map(Number);
+    if (isFinite(h) && isFinite(m)) {
+      const n = new Date();
+      let d = (h * 60 + m) - (n.getHours() * 60 + n.getMinutes());
+      if (d < -600) d += 1440;
+      rel = d >= 0 ? " in " + d + " min" : d >= -600 ? " vor " + (-d) + " min" : "";
+    }
+  }
+  return (s.name || s.shortName) + (clock ? " " + clock + " Uhr" : "") + (rel ? " (" + rel.trim() + ")" : "");
+}
+function notifyTripProgress(idx) {
+  if (!window.KvgNative || !currentTrip) return;
+  const t = currentTrip;
+  if (!t.stops || !t.stops.length || idx == null || idx < 0 || idx >= t.stops.length) return;
+  const title = "🚌 [" + (t.route || "?") + "] [" + (t.direction || "?") + "]";
+  const parts = [];
+  for (let k = idx; k < Math.min(idx + 4, t.stops.length); k++) {
+    const mark = k === idx ? "▶ " : "→ ";
+    parts.push(mark + tripStopLineTxt(t, t.stops[k]));
+  }
+  nativeCall("notify", "tp" + t.tripId, title,
+    "Jetzt: " + parts[0] + (parts.length > 1 ? " · Nächste: " + parts.slice(1).join(", ") : ""),
+    "fahrtverlauf");
+}
+function fhSignal(cfg) {
+  if (cfg.tone !== false) alarmBeep(cfg.vol == null ? 1 : cfg.vol, cfg.snd || "notif", 5);
+  if (cfg.vib !== false) vibratePattern([3000]);
+}
+async function fhNotify(tgt, st, dep, aMin, bestS) {
+  // Ton + Vibration sofort auslösen, BEVOR die Fußweg-Routings abgefragt werden –
+  // sonst verzögert sich das Signal um die Netzlaufzeit (OSRM) oder bleibt aus.
+  fhSignal(tgt.cfg);
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const depClock = String(Math.floor(aMin / 60)).padStart(2, "0") + ":" + String(aMin % 60).padStart(2, "0");
+  // Abstände: eigene Position -> Abfahrtsstation und Zielstation -> Ziel.
+  // Luftlinie sofort, zusätzlich echtes Wegerouting (OSRM); die Gehzeit zur
+  // Station wird von der Wartezeit abgezogen ("los in x Minuten" = losgehen).
+  const pos = livePos();
+  const air1 = pos ? dist(pos, st) : null;
+  const air2 = bestS ? dist(bestS, tgt) : null;
+  const r1 = pos ? await footRouteM(pos, st) : null;
+  const r2 = bestS ? await footRouteM(bestS, tgt) : null;
+  const m1 = r1 ? r1.m : (air1 != null ? air1 * 1.3 : null);   // Fallback: Luftlinie × 1,3
+  const m2 = r2 ? r2.m : (air2 != null ? air2 * 1.3 : null);
+  const w1 = footMin(m1), w2 = footMin(m2);
+  const losMin = (aMin - nowMin) - (w1 || 0);
+  const title = "🏠 Mögliche Fahrt nach " + tgt.name;
+  const lines = '<div class="bl"><span class="dl blink">' + escapeHtml(dep.line) + "</span>" +
+    '<span class="mqwrap"><span class="mqi">' + escapeHtml(dep.direction) + "</span></span></div>" +
+    '<div class="rowinfo">' + escapeHtml(st.name) + " <b>" + depClock + "</b> – " +
+    (losMin > 0 ? "in " + losMin + " Minuten losgehen" : "jetzt losgehen!") +
+    (w1 != null ? " (Fußweg " + w1 + " min" + (r1 ? "" : ", geschätzt") + ")" : "") + "</div>" +
+    '<div class="rowinfo">🚶 Zur Abfahrtsstation: ' + formatDist(air1 || 0) + " Luftlinie" +
+      (m1 != null ? " · " + formatDist(m1) + " Weg (~" + w1 + " min" + (r1 ? "" : ", geschätzt") + ")" : "") + "</div>" +
+    (bestS ? '<div class="rowinfo">🎯 ' + escapeHtml(bestS.name) + " → Ziel: " + formatDist(air2 || 0) + " Luftlinie" +
+      (m2 != null ? " · " + formatDist(m2) + " Weg (~" + w2 + " min" + (r2 ? "" : ", geschätzt") + ")" : "") + "</div>" : "");
+  // Android: EINE Sammel-Benachrichtigung für alle Finde-nach-Hause-Funde,
+  // laufend aktualisiert (statt einer neuen Nachricht je Fahrt).
+  // Kandidat merken: für die Android-Sammel-Benachrichtigung UND für das
+  // 🏠-Symbol der Statusleiste (aktive Hinweise zählen auch im Browser)
+  const candKey = tgt.id + "|" + dep.line + "→" + dep.direction + "|" + dep.tripId + "|" + st.shortName;
+  fhCandidates.set(candKey, {
+    line: dep.line, dir: dep.direction, station: st.name, clock: depClock,
+    los: losMin, until: (aMin + 5) * 60000 + new Date().setHours(0, 0, 0, 0)
+  });
+  if (window.KvgNative) {
+    if (!fhNotifAsked) { fhNotifAsked = true; nativeCall("requestNotifPerm"); }
+    updateFhNotification();
+  } else {
+    renderFhInd();
+  }
+  // Dialog mit Mute-Chips im Stil der Abfahrtsanzeigen
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const route = dep.line + "→" + dep.direction;
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">' + title + "</div>" + lines +
+    '<div class="dlabel">Diese Linie nicht mehr melden</div>' +
+    '<div class="achips">' + FH_MUTES.map(m =>
+      '<button class="achip" data-mute="' + m[1] + '" title="Hinweise zu Linie ' + escapeHtml(dep.line) + " " + escapeHtml(m[0]) + ' ausblenden">' + m[0] + "</button>").join("") + "</div>" +
+    '<div class="dlabel">Alle Hinweise zu „' + escapeHtml(tgt.name) + "“ nicht mehr melden</div>" +
+    '<div class="achips">' + FH_MUTES.map(m =>
+      '<button class="achip" data-muteall="' + m[1] + '">' + m[0] + "</button>").join("") + "</div>" +
+    '<div class="dbtns"><button class="aok fhclose">OK</button></div></div>';
+  document.body.appendChild(wrap);
+  const close = () => { try { wrap.remove(); } catch (e) {} };
+  wrap.addEventListener("click", e => {
+    const b = e.target.closest("[data-mute],[data-muteall]");
+    if (b) {
+      const mins = Number(b.dataset.mute != null ? b.dataset.mute : b.dataset.muteall);
+      const ts = mins === Infinity ? Infinity : Date.now() + mins * 60000;
+      if (b.dataset.mute != null) { (tgt.cfg.muted = tgt.cfg.muted || {})[route] = ts; }
+      else tgt.cfg.allMutedUntil = ts;
+      if (tgt.id.charAt(0) === "a") saveAddrFavs(); else saveFhStopCfg();
+      close();
+      setLocNote("🔕 Hinweise " + (b.dataset.mute != null ? "zu Linie " + dep.line : "zu „" + tgt.name + "“") + " ausgeschaltet.");
+      return;
+    }
+    if (e.target.closest(".fhclose") || e.target === wrap) close();
+  });
+}
+// Einstellungs-Dialog für einen Favoriten (Adressfavorit oder Haltestellenfavorit)
+function openFhDlg(kind, id) {
+  let cfg, name;
+  if (kind === "addr") {
+    const f = addrFavs[id];
+    if (!f) return;
+    f.fh = f.fh || { on: false };
+    cfg = f.fh;
+    name = f.label || f.name;
+  } else {
+    const s = stops.find(x => x.shortName === id);
+    if (!s) return;
+    fhStopCfg[id] = fhStopCfg[id] || { on: false };
+    cfg = fhStopCfg[id];
+    name = s.name;
+  }
+  cfg.muted = cfg.muted || {};
+  fhDefaults(cfg);
+  const acfg = alarmCfg();
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">🏠 Finde nach Hause: ' + escapeHtml(name) + "</div>" +
+    '<div class="rowinfo">Sucht bei laufendem GPS alle ' + Math.round(FH_SCAN_INTERVAL_MS / 60000) +
+      " min nach Bussen, die von einer Haltestelle bis " + fhSelHtml("fhposR", FH_DIST_OPTS, cfg.posR, " m") +
+      " Entfernung abfahren, wenn man spätestens in " + fhSelHtml("fhlos", FH_TIME_OPTS, cfg.losWin, " min") +
+      " losgehen muss, und direkt in Richtung dieses Ziels fahren (Ziel-Umkreis " +
+      fhSelHtml("fhtgtR", FH_DIST_OPTS, cfg.tgtR, " m") + ", ohne Umsteigen).</div>" +
+    '<label class="dstage"><input type="checkbox" class="fhon"' + (cfg.on ? " checked" : "") + "> Hinweise aktiv</label>" +
+    '<label class="dstage"><input type="checkbox" class="fhvib"' + (cfg.vib !== false ? " checked" : "") + "> Vibration</label>" +
+    '<label class="dstage"><input type="checkbox" class="fhtone"' + (cfg.tone !== false ? " checked" : "") + "> Hinweiston</label>" +
+    '<label class="dstage">Ton <select class="fhsnd">' +
+      ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === (cfg.snd || acfg.snd) ? " selected" : "") + ">" + x[1] + "</option>").join("") +
+      "</select></label>" +
+    '<label class="dstage">Lautstärke <input type="range" class="fhvol" min="0.1" max="1" step="0.05" value="' + (cfg.vol == null ? acfg.vol : cfg.vol) + '" /></label>' +
+    '<button class="atest" title="Ton und Vibration sofort ausprobieren">▶ Test</button>' +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button><button class="aok fhok">OK</button></div>' +
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser funktionieren Hinweiston und Vibration nicht im Hintergrund. Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a></div>') +
+    "</div>";
+  document.body.appendChild(wrap);
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {
+      const c = { snd: wrap.querySelector(".fhsnd").value, vol: Number(wrap.querySelector(".fhvol").value) };
+      alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".fhvib").checked) vibratePattern([200, 100, 200]);
+      return;
+    }
+    if (e.target.closest(".acancel") || e.target === wrap) { try { wrap.remove(); } catch (err) {} return; }
+    if (e.target.closest(".fhok")) {
+      cfg.on = wrap.querySelector(".fhon").checked;
+      cfg.vib = wrap.querySelector(".fhvib").checked;
+      cfg.tone = wrap.querySelector(".fhtone").checked;
+      cfg.posR = Number(wrap.querySelector(".fhposR").value);
+      cfg.losWin = Number(wrap.querySelector(".fhlos").value);
+      cfg.tgtR = Number(wrap.querySelector(".fhtgtR").value);
+      cfg.snd = wrap.querySelector(".fhsnd").value;
+      cfg.vol = Number(wrap.querySelector(".fhvol").value);
+      if (kind === "addr") saveAddrFavs(); else saveFhStopCfg();
+      if (cfg.on && window.KvgNative && !fhNotifAsked) {
+        fhNotifAsked = true;
+        nativeCall("requestNotifPerm");   // Freigabe für System-Hinweise (falls noch nicht erteilt)
+      }
+      try { wrap.remove(); } catch (err) {}
+      renderAddrFavs(); renderStopFavs(); renderFhInd();   // offene 🏠-Statusliste aktualisieren
+      setLocNote(cfg.on ? "🏠 Finde-nach-Hause für „" + name + "“ aktiviert." : "🏠 Finde-nach-Hause für „" + name + "“ deaktiviert.");
+      if (cfg.on) fhScan();
+    }
+  });
+}
+
+// ---------- Native Brücke (Android-Mini-App) ----------
+// window.KvgNative wird nur von der App eingespritzt; im Browser bleibt es
+// undefiniert und alle Aufrufe sind wirkungslos (Seite läuft unverändert weiter).
+function nativeCall(fn, ...args) {
+  try { if (typeof window !== "undefined" && window.KvgNative) window.KvgNative[fn](...args); }
+  catch (e) {}
+}
+function nativeVibrate(pat) { nativeCall("vibrate", JSON.stringify(pat)); }
+// Weckzeit (Epoch-ms) = geplante/aktuelle Abfahrt minus Vorlauf, inkl. Tagesumbruch
+function nativeAlarmEpoch(aKey, leadMin) {
+  const trip = tripById(aKey.slice(0, aKey.indexOf("|")));
+  let h = NaN, m = NaN;
+  if (!trip) {   // Route-Wecker: Zeit direkt aus der gewaehlten Route
+    const a = alarms.get(aKey);
+    const depMin = a ? routeAlarmDepMin(a) : null;
+    if (depMin == null) return null;
+    h = Math.floor(depMin / 60); m = depMin % 60;
+  } else {
+    const sn = aKey.slice(aKey.indexOf("|") + 1);
+    const s = (trip.stops || []).find(x => x.shortName === sn);
+    if (!s) return null;
+    const key = s.key || (sn + "|" + trip.tripId);
+    const dl = trip.delay[key] || {};
+    const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+    const parts = t.split(":").map(Number);
+    h = parts[0]; m = parts[1];
+  }
+  if (!isFinite(h) || !isFinite(m)) return null;
+  const now = new Date();
+  let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
+  if (depMs < Date.now() - 60000) depMs += 86400000;   // nachts: gehört zum nächsten Tag
+  // Weckzeit kann knapp in der Vergangenheit liegen (Abfahrt schon nah):
+  // AlarmManager löst dann sofort aus, was genau richtig ist.
+  return depMs - leadMin * 60000;
+}
+
+// Abfahrtszeit (Minuten des Tages) der Wecker-Station aus dem aktuellen Fahrtverlauf
+// Route-Wecker (Glocke in der gewaehlten Route): Abfahrtszeit der Station
+// direkt aus der Route suchen, Echtzeit vor Plan – dazu muessen Fahrtverlauf
+// und tripById nichts wissen; gesucht wird in allen offenen Verbindungen nach
+// dem Abschnitt (jid) und dem Stations-Namen.
+function routeAlarmDepMin(a) {
+  if (!a || !a.jid || a.rtName == null) return null;
+  const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+  const want = norm(String(a.rtName).replace(/\s*\(DB\)\s*$/, ""));
+  for (const rc of routeChosen) {
+    const con = rc && rc.con;
+    if (!con) continue;
+    for (const sec of con.secs || []) {
+      if (!sec || sec.jid !== a.jid) continue;
+      const sts = sec.stops || [];   // die Segment-Liste bleibt immer die Basis (Erweiterung nur Anzeige)
+      for (const st of sts) {
+        if (!st || norm(String(st.name).replace(/\s*\(DB\)\s*$/, "")) !== want) continue;
+        const parts = (st.dR || st.dS || "").split(":").map(Number);
+        if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) return null;
+        return parts[0] * 60 + parts[1];
+      }
+    }
+  }
+  return null;
+}
+function alarmDepMin(a) {
+  const trip = tripById(a.tripId);
+  if (!trip) return routeAlarmDepMin(a);   // Route-Wecker: kein Fahrverlauf noetig
+  const s = (trip.stops || []).find(x => x.shortName === a.sn);
+  if (!s) return null;
+  const key = s.key || (a.sn + "|" + a.tripId);
+  const dl = currentTrip.delay[key] || {};
+  const t = (dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "");
+  const [h, m] = t.split(":").map(Number);
+  return (isFinite(h) && isFinite(m)) ? h * 60 + m : null;
+}
+// Zeit der Station für den Wecker aktualisieren (KVG: Tafel der Station; DB: Fahrt neu)
+async function pollAlarmStop(a) {
+  if (!currentTrip || currentTrip.tripId !== a.tripId) return;
+  const s = (currentTrip.stops || []).find(x => x.shortName === a.sn);
+  if (!s) return;
+  const key = s.key || (a.sn + "|" + a.tripId);
+  if (isDB(currentTrip.sn)) { selectTrip(currentTrip.sn, a.tripId, true); return; }
+  try {
+    const res = await apiFetch("kvg", DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(a.sn)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const d = [...(data.actual || []), ...(data.oldActual || [])].find(x => x.tripId === a.tripId);
+    if (!d || !d.plannedTime) return;
+    const old = currentTrip.delay[key] || {};
+    const actualTime = d.actualTime || old.actualTime || d.plannedTime;
+    const [ph, pm] = d.plannedTime.split(":").map(Number);
+    const [ah, am] = actualTime.split(":").map(Number);
+    currentTrip.delay[key] = {
+      plannedTime: d.plannedTime, actualTime,
+      delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+        ? (ah * 60 + am) - (ph * 60 + pm) : null,
+      ts: Date.now()
+    };
+  } catch (e) {}
+}
+function alarmTick() {
+  syncNativeRinging();
+  renderAlarmInd();
+  if (alarmsOff) return;   // global aus: nichts auslösen (Wecker bleiben gestellt)
+  if (!alarms.size) return;
+  // Distanz-Wecker: NUR echte Live-Ortung (GPS an). Ohne GPS wuerde die
+  // gespeicherte/letzte Position (eine eingefrorene Konstante!) falsch
+  // messen: Der Abstand stimmt nie, der Wecker bleibt dauerhaft stumm.
+  const pos = (gpsState === "on" && myPos) ? myPos : null;
+  const nowD = new Date();
+  const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+  for (const [aKey, a] of [...alarms]) {
+    if (a.paused) continue;   // deaktiviert: nicht prüfen, nicht läuten
+    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn) ||   // KVG-Liste oder DB-Bahnhof
+      (a.lat != null ? { lat: a.lat, lon: a.lon } : null);   // Route-Station: Koordinaten direkt aus der Route
+    if (a.dist && pos && stop && dist(pos, stop) <= a.dist) { fireAlarm(aKey, a); continue; }
+    if (a.leadMin != null) {
+      if (Date.now() - (a.lastPoll || 0) > a.leadMin * 30000) {   // alle leadMin/2 Minuten
+        a.lastPoll = Date.now();
+        pollAlarmStop(a);
+      }
+      const depMin = alarmDepMin(a);
+      if (depMin != null) {
+        let d = depMin - nowMin;
+        if (d < -720) d += 1440;
+        if (d <= a.leadMin) { fireAlarm(aKey, a); continue; }
+      }
+    }
+  }
+}
+
+// Wecker-Dialog: erst eine Station des Fahrtverlaufs wählen, dann Distanz ODER
+// Zeit vor Abfahrt sowie Vibration/Weckton einstellen. "Distanz" und "Zeit" sind
+// nur Überschriften, nicht wählbar; gestellt wird erst mit Station und
+// mindestens einer der beiden Bedingungen. Aufruf über die Glocke am "Fahrtverlauf"-Kopf.
+function openAlarmDialog(tripId, preSn) {
+  if (!currentTrip || currentTrip.tripId !== tripId) return;   // nur mit geladenem Fahrtverlauf
+  const tstops = (currentTrip && currentTrip.stops || []);
+  // Vorbelegung-Priorität: läutend > ausgelöst > gestellt; sonst GPS-nahe bzw.
+  // nächste Abfahrts-Station der Fahrt
+  let sn = preSn || null;
+  if (!sn) {
+    const hit = tstops.find(x => ringing.has(tripId + "|" + x.shortName)) ||
+      tstops.find(x => firedAlarms.has(tripId + "|" + x.shortName)) ||
+      tstops.find(x => alarms.has(tripId + "|" + x.shortName));
+    if (hit) sn = hit.shortName;
+  }
+  // Marker für die Stationsauswahl: 📍 GPS steht gerade im Radius dieser Station,
+  // ▶ nächste Abfahrtsstation der Fahrt (erste Station mit Zeit ab jetzt)
+  const mPos = livePos();
+  const mR = isDB(currentTrip.sn) ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M;
+  let gpsSn = null, nextSn = null;
+  if (mPos) {
+    for (const x of tstops) {
+      const st = stops.find(s => s.shortName === x.shortName);
+      if (st && dist(mPos, st) < mR) { gpsSn = x.shortName; break; }
+    }
+  }
+  {
+    const n0 = new Date(), nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+    for (const x of tstops) {
+      const t = x.actualTime || x.time || x.plannedTime || "";
+      const [h, m] = t.split(":").map(Number);
+      if (isFinite(h) && isFinite(m) && h * 60 + m >= nowMin0 - 1) { nextSn = x.shortName; break; }
+    }
+  }
+  if (!sn) sn = gpsSn || nextSn;
+  let aKey = null, a = { tripId, sn: "", name: "" }, old = {};
+  let selDist = null, selLead = null;
+  const cfg = alarmCfg();
+  // In der App vibriert die native Brücke auch ohne navigator.vibrate (WebView)
+  const hasVib = !!(navigator.vibrate || window.KvgNative);
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const chip = (label, val, group) =>
+    '<button class="achip" data-g="' + group + '" data-v="' + val + '">' + label + "</button>";
+  wrap.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dtitle">Wecker: Linie ' + escapeHtml(currentTrip ? currentTrip.route : "") +
+      " → " + escapeHtml(currentTrip ? currentTrip.direction : "") + "</div>" +
+    '<div class="dlabel">Station dieses Fahrtverlaufs</div>' +
+    '<select class="astop"><option value="">– Station wählen –</option>' +
+      tstops.map(x => {
+        const t = x.actualTime || x.time || x.plannedTime || "";
+        const mk = x.shortName === gpsSn ? "📍 " : x.shortName === nextSn ? "▶ " : "";
+        return '<option value="' + escapeHtml(x.shortName) + '"' + (sn === x.shortName ? " selected" : "") + '>' +
+          mk + escapeHtml((t ? t + "  " : "") + x.name) + "</option>";
+      }).join("") + "</select>" +
+    '<div class="dlabel">Distanz</div>' +
+    '<div class="achips">' +
+      chip("250 m", 250, "d") + chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
+      chip("5 km", 5000, "d") + chip("10 km", 10000, "d") + "</div>" +
+    '<div class="doder">ODER</div>' +
+    '<div class="dlabel">Zeit vor gepl. / akt. Abfahrt</div>' +
+    '<div class="achips">' +
+      chip("2 min", 2, "t") + chip("5 min", 5, "t") + chip("10 min", 10, "t") + chip("20 min", 20, "t") + "</div>" +
+    '<div class="dstages">' +
+      '<label class="dstage"><input type="checkbox" class="avib"' + ((old.vib !== false) ? " checked" : "") + (hasVib ? "" : " disabled") +
+        "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
+      '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage">Ton <select class="asnd">' +
+        ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cfg.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") +
+        "</select></label>" +
+      '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cfg.vol + '" title="Weckton-Lautstärke" /></label>' +
+      '<button class="atest" title="Weckton und Vibration sofort ausprobieren">▶ Test</button>' +
+    "</div>" +
+    '<div class="dbtns">' +
+      '<button class="adel" hidden title="Gestellten Wecker entfernen">🗑 Wecker löschen</button>' +
+      '<button class="acancel">Abbrechen</button>' +
+    '<button class="aok" disabled>Wecker stellen</button></div>' +
+    // Im Browser (ohne native Brücke): Hinweis, dass Vibration/Weckton im
+    // Hintergrund nicht funktionieren, plus Download-Link zur APK im selben
+    // Verzeichnis wie diese Seite (relativ, funktioniert überall, wo beide
+    // Dateien zusammen liegen)
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser klingelt oder vibriert der Wecker nicht, ' +
+      'während die Seite im Hintergrund ist oder das Display aus ist. ' +
+      'Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a> ' +
+      '(Download im selben Verzeichnis wie diese Seite).</div>') +
+    "</div>";
+  document.body.appendChild(wrap);
+  const okBtn = wrap.querySelector(".aok");
+  const delBtn = wrap.querySelector(".adel");
+  const titleEl = wrap.querySelector(".dtitle");
+  const stopSel = wrap.querySelector(".astop");
+  // Station gewählt: Titel, ggf. gestellten Wecker dieser Station vorbelegen
+  function pickStation(v) {
+    aKey = v ? tripId + "|" + v : null;
+    const stop = tstops.find(x => x.shortName === v);
+    a = { tripId, sn: v, name: stop ? stop.name : v };
+    old = (aKey && alarms.get(aKey)) || {};
+    selDist = old.dist || null;
+    selLead = old.leadMin || null;
+    if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
+    if (delBtn) delBtn.hidden = !(old.dist || old.leadMin);
+    sync();
+  }
+  const sync = () => {
+    wrap.querySelectorAll(".achip").forEach(c => {
+      const on = c.dataset.g === "d" ? Number(c.dataset.v) === selDist
+                                     : Number(c.dataset.v) === selLead;
+      c.classList.toggle("on", on);
+    });
+    okBtn.disabled = !(selDist || selLead) || !aKey;   // erst mit Station und mindestens einer Bedingung stellbar
+  };
+  if (stopSel) stopSel.addEventListener("change", () => pickStation(stopSel.value));
+  if (sn) pickStation(sn); else sync();
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {   // Test: aktueller Ton + Lautstärke + Vibration
+      const c = { snd: wrap.querySelector(".asnd").value,
+                  vol: Number(wrap.querySelector(".avol").value) };
+      saveAlarmCfg(c);
+      if (wrap.querySelector(".atone").checked) alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".avib").checked && hasVib) vibratePattern([200, 100, 200]);
+      return;
+    }
+    const c = e.target.closest(".achip");
+    if (c) {
+      const v = Number(c.dataset.v);
+      if (c.dataset.g === "d") selDist = selDist === v ? null : v;
+      else selLead = selLead === v ? null : v;
+      sync();
+      return;
+    }
+    if (e.target.closest(".adel") && aKey) {   // gestellten Wecker löschen
+      alarms.delete(aKey);
+      saveAlarms();
+      stopRinging(aKey, true);
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔕 Wecker gelöscht: " + a.name);
+      if (currentBus) renderBusPanel();
+      return;
+    }
+    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest(".aok") && aKey && (selDist || selLead)) {
+      const snd = wrap.querySelector(".asnd").value;
+      const vol = Number(wrap.querySelector(".avol").value);
+      saveAlarmCfg({ snd: snd, vol: vol });   // Klang/Lautstärke künftig merken
+      const useVib = hasVib && wrap.querySelector(".avib").checked;
+      const useTone = wrap.querySelector(".atone").checked;
+      firedAlarms.delete(aKey);       // ggf. alten Auslöse-Zustand zurücksetzen
+      alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
+        paused: false,
+        tabSn: currentBus ? currentBus.sn : (currentStop ? currentStop.shortName : null),
+        dist: selDist, leadMin: selLead,
+        vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
+      saveAlarms();
+      // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
+      // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
+      if (selLead && !alarmsOff) {   // global aus: keinen nativen Wecker planen
+        const ms = nativeAlarmEpoch(aKey, selLead);
+        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
+          JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
+      }
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔔 Wecker gestellt: " + a.name +
+        (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
+        (selDist && selLead ? " oder " : "") +
+        (selLead ? selLead + " min vor Abfahrt" : "") +
+        (selDist && gpsState !== "on" ? " · ⚠ Distanz misst nur mit aktiver GPS-Ortung (◎ oben einschalten), sonst bleibt der Wecker stumm" : "") +
+        (selDist && window.KvgNative ? " · klingelt in der App dank Geofence auch bei ausgeschaltetem Display" : ""));
+      if (currentBus) renderBusPanel();
+    }
+  });
+}
+
+// ---------- Glocke in der gewählten Route: Wecker für die GESAMT-Route ----------
+// Stations-Liste der gewählten Route: alle Haltestellen aller Fahrzeug-Abschnitte
+// in Fahrtrichtung gemeinsam (Zubringer haben keine Haltestellen). Jede Station
+// wird auf eine KVG-/DB-Station abgebildet (exakter Name, sonst Koordinate
+// <= 250 m); fremde Stationen bekommen ein Pseudo-sn UND die Koordinaten aus
+// der Route mit, damit Distanz-Wecker und Geofence auch dort arbeiten.
+function routeAlarmStations(rc) {
+  const out = [];
+  const con = rc && rc.con;
+  const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+  (con && con.secs || []).forEach(sec => {
+    if (!sec || sec.kind !== "jny") return;
+    const sts = sec.stops || [];   // die Segment-Liste bleibt immer die Basis (Erweiterung nur Anzeige)
+    sts.forEach(st => {
+      if (!st || st.name == null) return;
+      const stN = norm(String(st.name).replace(/\s*\(DB\)\s*$/, ""));
+      const byName = stops.find(s => norm(String(s.name || "").replace(/\s*\(DB\)\s*$/, "")) === stN);
+      let sn = byName ? byName.shortName : null;
+      if (!sn && st.lat != null && st.lon != null) {
+        let best = null;
+        for (const s of stops) {
+          if (s.lat == null || s.lon == null) continue;
+          const d = dist(st, s);
+          if (d < 250 && (!best || d < best.d)) best = { s: s, d: d };
+        }
+        sn = best ? best.s.shortName : null;
+      }
+      if (!sn) sn = "N:" + stN;
+      if (out.some(x => x.jid === sec.jid && x.sn === sn)) return;   // Durchgang im selben Lauf nur einmal
+      out.push({ jid: sec.jid, tripId: "rt!" + sec.jid, sn: sn, name: String(st.name),
+        lat: st.lat, lon: st.lon, rail: !!sec.rail,
+        time: (st.dR || st.dS || st.aR || st.aS || "") });
+    });
+  });
+  out.forEach(x => { x.aKey = x.tripId + "|" + x.sn; });
+  return out;
+}
+// Wecker-Dialog der Route: baugleich mit dem Fahrverlauf-Dialog (gelbe Glocke,
+// Distanz ODER Zeit vor Abfahrt, Vibration/Weckton/Test/Löschen), nur dass die
+// Stations-Auswahl ALLE Busse und Bahnen der Gesamt-Route umfasst.
+function openRouteAlarmDialog() {
+  const rc = routeChosen[routeActive] || routeChosen[0];
+  if (!rc || !rc.con) return;
+  const c = rc.con;
+  const ents = routeAlarmStations(rc);
+  if (!ents.length) { setLocNote("Diese Route hat keine Haltestellen für einen Wecker (nur Zubringer)."); return; }
+  // Marker für die Stationsauswahl: 📍 GPS steht im Stations-Radius,
+  // ▶ nächste Station der Route (erste Abfahrt ab jetzt)
+  const mPos = livePos();
+  let gpsKey = null, nextKey = null;
+  if (mPos) {
+    for (const x of ents) {
+      if (x.lat == null) continue;
+      if (dist(mPos, x) <= (x.rail ? STATION_RADIUS_TRAIN_M : STATION_RADIUS_BUS_M)) { gpsKey = x.aKey; break; }
+    }
+  }
+  {
+    const n0 = new Date(), nowMin0 = n0.getHours() * 60 + n0.getMinutes();
+    for (const x of ents) {
+      const parts = (x.time || "").split(":").map(Number);
+      if (parts.length >= 2 && isFinite(parts[0]) && isFinite(parts[1]) &&
+          parts[0] * 60 + parts[1] >= nowMin0 - 1) { nextKey = x.aKey; break; }
+    }
+  }
+  // Vorbelegung: läutend > ausgelöst > gestellt; sonst GPS-nah bzw. nächste
+  let selKey = null;
+  {
+    const hit = ents.find(x => ringing.has(x.aKey)) || ents.find(x => firedAlarms.has(x.aKey)) ||
+      ents.find(x => alarms.has(x.aKey));
+    selKey = hit ? hit.aKey : (gpsKey || nextKey);
+  }
+  let aKey = null, a = { tripId: "", sn: "", name: "" }, old = {};
+  let selDist = null, selLead = null;
+  const cfg = alarmCfg();
+  const hasVib = !!(navigator.vibrate || window.KvgNative);
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  const chip = (label, val, group) =>
+    '<button class="achip" data-g="' + group + '" data-v="' + val + '">' + label + "</button>";
+  wrap.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dtitle">Wecker: Route ' + c.dep + " – " + c.arr + "</div>" +
+    '<div class="dlabel">Station dieser Gesamt-Route (' + ents.length + ')</div>' +
+    '<select class="astop"><option value="">– Station wählen –</option>' +
+      ents.map(x => {
+        const mk = x.aKey === gpsKey ? "📍 " : x.aKey === nextKey ? "▶ " : "";
+        const arm = (alarms.has(x.aKey) || firedAlarms.has(x.aKey)) ? "⏰ " : "";
+        return '<option value="' + escapeHtml(x.aKey) + '"' + (selKey === x.aKey ? " selected" : "") + '>' +
+          mk + arm + escapeHtml((x.time ? x.time + "  " : "") + x.name) + "</option>";
+      }).join("") + "</select>" +
+    '<div class="dlabel">Distanz</div>' +
+    '<div class="achips">' +
+      chip("250 m", 250, "d") + chip("500 m", 500, "d") + chip("1 km", 1000, "d") + chip("2 km", 2000, "d") +
+      chip("5 km", 5000, "d") + chip("10 km", 10000, "d") + "</div>" +
+    '<div class="doder">ODER</div>' +
+    '<div class="dlabel">Zeit vor gepl. / akt. Abfahrt</div>' +
+    '<div class="achips">' +
+      chip("2 min", 2, "t") + chip("5 min", 5, "t") + chip("10 min", 10, "t") + chip("20 min", 20, "t") + "</div>" +
+    '<div class="dstages">' +
+      '<label class="dstage"><input type="checkbox" class="avib"' + ((old.vib !== false) ? " checked" : "") + (hasVib ? "" : " disabled") +
+        "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
+      '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage">Ton <select class="asnd">' +
+        ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cfg.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") +
+        "</select></label>" +
+      '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cfg.vol + '" title="Weckton-Lautstärke" /></label>' +
+      '<button class="atest" title="Weckton und Vibration sofort ausprobieren">▶ Test</button>' +
+    "</div>" +
+    '<div class="dbtns">' +
+      '<button class="adel" hidden title="Gestellten Wecker entfernen">🗑 Wecker löschen</button>' +
+      '<button class="acancel">Abbrechen</button>' +
+    '<button class="aok" disabled>Wecker stellen</button></div>' +
+    (window.KvgNative ? "" :
+      '<div class="apkdl">⚠ Im Browser klingelt oder vibriert der Wecker nicht, ' +
+      'während die Seite im Hintergrund ist oder das Display aus ist. ' +
+      'Android-App installieren: <a href="cslk.apk" download="cslk.apk">cslk.apk</a> ' +
+      '(Download im selben Verzeichnis wie diese Seite).</div>') +
+    "</div>";
+  document.body.appendChild(wrap);
+  const okBtn = wrap.querySelector(".aok");
+  const delBtn = wrap.querySelector(".adel");
+  const titleEl = wrap.querySelector(".dtitle");
+  const stopSel = wrap.querySelector(".astop");
+  // Station gewählt: Titel, ggf. gestellten Wecker dieser Station vorbelegen
+  function pickStation(v) {
+    aKey = v || null;
+    const ent = ents.find(x => x.aKey === v);
+    a = ent ? { tripId: ent.tripId, sn: ent.sn, name: ent.name, jid: ent.jid,
+      rtName: ent.name, lat: ent.lat, lon: ent.lon } : a;
+    old = (aKey && alarms.get(aKey)) || {};
+    selDist = old.dist || null;
+    selLead = old.leadMin || null;
+    if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
+    if (delBtn) delBtn.hidden = !(old.dist || old.leadMin);
+    sync();
+  }
+  const sync = () => {
+    wrap.querySelectorAll(".achip").forEach(c => {
+      const on = c.dataset.g === "d" ? Number(c.dataset.v) === selDist
+                                     : Number(c.dataset.v) === selLead;
+      c.classList.toggle("on", on);
+    });
+    okBtn.disabled = !(selDist || selLead) || !aKey;
+  };
+  if (stopSel) stopSel.addEventListener("change", () => pickStation(stopSel.value));
+  if (selKey) pickStation(selKey); else sync();
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".atest")) {
+      const c = { snd: wrap.querySelector(".asnd").value,
+                  vol: Number(wrap.querySelector(".avol").value) };
+      saveAlarmCfg(c);
+      if (wrap.querySelector(".atone").checked) alarmBeep(c.vol, c.snd);
+      if (wrap.querySelector(".avib").checked && hasVib) vibratePattern([200, 100, 200]);
+      return;
+    }
+    const cEl = e.target.closest(".achip");
+    if (cEl) {
+      const v = Number(cEl.dataset.v);
+      if (cEl.dataset.g === "d") selDist = selDist === v ? null : v;
+      else selLead = selLead === v ? null : v;
+      sync();
+      return;
+    }
+    if (e.target.closest(".adel") && aKey) {
+      alarms.delete(aKey);
+      saveAlarms();
+      stopRinging(aKey, true);
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔕 Wecker gelöscht: " + a.name);
+      if (routePanel && !routePanel.hidden) renderRoutePanel();
+      return;
+    }
+    if (e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (e.target.closest(".aok") && aKey && (selDist || selLead)) {
+      const snd = wrap.querySelector(".asnd").value;
+      const vol = Number(wrap.querySelector(".avol").value);
+      saveAlarmCfg({ snd: snd, vol: vol });
+      const useVib = hasVib && wrap.querySelector(".avib").checked;
+      const useTone = wrap.querySelector(".atone").checked;
+      firedAlarms.delete(aKey);
+      alarms.set(aKey, { tripId: a.tripId, sn: a.sn, name: a.name,
+        jid: a.jid, rtName: a.rtName, lat: a.lat, lon: a.lon,   // Route-Wecker: Zeit aus der Route
+        paused: false,
+        tabSn: null,   // gehört der Route, keinem Reiter: überlebt Reiter-Schließen
+        dist: selDist, leadMin: selLead,
+        vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0 });
+      saveAlarms();
+      if (selLead && !alarmsOff) {
+        const ms = nativeAlarmEpoch(aKey, selLead);
+        if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
+          JSON.stringify({ lead: selLead, vib: useVib, tone: useTone, snd: snd, vol: vol }));
+      }
+      wrap.remove();
+      renderAlarmInd();
+      renderTabs();
+      setLocNote("🔔 Wecker gestellt: " + a.name +
+        (selDist ? " · " + (selDist >= 1000 ? selDist / 1000 + " km" : selDist + " m") : "") +
+        (selDist && selLead ? " oder " : "") +
+        (selLead ? selLead + " min vor Abfahrt" : "") +
+        (selDist && gpsState !== "on" ? " · ⚠ Distanz misst nur mit aktiver GPS-Ortung (◎ oben einschalten), sonst bleibt der Wecker stumm" : "") +
+        (selDist && window.KvgNative ? " · klingelt in der App dank Geofence auch bei ausgeschaltetem Display" : ""));
+      if (routePanel && !routePanel.hidden) renderRoutePanel();
+    }
+  });
+}
+
+// ---------- Zustand übertragen (Export/Import, z. B. für die Android-App) ----------
+// localStorage hängt am Origin: Seite vom Server geladen und Seite in der App
+// (file://) sind verschiedene Origins mit getrennten Speichern. Der Zustand
+// (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
+// Einstellungen) wird deshalb als kompakter Code exportiert und in der App
+// (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-vehcfg"];
+// Offene Reiter in kvg-view sichern: Stationen (Kette Haltestelle -> Buslinie
+// -> Fahrtverlauf, plus eigener Reiter-Name und UID für die Reihenfolge),
+// alle parallelen Route-Reiter (Name, Start/Ziel, Zeit) und seit v1.5.6 auch
+// die MM-Reiter (Micromobility) samt ihren uebernommenen Routen. saveView
+// läuft bei jeder Reiter-Änderung (renderTabs), die Reiter erscheinen nach
+// Neustart oder Import wieder.
+function saveView() {
+  try {
+    saveActiveTab();   // sichert auch den aktiven Route-Reiter in sein Objekt
+    const payload = {   // v1.6.23: erst Objekt bauen, dann speichern (Quota-Fallback unten)
+      tabs: tabs.map(t => {
+        const trips = (t.trips || []).map(b =>
+          ({ sn: b.sn, tripId: b.tripId, tripOpen: !!b.tripOpen }));
+        const ab = (t.trips || [])[t.activeTrip];
+        return { sn: t.sn, name: t.name || "", uid: t.uid || "",
+          bus: ab ? { sn: ab.sn, tripId: ab.tripId, tripOpen: !!ab.tripOpen } : null,
+          trips: trips,
+          remote: (t.remote ? { shortName: t.remote.shortName, name: t.remote.name,
+            lat: t.remote.lat, lon: t.remote.lon, lid: t.remote.lid || "",
+            extId: t.remote.extId || "", svc: t.remote.svc || "nahsh",
+            rId: t.remote.rId || null } : null) };   // v1.5.0: Fern-Stationen überdauern Neustart/Import
+      }),
+      // v1.6.23 (Timo): Route-Reiter ueberleben den Neustart MIT ihrem Inhalt -
+      // Trefferliste, gewaehlte Verbindung (Signatur + Verlaufszustand), Fehler.
+      rtabs: routeTabs.map(rt => ({ name: rt.name || "", uid: rt.uid || "", sel: rt.sel,
+        sub: (rt.sub == null ? -1 : rt.sub), searched: !!rt.searched, err: rt.err || null,
+        cons: rt.cons || [],
+        chosen: (rt.chosen || []).map(ch => ({
+          sig: (ch && ch.sig) || "",
+          secOpen: (ch && Array.isArray(ch.secOpen)) ? ch.secOpen : [] })) })),
+      slim: 0,
+      mmtabs: mmTabs.map(mt => ({ uid: mt.uid || "", stId: (mt.stId == null ? null : mt.stId),   // v1.5.6: MM-Reiter samt Routen
+        name: mt.name || "", routes: (mt.routes || []).filter(mm => mm && typeof mm === "object"),
+        active: (mt.active == null ? -1 : mt.active), more: (mt.more || {}) })),
+      mmactive: mmActiveTab, mmactiveOn: mmTabActive ? 1 : 0,
+      ractive: routeActiveTab, ractiveOn: routeTabActive ? 1 : 0,
+      ord: barOrd,
+      active: Math.max(0, activeTab) };
+    try {
+      localStorage.setItem("kvg-view", JSON.stringify(payload));
+    } catch (q) {   // Quota: Route-Reiter ohne Ergebnis-Inhalt (Start/Ziel steht trotzdem wieder da)
+      payload.rtabs = payload.rtabs.map(rt => ({ name: rt.name, uid: rt.uid, sel: rt.sel }));
+      payload.slim = 1;
+      try { localStorage.setItem("kvg-view", JSON.stringify(payload)); } catch (q2) {}
+    }
+  } catch (e) {}
+}
+function kvgExportState() {
+  saveView();   // kvg-view (offene Reiter, Reihenfolge, Route-Reiter) frisch in den Export
+  const o = {};
+  for (const k of STATE_KEYS) {
+    const v = localStorage.getItem(k);
+    if (v != null) o[k] = v;
+  }
+  return btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+}
+// Von der Android-App aufgerufen: Sprung aus einer Wecker-Benachrichtigung
+// direkt in den Reiter des Weckers (aus MainActivity, Intent-Extra "tab").
+// v1.6.23 (Timo): Reiter-Inhalt soll das Beenden der App ueberleben - deshalb
+// wird der Zustand auch beim Verstecken der Seite und beim pagehide gesichert
+// (Android killt den Prozess oft ohne weiteren JS-Tick mehr).
+window.addEventListener("pagehide", () => { try { saveActiveTab(); saveView(); } catch (e) {} });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { try { saveActiveTab(); saveView(); } catch (e) {} }
+});
+window.kvgGotoTab = function (sn) {
+  try {
+    if (!sn) return "err";
+    const i = tabs.findIndex(t => t.sn === sn);
+    if (i >= 0) { activateTab(i, false); alarmList.hidden = true; return "ok"; }
+    return "nofound";
+  } catch (e) { return "err"; }
+};
+
+window.kvgImportState = function (code) {
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(String(code).trim()))));
+    let n = 0;
+    for (const k of STATE_KEYS) if (k in o) { try { localStorage.setItem(k, o[k]); } catch (e) {} n++; }
+    if (!n) throw new Error("leer");
+    setLocNote("Zustand übernommen (" + n + " Einträge) – lade neu …");
+    setTimeout(() => location.reload(), RELOAD_DELAY_MS);
+    return "ok";
+  } catch (e) {
+    setLocNote("Zustand-Code ungültig.");
+    return "err";
+  }
+};
+// ⇅ Export/Import als aufklappbare Fuß-Sektion (unter „Über diese App“): beim
+// Öffnen wird der Export-Code frisch erzeugt; Kopieren/Übernehmen laufen direkt
+// in der Sektion – kein eigener Dialog/Overlay mehr, der Zustands-Knopf im
+// Kopf entfällt.
+(function initStateSec() {
+  const sec = document.getElementById("stateSec");
+  if (!sec) return;
+  sec.addEventListener("toggle", () => {
+    if (sec.open) {
+      const ta = document.getElementById("stateExp");
+      if (ta) ta.value = kvgExportState();
+    }
+  });
+  document.getElementById("stateCopy").addEventListener("click", () => {
+    const ta = document.getElementById("stateExp");
+    try {
+      if (ta && ta.select) ta.select();
+      if (document.execCommand) document.execCommand("copy");
+      setLocNote("Zustands-Code kopiert.");
+    } catch (err) { setLocNote("Code markiert – bitte selbst kopieren."); }
+  });
+  document.getElementById("stateGo").addEventListener("click", () => {
+    const ta = document.getElementById("stateImp");
+    if (ta && ta.value) kvgImportState(ta.value);
+  });
+})();
+
+// ---------- 🐞 Support / Bugreport: Zustand als Text in einer E-Mail ----------
+// Der Support-Knopf im Fuß (zwischen „⇅ Export/Import“ und „Impressum“) öffnet
+// einen Bestätigungs-Dialog: Problembeschreibung eintragen, ausdrücklich
+// bestätigen, dass App-Daten mitgesendet werden, und per Checkbox auswählen,
+// welche Inhalte als Text in die E-Mail wandern (Suchfelder, offene Route-,
+// Stations- und MM-Reiter samt Unter-Reitern mit Fahrplänen und Zeiten,
+// Favoriten; je Reiter-Art sind alle gerade offenen Reiter vorausgewählt). Die E-Mail selbst geht
+// als mailto:-Link an das installierte E-Mail-Programm (support@pixcaelium.de,
+// Betreff „Bugreport CitySurfer v…“): Sie öffnet sich UNGESENDET – im
+// E-Mail-Programm lässt sich vor dem Absenden noch jede Zeile ansehen,
+// kürzen oder löschen.
+function supportDelayTxt(d) {
+  return d == null ? "" : " (" + (d > 0 ? "+" + d + "m" : d < 0 ? d + "m" : "0m") + ")";
+}
+// Abfahrtsliste einer Station als Klartext-Zeilen (früher, Live, geplant):
+// dasselbe Sichtbarkeits-Fenster wie in der Anzeige (depWindow), nur flach.
+function supportDepsText(v) {
+  if (!v) return "";
+  const w = depWindow(v, 0);
+  const rows = [];
+  const one = (d, ts, tag) => {
+    if (d == null) return;
+    rows.push("    " + followClock((ts || v.fetchTs || 0) + (d.actualRelativeTime || 0) * 1000) +
+      "  Linie " + (d.line || "?") + " nach " + (d.direction || "?") +
+      (tag ? "  [" + tag + "]" : ""));
+  };
+  (v.earlier || []).forEach(d => one(d, v.earlierTs, "früher geladen"));
+  (v.deps || []).forEach(d => one(d, v.fetchTs,
+    d.planned || d.status === "PLANNED" ? "geplant" : "Echtzeit"));
+  w.plannedVisible.forEach(d => one(d, v.plannedTs, "geplant"));
+  return rows.join("\n");
+}
+// Ein Route-Reiter als Text: Suche, Verbindungsvorschläge und die geöffneten
+// Verbindungs-Unter-Reiter je Abschnitt inklusive aufgekauften Verläufen.
+function supportRouteTabText(idx) {
+  const rt = routeTabs[idx];
+  if (!rt) return "";
+  const sel = rt.sel || {};
+  let h = "Route-Reiter " + (idx + 1) + ": „" + defTabName("r", rt) + "“" +
+    (sel.time ? " · Suche ab " + sel.time.replace("T", " ") : "");
+  const cons = rt.cons || [];
+  h += "\n  Verbindungsvorschläge: " + (cons.length ? String(cons.length) :
+    "keine (noch nicht gesucht oder nichts gefunden)");
+  cons.forEach(c => {
+    h += "\n    " + c.dep + "–" + c.arr + " (" + c.dur + " min, " + (c.chg || 0) + "× umsteigen)";
+  });
+  if (rt.err) h += "\n  Suchfehler: " + rt.err;
+  const chosen = rt.chosen || [];
+  h += "\n  Unter-Reiter (geöffnete Verbindungen): " + chosen.length;
+  chosen.forEach((rc, i) => {
+    const c = rc.con || {};
+    h += "\n    [" + (i + 1) + "] " + c.dep + "–" + c.arr + " (" + c.dur + " min, " +
+      (c.chg || 0) + "× umsteigen)";
+    (c.secs || []).forEach((sec, si) => {
+      if (sec.kind === "jny") {
+        h += "\n      Linie " + (sec.line || "?") + " nach " + (sec.dir || "?") +
+          ": ab " + (sec.from || "?") + " " + (sec.dep || "?") + supportDelayTxt(sec.depDelay) +
+          " an " + (sec.to || "?") + " " + (sec.arr || "?") + supportDelayTxt(sec.arrDelay);
+        if (rc.secOpen && rc.secOpen[si] && (sec.stops || []).length)
+          h += "\n        Verlauf (Station gep./aktuell): " +
+            sec.stops.map(st => st.name + " " + (st.dS || st.aS || "–") + "/" +
+              (st.dR || st.aR || "–")).join("; ");
+      } else {
+        h += "\n      " + (sec.kind === "walk" ? "Fußweg" : sec.kind) + " " +
+          (sec.from || "?") + " → " + (sec.to || "?") + ": " +
+          (sec.mins != null ? sec.mins : "?") + " min" +
+          (sec.distM != null ? " (" + sec.distM + " m)" : "") +
+          (sec.sfx ? " · " + sec.sfx : "");
+      }
+    });
+  });
+  return h;
+}
+// Ein MM-Reiter als Text (v1.4.15): Abholstation und je übernommener Leihrad-
+// Route Start, Abholrad, Rückgabe, Ziel und geplante Ankunft als Zeilen.
+function supportMMTabText(idx) {
+  const mt = mmTabs[idx];
+  if (!mt) return "";
+  let h = "MM-Reiter " + (idx + 1) + ": „" + ((mt.name != null && mt.name) ? mt.name : "Leihstation") + "“ (Abholstation)";
+  const d = donkeyCache && donkeyCache.d;
+  if (mt.stId != null && d && (d.s || []).length) {
+    const stn = (d.s || []).find(x => x && x.id === mt.stId);
+    if (stn && stn.name) h += " · " + stn.name;
+  }
+  const routes = mt.routes || [];
+  h += "\n  Übernommene MM-Routen: " + routes.length;
+  routes.forEach((mm, i) => {
+    h += "\n    [" + (i + 1) + "] Start " + ((mm.from && mm.from.name) || "?") +
+      " → Ziel " + ((mm.dest && mm.dest.name) || "?") +
+      ", geplante Ankunft " + mmClockOfMs(mm.planArrMs) + " Uhr" +
+      (mm.tot != null ? ", Gesamtzeit " + mm.tot + " min" : "");
+    h += "\n      Abholrad #" + bikeShortId(mm.bike && mm.bike.id) +
+      ((mm.bike && mm.bike.t) ? " (" + (mm.bike.t === "ebike" ? "E-Bike" : "Standardrad") + ")" : "") +
+      ((mm.bike && mm.bike.fu != null) ? ", Akku " + mm.bike.fu + " %" : "");
+    h += "\n      Fußweg " + (mm.w1 != null ? mm.w1 : "?") +
+      " min · Radfahrt " + (mm.rb != null ? mm.rb : "?") +
+      " min · Rückgabe " + ((mm.drop && mm.drop.name) || "?") +
+      " · Fußweg " + (mm.w2 != null ? mm.w2 : "?") + " min";
+  });
+  return h;
+}
+// Ein Stations-Reiter als Text: Abfahrtsliste plus die geöffneten Fahrt-
+// Verläufe (Unter-Reiter) mit allen Halten und Ist-/Planzeiten.
+function supportStopTabText(idx) {
+  const t = tabs[idx];
+  if (!t) return "";
+  let h = "Stations-Reiter " + (idx + 1) + ": „" + defTabName("s", t) + "“";
+  const depTxt = supportDepsText(stopViews.get(t.sn));
+  h += "\n  Abfahrtsliste: " + (depTxt ? "\n" + depTxt : "(keine Daten geladen)");
+  const trips = t.trips || [];
+  h += "\n  Unter-Reiter (geöffnete Fahrten): " + trips.length;
+  trips.forEach((ab, i) => {
+    const trip = ab.trip;
+    h += "\n    [" + (i + 1) + "] Fahrt " + (ab.tripId || "?") +
+      (trip && trip.route ? " – Linie " + trip.route + " nach " + (trip.direction || "?") : "") +
+      (trip && (trip.stops || []).length ?
+        " (Verlauf geladen" + (ab.tripOpen ? "" : ", zugeklappt") + ")" :
+        " (Fahrtverlauf nicht geladen)");
+    if (trip && (trip.stops || []).length) {
+      h += "\n      Halte (Station gep./aktuell): " + trip.stops.map(s => {
+        const key = s.key || (s.shortName + "|" + (trip.tripId || ab.tripId || ""));
+        const dl = (trip.delay || {})[key] || null;
+        return s.name + " " + ((dl && dl.plannedTime) || s.plannedTime || "–") + "/" +
+          (s.time || (dl && dl.actualTime) || "–");
+      }).join("; ");
+    }
+  });
+  return h;
+}
+function supportAddrFavText() {
+  if (!addrFavs.length) return "Adress-Favoriten: keine";
+  return "Adress-Favoriten (" + addrFavs.length + "):\n" +
+    addrFavs.map((f, i) => "    " + (i + 1) + ". " + (f.label || "?") +
+      (f.lat != null && f.lon != null ? " (" + f.lat + ", " + f.lon + ")" : "") +
+      (f.name ? " [" + f.name + "]" : "")).join("\n");
+}
+function supportStopFavText() {
+  if (!favs.length) return "Stations-Favoriten: keine";
+  return "Stations-Favoriten (" + favs.length + "):\n" +
+    favs.map((sn, i) => {
+      const s = stops.find(x => x.shortName === sn);
+      return "    " + (i + 1) + ". „" + (s ? s.name : sn) + "“ (" + sn + ")";
+    }).join("\n");
+}
+// Assembliert den Gesamt-Zustand: cfg = { stamp, ver, appVer, gps,
+// problem, addr, addrQ, pos, addrSug, stopS, stopQ, stopSug,
+// rtabIdx, stabIdx, mtabIdx, addrFav, stopFav }.
+function supportStateText(cfg) {
+  let h = "CitySurfers-Zustand vom " + cfg.stamp + "\n" +
+    "Service-Version: " + (cfg.ver || "?") +
+    (cfg.appVer ? " · " + cfg.appVer : "") +
+    (cfg.gps ? " · GPS " + cfg.gps : "");
+  if (cfg.problem) h += "\n\n== Problembeschreibung ==\n" + cfg.problem;
+  if (cfg.addr)
+    h += "\n\n== Adresssuche ==\n" +
+      "  Suchtext: " + (cfg.addrQ ? "„" + cfg.addrQ + "“" : "(leer)") + "\n" +
+      "  Aktive Startadresse: " + (cfg.pos && cfg.pos.label ?
+        "„" + cfg.pos.label + "“" + (cfg.pos.lat != null && cfg.pos.lon != null ?
+          " (" + cfg.pos.lat + ", " + cfg.pos.lon + ")" : "") : "keine (GPS)") +
+      (cfg.addrSug ? "\n  Offene Vorschläge: " + cfg.addrSug : "");
+  if (cfg.stopS)
+    h += "\n\n== Stationssuche ==\n" +
+      "  Suchtext: " + (cfg.stopQ ? "„" + cfg.stopQ + "“" : "(leer)") +
+      (cfg.stopSug ? "\n  Offene Vorschläge: " + cfg.stopSug : "");
+  if (cfg.rtabIdx && cfg.rtabIdx.length) {
+    h += "\n\n== Route-Reiter ==";
+    cfg.rtabIdx.forEach(i => { h += "\n" + supportRouteTabText(i); });
+  }
+  if (cfg.stabIdx && cfg.stabIdx.length) {
+    h += "\n\n== Stations-Reiter ==";
+    cfg.stabIdx.forEach(i => { h += "\n" + supportStopTabText(i); });
+  }
+  if (cfg.mtabIdx && cfg.mtabIdx.length) {   // v1.4.15: MM-Reiter wie die anderen Reiter-Arten
+    h += "\n\n== MM-Reiter (Micromobility) ==";
+    cfg.mtabIdx.forEach(i => { h += "\n" + supportMMTabText(i); });
+  }
+  if (cfg.addrFav) h += "\n\n== " + supportAddrFavText();
+  if (cfg.stopFav) h += "\n\n== " + supportStopFavText();
+  return h;
+}
+// App-Version aus der Android-Brücke, falls vorhanden (leerer String im Browser)
+function supportAppVer() {
+  try {
+    if (window.KvgNative && typeof window.KvgNative.appVersion === "function")
+      return String(window.KvgNative.appVersion() || "");
+  } catch (e) {}
+  return "";
+}
+function openSupportDlg() {
+  const old = document.getElementById("supportDlg");
+  if (old) { old.remove(); return; }
+  saveActiveTab();     // aktuellen Stations-Reiter (Bus/Fahrt) in sein Objekt sichern
+  saveActiveRouteTab();   // gewählte Verbindungen des aktiven Route-Reiters sichern
+  const wrap = document.createElement("div");
+  wrap.className = "dlgwrap";
+  wrap.id = "supportDlg";
+  const rtRows = routeTabs.map((rt, i) =>
+    '<label class="supsub"><input type="checkbox" data-suprt="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml(defTabName("r", rt)) + "“</label>").join("");
+  const stRows = tabs.map((t, i) =>
+    '<label class="supsub"><input type="checkbox" data-supst="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml(defTabName("s", t)) + "“</label>").join("");
+  const mtRows = mmTabs.map((mt, i) =>   // v1.4.15: MM-Reiter analog zu Route- und Stations-Reitern
+    '<label class="supsub"><input type="checkbox" data-supmm="' + i + '" checked> ' +
+    (i + 1) + ". „" + escapeHtml((mt && mt.name != null && mt.name) ? mt.name : "Leihstation") + "“</label>").join("");
+  wrap.innerHTML = '<div class="dlg">' +
+    '<div class="dtitle">🐞 Support / Bugreport</div>' +
+    '<div class="supwarn">⚠ Deine Daten verlassen das Gerät!</div>' +
+    '<div class="dim supnote">Mit „📧 E-Mail öffnen“ übernimmst du die unten ausgewählten Inhalte ' +
+    'dieser App – inklusive Fahrplänen und Zeiten, Suchtexten und Favoriten – als Text in eine ' +
+    'E-Mail an support@pixcaelium.de. Das ist ein spürbarer datenschutzrechtlicher Eingriff: ' +
+    'Wähle bewusst aus, was mitgesendet wird, und lass weg, was privat bleiben soll. Die E-Mail ' +
+    'öffnet sich ungesendet in deinem E-Mail-Programm – dort kannst du vor dem Absenden noch ' +
+    'jede Zeile ansehen, kürzen oder löschen.</div>' +
+    '<label class="supchk supconfirm"><input type="checkbox" id="supConfirm"> ' +
+    'Ich habe den Hinweis gelesen und bestätige: Die ausgewählten Daten dürfen in die E-Mail ' +
+    'übernommen werden.</label>' +
+    '<label class="dlabel" for="supProblem">Was ist das Problem?</label>' +
+    '<textarea class="stata" id="supProblem" style="height:84px" ' +
+    'placeholder="Kurz beschreiben: Was tust du, was passiert, was sollte stattdessen passieren?"></textarea>' +
+    '<label class="dlabel">Mitgesendete Inhalte</label>' +
+    '<label class="supchk"><input type="checkbox" data-sup="all" checked> <b>Alle</b> (alles unten)</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="addr"> Inhalt der Adresssuche</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="stopS"> Inhalt der Stationssuche</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="rtab"> Inhalt der Route-Reiter' +
+    ' <span class="dim">(alle zurzeit offenen Route-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
+    (rtRows ? '<div class="supsubs">' + rtRows + '</div>' :
+      '<div class="dim supnone">(gerade kein Route-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="stab"> Inhalt der Stations-Reiter' +
+    ' <span class="dim">(alle zurzeit offenen Stations-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
+    (stRows ? '<div class="supsubs">' + stRows + '</div>' :
+      '<div class="dim supnone">(gerade kein Stations-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="mtab"> Inhalt der MM-Reiter (Micromobility)' +
+    ' <span class="dim">(alle zurzeit offenen MM-Reiter werden vorausgewählt mitgeschickt, Haken je Reiter entfernbar)</span></label>' +
+    (mtRows ? '<div class="supsubs">' + mtRows + '</div>' :
+      '<div class="dim supnone">(gerade kein MM-Reiter geöffnet)</div>') +
+    '<label class="supchk"><input type="checkbox" data-supgroup="afav"> Adress-Favoriten</label>' +
+    '<label class="supchk"><input type="checkbox" data-supgroup="sfav"> Stations-Favoriten</label>' +
+    '<div class="dim supnote">Betreff der E-Mail: „Bugreport CitySurfer v' + escapeHtml(pageVersion() || "?") +
+    '“. Ohne Auswahl wird nur die Versionszeile und deine Beschreibung gesendet.</div>' +
+    '<div class="dbtns"><button class="acancel">Abbrechen</button>' +
+    '<button class="aok" id="supGo" disabled>📧 E-Mail öffnen</button></div>' +
+    '</div>';
+  const goBtn = wrap.querySelector("#supGo");
+  const allChk = wrap.querySelector('[data-sup="all"]');
+  const syncAll = () => {
+    const ins = [...wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst], [data-supmm]')];
+    allChk.checked = ins.length > 0 && ins.every(x => x.checked);
+  };
+  wrap.addEventListener("change", e => {
+    const t = e.target;
+    if (t.id === "supConfirm") { goBtn.disabled = !t.checked; return; }
+    if (t === allChk) {
+      wrap.querySelectorAll('[data-supgroup], [data-suprt], [data-supst], [data-supmm]').forEach(x => x.checked = allChk.checked);
+      return;
+    }
+    if (t.getAttribute("data-supgroup") === "rtab")
+      wrap.querySelectorAll("[data-suprt]").forEach(x => x.checked = t.checked);
+    if (t.getAttribute("data-supgroup") === "stab")
+      wrap.querySelectorAll("[data-supst]").forEach(x => x.checked = t.checked);
+    if (t.getAttribute("data-supgroup") === "mtab")   // v1.4.15: MM-Reiter-Gruppe
+      wrap.querySelectorAll("[data-supmm]").forEach(x => x.checked = t.checked);
+    syncAll();
+  });
+  wrap.addEventListener("click", e => {
+    if (e.target === wrap || e.target.closest(".acancel")) { wrap.remove(); return; }
+    if (!e.target.closest("#supGo")) return;
+    const grp = k => {
+      const el = wrap.querySelector('[data-supgroup="' + k + '"]');
+      return !!(el && el.checked);
+    };
+    const rtIdx = [...wrap.querySelectorAll("[data-suprt]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-suprt")));
+    const stIdx = [...wrap.querySelectorAll("[data-supst]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-supst")));
+    const mmIdx = [...wrap.querySelectorAll("[data-supmm]")].filter(x => x.checked)
+      .map(x => Number(x.getAttribute("data-supmm")));
+    // Offene Vorschlagslisten der Suchfelder als Klartext (max. 20 Einträge)
+    const sugTxt = el => (!el || el.hidden) ? "" :
+      [...el.querySelectorAll("div, button, li")]
+        .map(x => (x.textContent || "").trim().replace(/\s+/g, " "))
+        .filter(Boolean).slice(0, 20).join(" | ");
+    const av = supportAppVer();
+    const cfg = {
+      stamp: new Date().toLocaleString("de-DE"),
+      ver: pageVersion() || "?",
+      appVer: av ? "App " + av : "",
+      gps: gpsState === "on" ? "an" : gpsState === "searching" ? "wird gesucht" : "aus",
+      problem: document.getElementById("supProblem").value.trim(),
+      addr: grp("addr"),
+      addrQ: addrSearch.value.trim(),
+      pos: addrPos,
+      addrSug: sugTxt(document.getElementById("addrSug")),
+      stopS: grp("stopS"),
+      stopQ: search.value.trim(),
+      stopSug: sugTxt(sugBox),
+      rtabIdx: rtIdx,
+      stabIdx: stIdx,
+      mtabIdx: mmIdx,
+      addrFav: grp("afav"),
+      stopFav: grp("sfav")
+    };
+    const body = supportStateText(cfg);
+    const mail = "mailto:support@pixcaelium.de?subject=" +
+      encodeURIComponent("Bugreport CitySurfer v" + (cfg.ver || "?")) +
+      "&body=" + encodeURIComponent(body);
+    const a = document.createElement("a");
+    a.href = mail;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    wrap.remove();
+    setLocNote("Support-E-Mail vorbereitet – bitte im E-Mail-Programm prüfen und absenden.");
+  });
+  document.body.appendChild(wrap);
+}
+(function initSupportSec() {
+  const btn = document.getElementById("supportBtn");
+  if (btn) btn.addEventListener("click", openSupportDlg);
+})();
+
+
+// Panels-Klicks (↻ und Buslinien)
+stationPanel.addEventListener("click", e => {
+  if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
+  const pkchip = e.target.closest(".pkgchip");   // v1.6.31: 🐿️-Alarm regelmäßige Verbindung
+  if (pkchip) {
+    openPackDlg({ sn: pkchip.dataset.pkgsn, line: pkchip.dataset.pkgline,
+      dir: pkchip.dataset.pkgdir, time: pkchip.dataset.pkgtime });
+    return;
+  }
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const later = e.target.closest("[data-later]");
+  if (later) { laterDeps(later.dataset.later); return; }
+  const earlier = e.target.closest("[data-earlier]");
+
+  if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
+  const dg = e.target.closest("[data-depgps]");
+  if (dg) { depGpsToggle(); return; }
+  const atnow = e.target.closest("[data-atnow]");   // v1.6.36/37: Anker zurücksetzen
+  if (atnow) { setDepAt(atnow.dataset.atnow, "", ""); return; }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) {   // ↻ sitzt jetzt in der Kopfzeile
+    if (refetchGateOk("ref:" + ref.dataset.ref)) {
+      refetchStop(ref.dataset.ref, true);
+      const av = viewOf(ref.dataset.ref);
+      if (av && (av.atHm || av.atD)) fetchAtDeps(ref.dataset.ref);   // v1.6.36/37: verankerte Liste mit auffrischen
+    }
+    else setLocNote("↻ zuletzt vor wenigen Sekunden gedrückt – frühestens in 5 Sekunden wieder.");
+    return;
+  }
+  const ssec = e.target.closest("[data-ssec]");
+  if (ssec) {
+    if (e.target.closest("input.depat") || e.target.closest("input.depdt") || e.target.closest(".atnow") || e.target.closest(".atline")) return;   // v1.6.36/37: Auswahl klappt nichts zu
+    stationPanelOpen = !stationPanelOpen;   // zugeklappt = eingefroren
+    renderStationPanel();
+    return;
+  }
+  const bl = e.target.closest("[data-buslink]");
+  if (bl) {
+    const [lSn, lId] = bl.dataset.buslink.split("~");
+    selectBus(lSn, lId);        // Stationsansicht
+    selectTrip(lSn, lId);       // Fahrtverlauf (beide Blöcke aufgetaut)
+    return;
+  }
+  const bus = e.target.closest("[data-bus]");
+  if (bus) {
+    const [sn, tripId] = bus.dataset.bus.split("~");
+    selectBus(sn, tripId);
+  }
+});
+stationPanel.addEventListener("change", e => {   // v1.6.36/37: Datum-/Zeit-Auswahl der Abfahrten
+  const dt = e.target.closest("input.depdt");
+  if (dt) { const v = viewOf(dt.dataset.ad); setDepAt(dt.dataset.ad, v ? v.atHm : "", dt.value); return; }
+  const inp = e.target.closest("input.depat");
+  if (inp) { const v = viewOf(inp.dataset.at); setDepAt(inp.dataset.at, inp.value, v ? v.atD : ""); }
+});
+busPanel.addEventListener("click", e => {
+  const btx = e.target.closest("[data-btx]");
+  if (btx) { closeTripTab(Number(btx.dataset.btx)); return; }
+  const bt = e.target.closest("[data-bt]");
+  if (bt) { activateTripTab(Number(bt.dataset.bt)); return; }
+  const star = e.target.closest("[data-star]");
+  if (star) { toggleFavSn(star.dataset.star); renderPanels(); return; }
+  const sec = e.target.closest("[data-sec]");
+  if (sec) {
+    // Blöcke Stationsansicht <-> Fahrtverlauf unabhängig auf-/zuklappen:
+    // zugeklappt = eingefroren (keine Aktualisierung)
+    if (currentBus) {
+      if (sec.dataset.sec === "station") currentBus.stationOpen = !currentBus.stationOpen;
+      else currentBus.tripOpen = !currentBus.tripOpen;
+      renderBusPanel();
+    }
+    return;
+  }
+  const bla = e.target.closest("[data-linalarm]");
+  if (bla) {
+    // Glocke im Linienkopf: Fahrtverlauf nötigenfalls nachladen, dann Wecker-Dialog
+    const tid = bla.dataset.linalarm;
+    if (currentTrip && currentTrip.tripId === tid) openAlarmDialog(tid);
+    else {
+      setLocNote("Fahrtverlauf wird geladen, Wecker-Dialog öffnet danach …");
+      selectTrip(currentBus.sn, tid).then(() => {
+        if (currentTrip && currentTrip.tripId === tid) openAlarmDialog(tid);
+        else setLocNote("Fahrtverlauf gerade nicht verfügbar – Wecker-Dialog nicht geöffnet.");
+      });
+    }
+    return;
+  }
+  const so = e.target.closest("[data-stopopen]");
+  if (so) { openTab(so.dataset.stopopen); return; }   // Stationsname -> neuer Reiter
+  const srq = e.target.closest("[data-stoprt]");
+  if (srq) { rtStopOpenTap(srq.dataset.stoprt, srq.dataset.stoplat, srq.dataset.stoplon); return; }   // v1.6.23: Fern-Station zuzuordnen
+  const al = e.target.closest("[data-alarmtrip]");
+  if (al) {
+    openAlarmDialog(al.dataset.alarmtrip);   // Glocke im Fahrtverlauf: Dialog mit Stationsauswahl
+    return;
+  }
+  const tbk = e.target.closest(".thead [data-rtbike]");
+  if (tbk && currentTrip) {
+    // 🚲? im Fahrtverlauf-Kopf: dieselbe Stations-Undo-Logik wie beim Wecker –
+    // tstops vs. Haltestellen-/DB-Koordinaten, nur verortbare Halte landen im Dialog
+    const tsts = (currentTrip.stops || []).map(x => {
+      const st = stops.find(s2 => s2.shortName === x.shortName) || dbStopOf(x.shortName);
+      return st ? { name: st.name, lat: st.lat, lon: st.lon,
+        time: (x.actualTime || x.time || x.plannedTime || "") || null } : null;
+    }).filter(Boolean);
+    if (!tsts.length) { setLocNote("Fahrtverlauf ohne verortbare Haltestellen – erst laden, dann 🚲? nutzen."); return; }
+    const p = livePos();
+    let best = null;
+    for (const s of tsts) {
+      const dm = dist(p, s);
+      if (!best || dm < best.dm) best = { s: s, dm: dm };
+    }
+    if (!best) best = { s: tsts[0], dm: 0 };
+    openBikeDlg("h", { anchor: null, ents: tsts, dest: null,
+      title: "🚲? Micromobility Routing: Umstieg aufs Leihfahrrad (Linie " + (currentTrip.route || "?") + " → " + (currentTrip.direction || "") + ")" });
+    return;
+  }
+  const tripref = e.target.closest("[data-tripref]");
+  if (tripref) {
+    if (refetchGateOk("triprt:" + tripref.dataset.tripref)) selectTrip(currentBus.sn, tripref.dataset.tripref, true);
+    else setLocNote("↻ zuletzt vor wenigen Sekunden gedrückt – frühestens in 5 Sekunden wieder.");
+    return;
+  }
+  const tripexp = e.target.closest("[data-tripexp]");
+  if (tripexp && currentTrip) {
+    currentTrip.expand = !currentTrip.expand;   // ganzer Lauf <-> ab Einstiegshaltestelle
+    if (currentTrip.expand) kvgFillPlanned();   // ganze Strecke: geplante Abfahrten überall eintragen
+    renderBusPanel();
+    return;
+  }
+  const ref = e.target.closest("[data-ref]");
+  if (ref) {
+    if (refetchGateOk("ref:" + ref.dataset.ref)) refetchStop(ref.dataset.ref, true);
+    else setLocNote("↻ zuletzt vor wenigen Sekunden gedrückt – frühestens in 5 Sekunden wieder.");
+  }
+});
+
+// ---------- Haltestellenfavoriten (Liste, wie bei den Adressen) ----------
+const stopFavBtn = document.getElementById("stopFavBtn");
+const stopFavPanel = document.getElementById("stopFavPanel");
+
+// ---------- Immer nur EINE der beiden Listen (Adressen / Haltestellen) offen ----------
+// Adressvorschläge, Adressfavoriten, Haltestellenliste und Haltestellenfavoriten
+// schließen sich gegenseitig: Öffnet man eine Liste, klappt automatisch jede
+// andere ein. Der hidden-Zugriff läuft dafür über einen Setter auf dem Element –
+// alle bestehenden Stellen im Code (Öffnen, Schließen, Toggle) bleiben unverändert.
+function exclList(el, others) {
+  let v = el.hidden;
+  Object.defineProperty(el, "hidden", {
+    get() { return v; },
+    set(x) {
+      v = !!x;
+      if (!v) for (const o of others) { if (o && !o.hidden) o.hidden = true; }
+      if (v) el.setAttribute("hidden", ""); else el.removeAttribute("hidden");
+    },
+    configurable: true
+  });
+}
+exclList(addrSug, [addrFavPanel, sugBox, stopFavPanel]);
+exclList(addrFavPanel, [addrSug, sugBox, stopFavPanel]);
+exclList(sugBox, [addrSug, addrFavPanel, stopFavPanel]);
+exclList(stopFavPanel, [addrSug, addrFavPanel, sugBox]);
+const stopFavCount = document.getElementById("stopFavCount");
+function renderStopFavs() {
+  if (stopFavCount) stopFavCount.textContent = favs.length;
+  if (stopFavPanel.hidden) return;
+  const origin = sortGpsOrigin("stopFav");   // hinterlegter GPS-Standort oder aktuelle Position
+  let inner = '<div class="afshead">' +
+    '<button class="chip afbtn" id="stopFavGps" title="GPS-Standort für diese Liste übernehmen und Haltestellenfavoriten nach Abstand sortieren">📍 GPS</button>' +
+    (sortGps.stopFav
+      ? '<button class="afbtn" id="stopFavGpsClr" title="Gespeicherten GPS-Standort löschen – sortiert wieder nach aktueller Position">✕ GPS</button>'
+      : '') +
+    '<span class="dim">' + (sortGps.stopFav
+      ? 'Sortierung: gespeicherter GPS-Standort (±' + sortGps.stopFav.acc + ' m)'
+      : 'Sortierung: aktuelle Position') + '</span></div>';
+  if (!favs.length) {
+    inner += '<div class="afsrow"><span class="afsname dim">Noch keine Haltestellenfavoriten. ' +
+      "★ an einer Haltestelle antippen, um sie hier zu sichern.</span></div>";
+  }
+  const sns = favs.slice();
+  if (origin) sns.sort((a, b) => {   // nächstgelegene Haltestelle zuerst
+    const sa = stops.find(x => x.shortName === a), sb = stops.find(x => x.shortName === b);
+    return (sa ? dist(origin, sa) : 1e12) - (sb ? dist(origin, sb) : 1e12);
+  });
+  sns.forEach(sn => {
+    const s = stops.find(x => x.shortName === sn);
+    const nn = nahshNameForStop(sn);
+    inner += '<div class="afsrow" data-sfi="' + escapeHtml(sn) + '" title="Haltestelle öffnen">' +
+      '<span class="afsname">🚏 ' + escapeHtml(s ? s.name : sn) +
+        (s && origin ? ' <small class="dim">' + formatDist(dist(origin, s)) + '</small>' : '') +
+        (nn ? '<br><small class="dim">NAH.SH: ' + escapeHtml(nn) + "</small>" : "") + "</span>" +
+      (s ? routeIconHTML(s, "Diese Haltestelle an eine externe Karten-App übergeben (z. B. Google Maps)") : "") +
+      '<button class="afbtn" data-fh="stop:' + escapeHtml(sn) + '" title="Finde nach Hause: Hinweise einstellen' +
+        (fhStopCfg[sn] && fhStopCfg[sn].on ? ' (aktiv)' : '') + '">' +
+        (fhStopCfg[sn] && fhStopCfg[sn].on ? "🏠" : "⌂") + "</button>" +
+      '<button class="afbtn" data-sfdel="' + escapeHtml(sn) + '" title="Aus Favoriten entfernen">✗</button></div>';
+  });
+  stopFavPanel.innerHTML = inner;
+  // NAH.SH-Namen der Favoriten einmalig im Hintergrund nachziehen (LocMatch mit
+  // ≤ 150-m-Abgleich, danach 30 Tage im Cache) – die Zeile erscheint dann sofort
+  const miss = favs.filter(sn => !isDB(sn) && !nahshLocCache[sn]);
+  if (miss.length && Date.now() - (renderStopFavs._abg || 0) > 30000) {
+    renderStopFavs._abg = Date.now();
+    miss.forEach(sn => {
+      const stop = stops.find(s => s.shortName === sn);
+      if (stop) nahshLocFor(stop).then(() => { if (!stopFavPanel.hidden) renderStopFavs(); }).catch(() => {});
+    });
+  }
+}
+stopFavBtn.addEventListener("click", e => {
+  e.stopPropagation();
+  stopFavPanel.hidden = !stopFavPanel.hidden;
+  if (!stopFavPanel.hidden) addrFavPanel.hidden = true;   // beide Panels teilen sich denselben Ort
+  renderStopFavs();
+});
+document.addEventListener("click", e => {
+  if (!stopFavPanel.hidden && !e.target.closest("#stopFavPanel") && !e.target.closest("#stopFavBtn"))
+    stopFavPanel.hidden = true;
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !stopFavPanel.hidden) stopFavPanel.hidden = true;
+});
+stopFavPanel.addEventListener("click", e => {
+  e.stopPropagation();
+  if (e.target.closest(".ricon")) return;   // Route-Icon: nur Routing-Link oeffnen
+  if (e.target.closest("#stopFavGps")) { gpsTakeOverFor("stopFav"); return; }
+  if (e.target.closest("#stopFavGpsClr")) {
+    sortGps.stopFav = null;
+    saveSortGps();
+    renderStopFavs();
+    setLocNote("GPS-Standort der Haltestellenfavoriten gelöscht – sortiert wieder nach aktueller Position.");
+    return;
+  }
+  const fhb = e.target.closest("[data-fh]");
+  if (fhb) {
+    const p = fhb.dataset.fh.split(":");
+    openFhDlg(p[0], p[1]);
+    return;
+  }
+  const del = e.target.closest("[data-sfdel]");
+  if (del) {
+    const sn = del.dataset.sfdel;
+    const s = stops.find(x => x.shortName === sn);
+    if (confirm("Haltestelle „" + (s ? s.name : sn) + "“ aus den Favoriten entfernen?")) {
+      favs = favs.filter(f => f !== sn);
+      try { localStorage.setItem("kvg-favs", JSON.stringify(favs)); } catch (err) {}
+      document.querySelectorAll("[data-star]").forEach(b =>
+        b.classList.toggle("off", !favs.includes(b.dataset.star)));
+      renderStopFavs();
+    }
+    return;
+  }
+  const row = e.target.closest("[data-sfi]");
+  if (row) { selectStop(row.dataset.sfi); stopFavPanel.hidden = true; openStopListAfterFav(); }
+});
+
+function toggleFavSn(sn) {
+  if (favs.includes(sn)) favs = favs.filter(f => f !== sn);
+  else favs.unshift(sn);   // beliebig viele Stationsfavoriten (frueher max. 8)
+  localStorage.setItem("kvg-favs", JSON.stringify(favs));
+  renderStopFavs();
+  // alle Sterne dieser Station überall aktualisieren
+  document.querySelectorAll("[data-star]").forEach(b => {
+    b.classList.toggle("off", !favs.includes(b.dataset.star));
+  });
+}
+function starHTML(sn) {
+  return '<button class="star' + (favs.includes(sn) ? "" : " off") +
+    '" data-star="' + escapeHtml(sn) + '" title="Favorit">★</button>';
+}
+
+// ---------- Wecker-Indikator (oben neben den Aktivitäts-Indikatoren) ----------
+// Zeigt alle gestellten Wecker mit Bedingung, Läut-Zeit und Restzeit; ein Klick
+// auf einen Eintrag wechselt in den Reiter des Weckers. Ohne Wecker unsichtbar.
+const alarmInd = document.getElementById("alarmInd");
+const alarmList = document.getElementById("alarmList");
+const fhInd = document.getElementById("fhInd");
+const fhList = document.getElementById("fhList");
+function alarmRingEpoch(a) {
+  if (a.leadMin == null) return null;
+  const trip = tripById(a.tripId);
+  let h = NaN, m = NaN;
+  if (!trip) {   // Route-Wecker: Zeit direkt aus der gewaehlten Route
+    const depMin = routeAlarmDepMin(a);
+    if (depMin == null) return null;
+    h = Math.floor(depMin / 60); m = depMin % 60;
+  } else {
+    const s = (trip.stops || []).find(x => x.shortName === a.sn);
+    if (!s) return null;
+    const key = s.key || (a.sn + "|" + trip.tripId);
+    const dl = (trip.delay || {})[key] || {};
+    const t = dl.plannedTime || dl.actualTime || s.time || s.plannedTime || "";
+    const parts = t.split(":").map(Number);
+    h = parts[0]; m = parts[1];
+  }
+  if (!isFinite(h) || !isFinite(m)) return null;
+  const now = new Date();
+  let depMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
+  if (depMs < Date.now() - 60000) depMs += 86400000;   // nachts: nächster Tag
+  return depMs - a.leadMin * 60000;
+}
+// v1.6.35: Eigene Android-Nachricht der Eichhoernchen-Alarme (neben ⏰ gesamt
+// und 🏠 fh-scan): eine Karte je Status, mit jedem Pruef-Update aktualisiert
+// (still, Popup gibt es nur beim Ausloesen selbst). Ohne Alarme null -> Karte weg.
+function packNativeEntry() {
+  if (!packAlarms.length) return null;
+  const now = Date.now();
+  const lines = packAlarms.map(a => {
+    const occ = packNextOcc(a);
+    let s = a.line + " -> " + (a.dir || "?") + " · " +
+      ((a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag") +
+      (occ ? " · nächste " + PACK_DAYS[occ.wd] + " " + occ.t + " Uhr" : "");
+    if (a.lastMsg && a.lastMsgTs && now - a.lastMsgTs < 36 * 3600000) s += " · " + a.lastMsg;
+    return s;
+  });
+  const ringN = packAlarms.filter(a => ringing.has(a.id)).length;
+  return {
+    key: "eichhoernchen",
+    title: "🐿️ " + packAlarms.length + (packAlarms.length === 1 ? " Eichhörnchen-Alarm" : " Eichhörnchen-Alarme") +
+      (ringN ? " · läutet!" : ""),
+    text: lines.join("\n"),
+    tab: ""
+  };
+}
+function renderAlarmInd() {
+  // Einträge einmal berechnen: für die Weckerliste und für die Android-
+  // Benachrichtigungen (eine je Wecker, mit Sprung zum passenden Reiter)
+  const entries = [];
+  for (const [aKey, a] of alarms) {
+    const isRing = ringing.has(aKey);
+    let cond = a.leadMin != null
+      ? a.leadMin + " min vor Abfahrt"
+      : (a.dist >= 1000 ? a.dist / 1000 + " km" : a.dist + " m") + " Entfernung";
+    if (isRing) cond = "läutet jetzt";
+    else if (a.paused) cond += " (aus)";
+    else if (a.dist && gpsState !== "on") cond += " · ⚠ ohne aktives GPS (◎ oben) misst kein Abstand mit";
+    const ep = alarmRingEpoch(a);
+    let when = "";
+    if (ep != null && !isRing && !a.paused) {
+      const d = new Date(ep);
+      const mins = Math.round((ep - Date.now()) / 60000);
+      const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
+      when = " · klingelt " + hh + ":" + mm + " (in " + (mins > 0 ? mins + " min" : "jetzt") + ")";
+    }
+    entries.push({ aKey: aKey, a: a, cond: cond, when: when, ring: isRing });
+  }
+  // Läutende Wecker (ausgelöst, evtl. nativ im Hintergrund) zusätzlich anzeigen:
+  // dort beendet 🔕 das Läuten, ohne den Reiter wechseln zu müssen
+  for (const [aKey, r] of ringing) {
+    if (alarms.has(aKey)) continue;
+    entries.push({ aKey: aKey, a: { name: r.name || "Wecker", tabSn: "" },
+      cond: "läutet jetzt", when: "", ring: true });
+  }
+  // In der App: EINE Sammel-Benachrichtigung je Wecker-Typ (⏰ gesamt, 🐿️ je
+  // Status), laufend aktualisiert (auch leer: dann verschwindet sie). Tap oeffnet
+  // den Reiter des naechsten Weckers. v1.6.35: Die Eichhoernchen-Alarme bekommen
+  // ihre EIGENE Android-Nachricht (neben ⏰ wecker-gesamt und 🏠 fh-scan), die
+  // mit jedem Pruef-Update aktualisiert wird; syncAlarms erwartet ALLE aktiven
+  // Nachrichten in EINEM Array (fehlende keys werden geloescht).
+  if (window.KvgNative) {
+    const arr = [];
+    if (entries.length) {
+      const sorted = entries.slice().sort((a, b) => {
+        const ea = a.ring ? 0 : (alarmRingEpoch(a.a) != null ? alarmRingEpoch(a.a) : Infinity);
+        const eb = b.ring ? 0 : (alarmRingEpoch(b.a) != null ? alarmRingEpoch(b.a) : Infinity);
+        return ea - eb;
+      });
+      // Action-Buttons der Benachrichtigung (max. 3): je Wecker lauten stoppen,
+      // Distanz-Wecker deaktivieren/aktivieren, sonst loeschen
+      const acts = [];
+      for (const en of sorted.slice(0, 3)) {
+        const a = en.a;
+        if (en.ring || ringing.has(en.aKey)) acts.push({ akey: en.aKey, mode: "stop", label: "Stopp: " + (a.name || "Wecker") });
+        else if (a.leadMin == null) acts.push(a.paused
+          ? { akey: en.aKey, mode: "resume", label: "An: " + (a.name || "Wecker") }
+          : { akey: en.aKey, mode: "pause", label: "Aus: " + (a.name || "Wecker") });
+        else acts.push({ akey: en.aKey, mode: "delete", label: "Löschen: " + (a.name || "Wecker") });
+      }
+      arr.push({
+        key: "wecker-gesamt",
+        title: "⏰ " + entries.length + (entries.length === 1 ? " Wecker" : " Wecker") +
+          (sorted[0].a.name ? " · nächster: " + sorted[0].a.name : ""),
+        text: entries.map(en => en.a.name + " – " + en.cond + en.when).join("\n"),
+        tab: sorted[0].a.tabSn || "",
+        actions: acts
+      });
+    }
+    const pe = packNativeEntry();   // v1.6.35: eigene 🐿️-Nachricht
+    if (pe) arr.push(pe);
+    nativeCall("syncAlarms", JSON.stringify(arr));   // leer: alle Nachrichten verschwinden
+  }
+  syncGeofences();   // native Geofences für Distanz-Wecker (Hintergrund) aktualisieren
+  // ⏰ in der Statusleiste: immer sichtbar, ausgegraut ohne Wecker, mit Zahl
+  // (inkl. läutender, bereits ausgelöster) in der normalen Farbe ab 1 Wecker
+  alarmInd.classList.toggle("empty", !entries.length);
+  alarmInd.textContent = "⏰" + (entries.length ? " " + entries.length : "");
+  if (alarmList.hidden) return;
+  if (!entries.length) {
+    alarmList.innerHTML = '<div class="alrow"><span class="afsname dim">Keine Wecker gestellt.</span></div>';
+    return;
+  }
+  alarmList.innerHTML = entries.map(en => {
+    const isDist = en.a.leadMin == null;
+    let btns = "";
+    if (en.ring)
+      btns += '<button class="afbtn" data-amute="' + escapeHtml(en.aKey) + '" title="Läuten sofort beenden">🔕</button>';
+    if (isDist)
+      btns += '<button class="afbtn" data-apause="' + escapeHtml(en.aKey) + '" title="' +
+        (en.a.paused ? "Wecker wieder aktivieren" : "Wecker deaktivieren (läutet nicht mehr)") + '">' +
+        (en.a.paused ? "▶" : "⏸") + "</button>";
+    btns += '<button class="afbtn" data-adele="' + escapeHtml(en.aKey) + '" title="Wecker entfernen">✗</button>';
+    return '<div class="alrow" data-akey="' + escapeHtml(en.aKey) + '" title="Zum Reiter wechseln">' +
+      '<span class="afsname">⏰ ' + escapeHtml(en.a.name) + " – " + en.cond + en.when + "</span>" +
+      btns + "</div>";
+  }).join("");
+}
+alarmInd.addEventListener("click", e => {
+  e.stopPropagation();
+  alarmList.hidden = !alarmList.hidden;
+  if (!alarmList.hidden) { fhList.hidden = true; pkgList.hidden = true; }   // nur eine der Info-Listen
+  renderAlarmInd();
+});
+document.addEventListener("click", e => {
+  if (!alarmList.hidden && !e.target.closest("#alarmList") && !e.target.closest("#alarmInd"))
+    alarmList.hidden = true;
+});
+
+// ---------- 🏠 Finde nach Hause in der Statusleiste ----------
+// Gleiche Mechanik wie ⏰: ausgegraut ohne aktive Hinweise, mit Zahl und in
+// normaler (blauer) Farbe, sobald ein Hinweis aktiv ist. Klick zeigt die Liste
+// der aktiven Hinweise (Linie, Richtung, Station, Uhrzeit, „losgehen“).
+function renderFhInd() {
+  const n = fhCandidates.size;
+  fhInd.classList.toggle("empty", !n);
+  fhInd.textContent = "🏠" + (n ? " " + n : "");
+  if (fhList.hidden) return;
+  let html = "";
+  if (fhOff)
+    html += '<div class="alrow"><span class="afsname dim">„Finde nach Hause“ ist aus (Ruhe-Knopf 🔔/🔕 oben: alles wieder an mit einem Druck).</span></div>';
+  if (n)
+    html += '<div class="alrow"><span class="afsname dim">Aktive Hinweise:</span></div>' +
+      [...fhCandidates.values()]
+      .sort((a, b) => (a.los || 0) - (b.los || 0))
+      .map(c => '<div class="alrow"><span class="afsname">🏠 ' + escapeHtml(c.line) + " → " + escapeHtml(c.dir) +
+        " · " + escapeHtml(c.station) + " " + escapeHtml(c.clock) + " Uhr (" +
+        (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")</span></div>").join("");
+  else if (!fhOff)
+    html += '<div class="alrow"><span class="afsname dim">Gerade keine aktiven Finde-nach-Hause-Hinweise.</span></div>';
+  // Einstellungen pro Ziel (Adress- und Haltestellenfavoriten): aufgelistet,
+  // über ✎ im ursprünglichen 🏠-Dialog änderbar, über ✗ löschbar
+  const sets = [];
+  addrFavs.forEach((f, i) => { if (f.fh) sets.push({ kind: "addr", id: i, name: f.label || f.name, cfg: f.fh }); });
+  for (const sn in fhStopCfg) {
+    const c = fhStopCfg[sn]; if (!c) continue;
+    const st = stops.find(x => x.shortName === sn);
+    sets.push({ kind: "stop", id: sn, name: st ? st.name : sn, cfg: c });
+  }
+  html += '<div class="alrow"><span class="afsname dim">Einstellungen (pro Ziel):</span></div>';
+  if (!sets.length)
+    html += '<div class="alrow"><span class="afsname dim">Noch kein Ziel eingerichtet – 🏠 bei den Favoriten antippen.</span></div>';
+  else
+    html += sets.map(t => {
+      fhDefaults(t.cfg);
+      return '<div class="alrow" title="🏠-Einstellungen für „' + escapeHtml(t.name) + '“">' +
+        '<span class="afsname">' + (t.cfg.on ? "🏠 " : "🏠 (aus) ") + escapeHtml(t.name) +
+        " · bis " + t.cfg.posR + " m · spätestens in " + t.cfg.losWin + " min los · Ziel " + t.cfg.tgtR + " m</span>" +
+        '<button class="afbtn" data-fhedit="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Einstellungen ändern (öffnet den 🏠-Dialog)">✎</button>' +
+        '<button class="afbtn" data-fhdel="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Finde nach Hause für dieses Ziel löschen">✗</button></div>';
+    }).join("");
+  fhList.innerHTML = html;
+}
+fhInd.addEventListener("click", e => {
+  e.stopPropagation();
+  fhList.hidden = !fhList.hidden;
+  if (!fhList.hidden) { alarmList.hidden = true; pkgList.hidden = true; }   // nur eine der Info-Listen
+  renderFhInd();
+});
+document.addEventListener("click", e => {
+  if (!fhList.hidden && !e.target.closest("#fhList") && !e.target.closest("#fhInd")) fhList.hidden = true;
+});
+fhList.addEventListener("click", e => {
+  const edit = e.target.closest("[data-fhedit]");
+  if (edit) {
+    e.stopPropagation();
+    const p = edit.dataset.fhedit.split(":");
+    openFhDlg(p[0], p[0] === "addr" ? Number(p[1]) : p[1]);   // ursprünglicher 🏠-Dialog
+    return;
+  }
+  const del = e.target.closest("[data-fhdel]");
+  if (del) {
+    e.stopPropagation();
+    const p = del.dataset.fhdel.split(":");
+    let name = "";
+    if (p[0] === "addr") {
+      const f = addrFavs[Number(p[1])];
+      if (f) { name = f.label || f.name; delete f.fh; saveAddrFavs(); renderAddrFavs(); }
+    } else {
+      const st = stops.find(x => x.shortName === p[1]);
+      name = st ? st.name : p[1];
+      delete fhStopCfg[p[1]];
+      saveFhStopCfg(); renderStopFavs();
+    }
+    setLocNote("🏠 Finde-nach-Hause für „" + name + "“ gelöscht.");
+    renderFhInd();   // Liste sofort ohne den gelöschten Eintrag neu aufbauen
+  }
+});
+
+// ---------- 🐿️ Eichhörnchen-Alarme in der Statusleiste (v1.6.33) ----------
+// Gleiche Mechanik wie ⏰ und 🏠: ausgegraut, solange kein Eichhörnchen-Alarm
+// gestellt ist; ab einem Alarm leuchtet das Symbol in seiner Eichhörnchen-
+// Farbe (Braunorange) und zeigt die Zahl. Klick zeigt die Liste aller
+// Eichhörnchen-Alarme (Linie, Richtung, Tage, Station, nächste Abfahrt);
+// ✎ öffnet den zugehörigen 🐿️-Dialog zum Bearbeiten, ✗ löscht den Alarm.
+function renderPkgInd() {
+  const n = packAlarms.length;
+  pkgInd.classList.toggle("empty", !n);
+  pkgInd.textContent = "🐿️" + (n ? " " + n : "");
+  if (pkgList.hidden) return;
+  if (!n) {
+    pkgList.innerHTML = '<div class="alrow"><span class="afsname dim">Keine Eichhörnchen-Alarme gestellt – 🐿️ an einer Abfahrtszeile im Stationsreiter setzt einen.</span></div>';
+    return;
+  }
+  pkgList.innerHTML = packAlarms.map(a => {
+    const days = (a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag";
+    const occ = packNextOcc(a);
+    const next = occ ? " · nächste: " + PACK_DAYS[occ.wd] + " " + occ.t : "";
+    // v1.6.35: letzte Meldung des Wachpostens direkt in der Liste (das Fenster
+    // poppt nur noch beim Ausloesen, Kommunikation laeuft ueber diese Liste)
+    const msg = a.lastMsg && a.lastMsgTs && Date.now() - a.lastMsgTs < 36 * 3600000 ? a.lastMsg : "";
+    return '<div class="alrow' + (ringing.has(a.id) ? " ring" : "") + '" data-pkrow="' + escapeHtml(a.id) + '" title="Eichhörnchen-Dialog zum Bearbeiten öffnen">' +
+      '<span class="afsname">🐿️ ' + escapeHtml(a.line) + " → " + escapeHtml(a.dir || "?") +
+      " · <b>" + escapeHtml((a.days || []).filter(Boolean)[0] || "?") + "</b> · " + escapeHtml(days) +
+      ' · <span class="dim">' + escapeHtml(a.name || a.sn) + escapeHtml(next) + "</span></span>" +
+      '<button class="afbtn" data-pkedit="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm bearbeiten (öffnet den 🐿️-Dialog)">✎</button>' +
+      '<button class="afbtn" data-pkdel="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm löschen">✗</button>' +
+      (msg ? '<div class="alrowmsg dim">' + escapeHtml(msg) + "</div>" : "") +
+      "</div>";
+  }).join("");
+}
+pkgInd.addEventListener("click", e => {
+  e.stopPropagation();
+  pkgList.hidden = !pkgList.hidden;
+  if (!pkgList.hidden) { alarmList.hidden = true; fhList.hidden = true; }   // nur eine der Info-Listen
+  renderPkgInd();
+});
+document.addEventListener("click", e => {
+  if (!pkgList.hidden && !e.target.closest("#pkgList") && !e.target.closest("#pkgInd"))
+    pkgList.hidden = true;
+});
+pkgList.addEventListener("click", e => {
+  const edit = e.target.closest("[data-pkedit]");
+  if (edit) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === edit.dataset.pkedit);
+    if (a) openPackDlg(null, a);
+    return;
+  }
+  const del = e.target.closest("[data-pkdel]");
+  if (del) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === del.dataset.pkdel);
+    if (a) {
+      packAlarms = packAlarms.filter(x => x.id !== a.id);   // gleiche Kette wie im 🐿️-Dialog
+      stopRinging(a.id, true);
+      firedAlarms.delete(a.id);
+      savePackAlarms();
+      setLocNote("🐿️ Eichhörnchen-Alarm gelöscht: Linie " + a.line + " an " + (a.name || a.sn) + ".");
+      pkgMsgUpdate();
+      renderPkgInd();   // Liste sofort ohne den gelöschten Eintrag neu aufbauen
+    }
+    return;
+  }
+  const row = e.target.closest("[data-pkrow]");   // Zeile ohne Knopf antippen = bearbeiten
+  if (row) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === row.dataset.pkrow);
+    if (a) openPackDlg(null, a);
+  }
+});
+alarmList.addEventListener("click", e => {
+  const mute = e.target.closest("[data-amute]");
+  if (mute) {
+    e.stopPropagation();
+    const k = mute.dataset.amute;
+    const nm = (ringing.get(k) && ringing.get(k).name) || (alarms.get(k) && alarms.get(k).name) || "Wecker";
+    if (ringing.has(k)) {
+      stopRinging(k);           // beendet Läuten + deaktiviert Distanz-Wecker
+      firedAlarms.delete(k);
+      setLocNote("🔕 Läuten beendet: " + nm);
+    }
+    renderAlarmInd();
+    renderTabs();
+    if (currentBus) renderBusPanel();
+    return;
+  }
+  const pz = e.target.closest("[data-apause]");
+  if (pz) {
+    e.stopPropagation();
+    const k = pz.dataset.apause;
+    const a = alarms.get(k);
+    if (a) {
+      a.paused = !a.paused;
+      saveAlarms();
+      setLocNote(a.paused ? "⏸ Wecker deaktiviert: " + a.name : "▶ Wecker aktiviert: " + a.name);
+    }
+    renderAlarmInd();
+    renderTabs();
+    if (currentBus) renderBusPanel();
+    return;
+  }
+  const de = e.target.closest("[data-adele]");
+  if (de) {
+    e.stopPropagation();
+    const k = de.dataset.adele;
+    const nm = (ringing.get(k) && ringing.get(k).name) || (alarms.get(k) && alarms.get(k).name) || "Wecker";
+    alarms.delete(k);
+    saveAlarms();
+    stopRinging(k, true);
+    firedAlarms.delete(k);
+    nativeCall("cancelAlarm", k);
+    setLocNote("🔕 Wecker entfernt: " + nm);
+    renderAlarmInd();
+    renderTabs();
+    if (currentBus) renderBusPanel();
+    return;
+  }
+  const row = e.target.closest("[data-akey]");
+  if (!row) return;
+  const a = alarms.get(row.dataset.akey);
+  if (!a) return;
+  const i = tabs.findIndex(t => t.sn === a.tabSn);
+  if (i >= 0) activateTab(i, false);
+  alarmList.hidden = true;
+});
+
+// ---------- Entfernung & Fußweg-Routing ----------
+const walkCache = JSON.parse(localStorage.getItem("kvg-walk2") || "{}"); // sn -> {m,lat,lon,ts}
+function dist(pos, stop) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (stop.lat - pos.lat) * rad, dLon = (stop.lon - pos.lon) * rad;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(pos.lat * rad) * Math.cos(stop.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function formatDist(m) {
+  return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km";
+}
+function saveWalkCache() {
+  try { localStorage.setItem("kvg-walk2", JSON.stringify(walkCache)); } catch (e) {}
+}
+async function walkMeters(stop) {
+  const pos = walkOrigin(stop.shortName);   // eigene Position des Reiters vorrangig
+  if (!pos) return null;
+  const c = walkCache[stop.shortName];
+  // echte Wegdaten: 24 h gültig; Schätzung (~, Luftlinie × 1,3): nur 10 min, dann Router neu versuchen
+  if (c && Math.abs(c.lat - pos.lat) < 0.0002 && Math.abs(c.lon - pos.lon) < 0.0002 &&
+      Date.now() - c.ts < (c.est ? 6e5 : 864e5)) {
+    return c.m;
+  }
+  const air = dist(pos, stop);
+  try {
+    const url = FOOT_ROUTER + "/" + pos.lon + "," + pos.lat + ";" + stop.lon + "," + stop.lat + "?overview=false";
+    const res = await apiFetch("osrm", url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.routes && data.routes[0]) {
+        walkCache[stop.shortName] = { m: data.routes[0].distance, est: false, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+        saveWalkCache();
+        return data.routes[0].distance;
+      }
+    }
+  } catch (e) {}
+  const est = air * 1.3; // Schätzung (Router nicht erreichbar): Luftlinie × 1,3
+  walkCache[stop.shortName] = { m: est, est: true, lat: pos.lat, lon: pos.lon, ts: Date.now() };
+  saveWalkCache();
+  return est;
+}
+function isEst(sn) {
+  const c = walkCache[sn];
+  return !!(c && c.est);
+}
+
+// ---------- Bussteige (A1, B3 ...) ----------
+let steige = null; // shortName -> [{label, stopPoint}]
+try { steige = JSON.parse(localStorage.getItem("kvg-steige2") || "null"); } catch (e) {}
+function saveSteige() {
+  try { localStorage.setItem("kvg-steige2", JSON.stringify(steige)); } catch (e) {}
+}
+async function getSteige() {
+  if (steige) return;
+  try {
+    const res = await apiFetch("kvg", PLATFORMS_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    if (!res.ok) return;
+    const data = await res.json();
+    steige = {};
+    for (const p of (data.stopPoints || [])) {
+      const sn = String(p.shortName || "");
+      if (!sn) continue;
+      (steige[sn] = steige[sn] || []).push({ label: String(p.label || ""), stopPoint: String(p.stopPoint || "") });
+    }
+    saveSteige();
+  } catch (e) {}
+}
+async function loadPlatforms(sn) {
+  if (isRS(sn)) return {};   // v1.5.0: Fern-Stationen ohne KVG-Steige
+  if (isDB(sn)) return dbPlatformCache.get(sn) || {};
+  await getSteige();
+  const list = steige && steige[sn];
+  // Bei Stationen mit hoechstens 2 Steigen (typisch A/B) keine Steig-Anzeige
+  if (!list || list.length < 3) return {};
+  const map = {}; // tripId -> label
+  await Promise.all(list.map(async p => {
+    if (!p.label || !p.stopPoint) return;   // unbeschriftete/technische Steige ueberspringen
+    try {
+      const res = await apiFetch("kvg", STEIG_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "stopPoint=" + encodeURIComponent(p.stopPoint)
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const all = [...(data.actual || []), ...(data.old || [])];
+      for (const d of all) if (d.tripId) map[d.tripId] = p.label;
+    } catch (e) {}
+  }));
+  return map;
+}
+
+// ---------- DB-Live-Auskunft über NAH.SH-HAFAS (DB Regio Nord) ----------
+const dbPlatformCache = new Map(); // sn -> { tripId: Gleis/Kante }
+function flashAPI(kind) {
+  const el = document.querySelector('#apiInd [data-ind="' + kind + '"]');
+  if (!el) return;
+  el.classList.remove("ping");
+  void el.offsetWidth;   // Animation neu starten
+  el.classList.add("ping");
+}
+
+// ---------- API-Statistik (Anzahl + Datenmenge je Dienst, v1.5.0 mit LED-Kette) ----------
+// v1.5.0: label = Kurzbezeichnung in der LED-Legende, desc = Spezifikation (auch im
+// Über-Reiter). Neue regionale Dienste: VBB (Berlin/Brandenburg), VVS (Raum Stuttgart),
+// DVB (Dresden) für die Fern-Stationen; db bleibt der interne Schlüssel der nah.sh-HAFAS.
+// v1.5.4: Reihenfolge nach Wichtigkeit sortiert (DELFI zuerst, Kiel-Quellen ans Ende);
+// die Objekt-Reihenfolge bestimmt LED-Kette, Legende, Datenverbrauchs-Statistik und Über-Reiter.
+const API_KINDS = {
+  delfi:{ label: "DELFI", desc: "Verspätungen aus dem echten DELFI-Pool (Mobilithek, GTFS-Realtime per Clientzertifikat, Solldaten aus dem offiziellen nah.sh-GTFS des Landes Schleswig-Holstein, CC BY 4.0), aufbereitet über das serverseitige delfiproxy.php: Dessen Overlay hat im nah.sh-Gebiet Vorrang (lückenloser Bestand mit exakten Haltestellen-IDs), gtfs.de ergänzt Fahrten ohne DELFI-Treffer (etwa IC/ICE); erst ab 60 Sekunden Verspätung erscheint der blaue DELFI-Chip; seit v1.6.0 zählt die LED auch die Verbindungssuchen des eigenen delfirouting-Routers (delfirouting.php, dieselbe Server-Infrastruktur auf pixcaelium) mit", color: "#647CFF" },
+  db:   { label: "nah.sh", desc: "NAH.SH-HAFAS (DB Regio Nord): Echtzeit-Zugabfahrten rund um Kiel, deutschlandweite Verbindungs- und Stationssuche und Fallback aller Regionen ohne eigenen Live-Dienst (Fahrplan bundesweit, Echtzeit soweit vorhanden)", color: "#EC0016" },
+  gtf:  { label: "gtfs.de", desc: "Bundesweite Verspätungen aus dem freien DELFI-Sammelstream von gtfs.de (GTFS-Realtime, alle 10 Sekunden, CC BY 4.0), aufbereitet über das serverseitige gtfsproxy.php als kleine Antwort je Station und als Overlay über die geplanten Zeilen der Fern-Stationen gelegt (Schiene exakt an die Planzeit gebunden, Busse nur bei konsistenter Verspätung der Linie); im nah.sh-Gebiet ergänzt er das DELFI-Overlay, außerhalb dessen Fußabdruck ist er die einzige Verspätungsquelle", color: "#14b8a6" },
+  nom:  { label: "OSM",  desc: "Photon und Nominatim auf OpenStreetMap-Basis: Adressen und POIs (Photon zuerst, Nominatim als Fallback)", color: "#7EBC6F" },
+  osrm: { label: "OSRM", desc: "OSRM-Routing auf dem OpenStreetMap-Wegenetz (routing.openstreetmap.de): Fuß- und Fahrwege, Fußprofil 5 km/h", color: "#FF7F2A" },
+  vbb:  { label: "VBB",  desc: "Verkehrsverbund Berlin-Brandenburg: Live-Abfahrten der Fern-Stationen in Berlin und Brandenburg über v6.vbb.transport.rest mit Echtzeit-Verspätungen; seit v1.5.5 auch Router der Verbindungssuche, wenn Start und Ziel in Berlin/Brandenburg liegen", color: "#F5C500" },
+  vvs:  { label: "VVS",  desc: "Verkehrs- und Tarifverbund Stuttgart: Live-Abfahrten der Fern-Stationen in der Region Stuttgart über die offizielle EFA-Schnittstelle www3.vvs.de (XML_DM_REQUEST mit Echtzeit)", color: "#A78BFA" },
+  mvv:  { label: "MVV",  desc: "Münchner Verkehrs- und Tarifverbund: Live-Abfahrten der Fern-Stationen in München und Umland über die offizielle EFA-Schnittstelle efa.mvv-muenchen.de (XSLT_DM_REQUEST mit Echtzeit-Flag und Ist-Zeit)", color: "#4ADE80" },
+  dvb:  { label: "DVB",  desc: "Dresdner Verkehrsbetriebe: Live-Abfahrten der Fern-Stationen in Dresden über die offene Web-API webapi.vvo-online.de (haltestellen-suche und Abfahrten mit RealTime)", color: "#FF5CA8" },
+  don:  { label: "Donkey", desc: "Donkey Republic / SprottenFlotte: GBFS-Leihräder in Kiel und Umgebung über donkeyproxy.php (eigenes serverseitiges Skript mit Rad-Namen-Cache)", color: "#22d3ee" },
+  kvg:  { label: "KVG",  desc: "Kieler Verkehrsgesellschaft: Live-Busabfahrten über die inoffizielle JSON-Schnittstelle (INIT InternetService, dieselbe Quelle wie kvg-kiel.de), inklusive Ist-Zeiten, Prognosen und Bussteigen", color: "#00519E" },
+};
+// v1.5.0: LED-Kette aufbauen: je Dienst eine kleine LED in der Leiste oben rechts
+function renderLedStrip() {
+  const el = document.getElementById("ledStrip");
+  if (!el) return;
+  let h = "";
+  for (const k in API_KINDS)
+    h += '<span class="ledw"><span class="led" data-ind="' + k + '" aria-hidden="true" title="' +
+      escapeHtml(API_KINDS[k].label + ": " + API_KINDS[k].desc) + '"></span><i class="ledflag" data-flag="' +
+      k + '" hidden aria-hidden="true">!</i></span>';
+  el.innerHTML = h;
+}
+renderLedStrip();
+let apiStats;
+try {
+  const s = JSON.parse(localStorage.getItem("kvg-apistats") || "null");
+  apiStats = (s && s.kinds) ? s : null;
+} catch (e) { apiStats = null; }
+if (!apiStats) {
+  apiStats = { since: Date.now(), kinds: {} };
+  for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };
+}
+for (const k in API_KINDS) if (!apiStats.kinds[k]) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };   // alte Zaehler um neue Quellen ergaenzen
+// v1.5.3: Bestand a (Versuche) und e (Fehlversuche) nachruesten; alte Statistiken
+// kannten nur n (= Erfolge), deshalb gilt dort rueckwirkend a = n, e = 0.
+for (const k in apiStats.kinds) { const st = apiStats.kinds[k];
+  if (!st || st.a == null) (apiStats.kinds[k] = { n: (st && st.n) || 0, b: (st && st.b) || 0, a: (st && st.n) || 0, e: 0 });
+  else if (st.e == null) st.e = 0; }
+updateLedFlags();
+function saveApiStats() {
+  try { localStorage.setItem("kvg-apistats", JSON.stringify(apiStats)); } catch (e) {}
+}
+const apiEnc = new TextEncoder();
+/* v1.5.3: Verbindungszustand je Dienst seit dem letzten Zuruecksetzen:
+   "err"  = zwar probiert, aber noch KEINE erfolgreiche Verbindung -> rotes !
+   "warn" = Erfolge und Fehlversuche gemischt = instabile Verbindung -> gelbes !
+   ""     = alles normal (nur Erfolge oder noch gar nicht benutzt) */
+function apiKindState(st) {
+  const ok = (st && st.n) || 0, err = (st && st.e) || 0;
+  const att = (st && st.a != null) ? st.a : ok + err;
+  if (att > 0 && ok < 1) return "err";
+  if (ok > 0 && err > 0) return "warn";
+  return "";
+}
+function apiFlagTitle(k, s) {
+  const st = apiStats.kinds[k] || {};
+  const att = st.a != null ? st.a : (st.n || 0) + (st.e || 0);
+  return s === "err"
+    ? API_KINDS[k].label + ": keine Verbindung - " + att + " Versuch" + (att === 1 ? "" : "e") +
+      " ohne einen Erfolg seit dem letzten Zurücksetzen"
+    : API_KINDS[k].label + ": instabile Verbindung - " + (st.e || 0) + " von " + att +
+      " Anfragen ohne Erfolg, seit dem letzten Zurücksetzen";
+}
+function updateLedFlags() {   // v1.5.3: rotes/gelbes ! ueber den LEDs aktualisieren
+  const strip = document.getElementById("ledStrip");
+  if (!strip) return;
+  for (const k in API_KINDS) {
+    const f = strip.querySelector('[data-flag="' + k + '"]');
+    if (!f) continue;
+    const s = apiKindState(apiStats.kinds[k]);
+    if (!s) { f.hidden = true; f.classList.remove("ferr", "fwarn"); f.removeAttribute("title"); }
+    else {
+      f.hidden = false;
+      f.classList.toggle("ferr", s === "err");
+      f.classList.toggle("fwarn", s === "warn");
+      f.title = apiFlagTitle(k, s);
+    }
+  }
+}
+function apiStatsChanged() { saveApiStats(); renderApiStats(); updateLedFlags(); }
+async function apiFetch(kind, url, opts) {
+  flashAPI(kind);
+  let st = apiStats.kinds[kind];
+  if (!st) st = apiStats.kinds[kind] = { n: 0, b: 0, a: 0, e: 0 };
+  st.a++;   // v1.5.3: jeder Versuch zaehlt, egal wie er ausgeht
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (errSt) {   // Netzwerk-/DNS-/Abbruch-Fehler: fehlgeschlagener Versuch
+    st.e++;
+    apiStatsChanged();
+    throw errSt;
+  }
+  if (!res.ok) {   // HTTP-Fehlerstatus: fehlgeschlagener Versuch, Antwort bleibt fuer den Aufrufer lesbar
+    st.e++;
+    apiStatsChanged();
+    return res;
+  }
+  try {
+    const c = res.clone();
+    const txt = await c.text();
+    st.n++;
+    st.b += apiEnc.encode(txt).length;
+    apiStatsChanged();
+  } catch (e) {}
+  return res;
+}
+function fmtBytes(b) {
+  return b < 1024 ? b + " B"
+       : b < 1048576 ? (b / 1024).toFixed(1) + " KB"
+       : (b / 1048576).toFixed(1) + " MB";
+}
+function renderApiStats() {   // v1.5.0 aufklappbare Legende der LED-Kette: LED + Kurzbezeichnung + Spezifikation
+  const el = document.getElementById("apiStats");
+  if (!el) return;
+  let totN = 0, totB = 0;
+  let html = '<div class="ashdr">LED-Leiste: Dienste, Anfragen und übertragene Bytes</div>';
+  for (const k in API_KINDS) {
+    const st = apiStats.kinds[k] || { n: 0, b: 0, a: 0, e: 0 };
+    totN += st.n; totB += st.b;
+    const fs = apiKindState(st);   // v1.5.3: rotes/gelbes ! fuer fehlgeschlagene Versuche
+    const fl = fs ? '<span class="asflag ' + (fs === "err" ? "asferr" : "asfwarn") + '" title="' +
+      escapeHtml(apiFlagTitle(k, fs)) + '">!</span>' : "";
+    const att = st.a != null ? st.a : st.n;   // Anzeige n/att, sobald Versuche daneben schiefgingen
+    html += '<div class="asrow" title="' + escapeHtml(API_KINDS[k].desc) +
+      '"><span class="asdot" style="background:' + API_KINDS[k].color +
+      '"></span>' + fl + '<span class="asname"><b>' + API_KINDS[k].label + '</b> <span class="asdesc">' +
+      escapeHtml(API_KINDS[k].desc) + '</span></span><span class="asval">' +
+      (att > st.n ? st.n + "/" + att : st.n) + " Anfr. · " + fmtBytes(st.b) + "</span></div>";
+  }
+  html += '<div class="asrow astot"><span class="asname">insgesamt</span><span class="asval">' +
+    totN + " Anfr. · " + fmtBytes(totB) + "</span></div>";
+  html += '<div class="asdim">Facelift-System: Abfahrten fragen zuerst den regionalen Live-Dienst der Region ab (KVG in Kiel, VBB in Berlin/Brandenburg, VVS in der Region Stuttgart, DVB in Dresden), sonst den deutschlandweiten Fallback über nah.sh. Die LED oben rechts blinkt, sobald ihr Dienst Daten liefert.</div>';
+  html += '<div class="asdim">Rotes ! = seit dem letzten Zurücksetzen nur Fehlversuche, noch keine einzige Verbindung zustande gekommen. Gelbes ! = instabile Verbindung: Erfolge und Fehlversuche gemischt. Die Zahl dahinter nennt erfolgreiche/gesamte Anfragen.</div>';
+  html += '<div class="asdim">Statistik seit ' + new Date(apiStats.since).toLocaleString("de-DE") + "</div>";
+  html += '<button class="afbtn" id="apiStatsReset" style="width:100%;margin-top:8px;">Zähler zurücksetzen</button>';
+  el.innerHTML = html;
+}
+document.getElementById("apiInd").addEventListener("click", e => {
+  const ind = e.target.closest(".ind");
+  if (!ind) return;
+  const el = document.getElementById("apiStats");
+  if (!el.hidden) { el.hidden = true; return; }
+  renderApiStats();
+  el.hidden = false;
+});
+document.addEventListener("click", e => {
+  const el = document.getElementById("apiStats");
+  if (el && !el.hidden && !e.target.closest("#apiInd") && !e.target.closest("#apiStats")) el.hidden = true;
+});
+document.getElementById("apiStats").addEventListener("click", e => {
+  if (e.target.closest("#apiStatsReset")) {
+    apiStats = { since: Date.now(), kinds: {} };
+    for (const k in API_KINDS) apiStats.kinds[k] = { n: 0, b: 0, a: 0, e: 0 };
+    saveApiStats();
+    renderApiStats();
+    updateLedFlags();
+  }
+});
+async function dbFetch(svcReqL) {
+  const res = await apiFetch("db", DB_GATE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ver: "1.68", lang: "deu", ext: null,
+      client: { id: "NAHSH", type: "WEB", name: "webapp", l: "vs_webapp" },
+      auth: { type: "AID", aid: "nahsh" },
+      svcReqL
+    })
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+// HAFAS-Zeitformat: "HHMMSS"; nach Mitternacht teils mit Tagesoffset-Prefix ("01HHMMSS")
+function dbHHMM(t) { if (!t) return ""; const h = t.length > 6 ? t.slice(-6) : t;
+  return h.slice(0, 2) + ":" + h.slice(2, 4); }
+function hhmmShift(t, mins) {   // "HH:MM" um +/- Minuten verschieben (rechnerischer Mitternacht-Umbruch)
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || ""));
+  if (!m) return t;
+  const v = ((Number(m[1]) * 60 + Number(m[2]) + (mins || 0)) % 1440 + 1440) % 1440;
+  return String(Math.floor(v / 60)).padStart(2, "0") + ":" + String(v % 60).padStart(2, "0");
+}
+function rtDiffMin(a, b) {   // Soll-/Ist-HAFAS-Zeit -> +/- Minuten (auch negativ), null ohne Echtzeit
+  const mv = t => { if (!t) return null; const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
+    const x = t.slice(-6);
+    return day * 1440 + Number(x.slice(0, 2)) * 60 + Number(x.slice(2, 4)); };
+  const x = mv(a), y = mv(b);
+  if (x == null || y == null) return null;
+  return y - x;
+}
+function dbRelMin(t) {   // "HHMMSS" -> Minuten ab jetzt (negativ = bereits abgefahren)
+  const s6 = t.length > 6 ? t.slice(-6) : t;
+  const day = t.length > 6 ? (Number(t.slice(0, t.length - 6)) || 0) : 0;
+  const h = Number(s6.slice(0, 2)), m = Number(s6.slice(2, 4));
+  if (!isFinite(h) || !isFinite(m)) return 0;
+  const now = new Date();
+  let s = day * 86400 + h * 3600 + m * 60 + (Number(s6.slice(4, 6)) || 0)
+        - (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds());
+  if (s < -43200) s += 86400 * (day ? 0 : 1);   // nach Mitternacht
+  return s / 60;
+}
+function dbNow() {
+  const n = new Date();
+  const p = x => String(x).padStart(2, "0");
+  return { date: n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()),
+           time: p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds()) };
+}
+async function dbDepartures(sn) {
+  const d = dbStopOf(sn);
+  if (!d) return null;
+  const { date, time } = dbNow();
+  // jnyFltrL (Produkt-Bitmaske 31 = Schienenverkehr): Ohne Filter füllen Busse
+  // das 100er-Limit – am Hbf blieben so nur ~8 Züge in 1,5 h übrig. Mit Filter
+  // liefert EINE Abfrage rund 10 h Züge (Anzeige: 6 h, mit „später“ seitenweise weiter).
+  const res = await dbFetch([{ meth: "StationBoard",
+    req: { type: "DEP", stbLoc: { lid: d.lid }, date, time,
+      jnyFltrL: [{ type: "PROD", mode: "INC", value: "31" }], maxJny: 100 } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  if (!out || !out.jnyL) return null;
+  const prodL = (out.common && out.common.prodL) || [];
+  const deps = [], platforms = {};
+  const seenJid = new Set();
+  const seenDep = new Map(); // "Ziel|Sollzeit" -> Index in deps
+  for (const j of out.jnyL) {
+    const prod = prodL[j.prodX] || {};
+    if ((prod.cls || 0) >= 32) continue;   // nur Schienenverkehr (Zug/Schienenersatz)
+    const st = j.stbStop || {};
+    const t = st.dTimeR || st.dTimeS;
+    if (!t) continue;
+    const rawName = String(prod.name || "").trim();
+    // Datenpseudonym "de:NAHSH" entfernen, auch mitten im Namen (z.B. "SEVde:NA" -> "SEV")
+    const deIdx = rawName.indexOf("de:");
+    const cleanName = deIdx > 0 ? rawName.slice(0, deIdx).trim() : (deIdx === 0 ? "" : rawName);
+    const isPseudo = !cleanName;
+    const line = cleanName
+      || String((prod.prodCtx && prod.prodCtx.catOutS) || prod.addId || "DB").trim();
+    // Doppelungen vermeiden:
+    // a) gleiche Fahrt-ID (jid) nur einmal (SEV-Schleifen: mehrfache Durchgänge pro Tageslauf)
+    // b) gleiche Fahrt kommt teils als ZWEI Produkte mit verschiedenen jids
+    //    (z.B. "RB73" und SEV-Ersatz "de:NAHSH") mit identischer Zeit+Ziel ->
+    //    nur den Eintrag mit dem konkreten Liniennamen behalten.
+    const dkey = (j.dirTxt || "") + "|" + (st.dTimeS || "");
+    const prev = seenDep.get(dkey);
+    if (seenJid.has(j.jid)) continue;
+    const entry = {
+      tripId: j.jid,
+      line: line || "DB",
+      direction: j.dirTxt || "",
+      isPseudo,
+      plannedTime: dbHHMM(st.dTimeS),
+      actualTime: dbHHMM(st.dTimeR || st.dTimeS),
+      actualRelativeTime: dbRelMin(t) * 60,   // Sekunden ab jetzt (wie KVG-API)
+      status: st.dTimeR ? "PREDICTED" : "PLANNED",
+      alerts: []
+    };
+    if (prev !== undefined) {
+      if (deps[prev].isPseudo && !isPseudo) deps[prev] = entry;
+      continue;
+    }
+    seenJid.add(j.jid);
+    seenDep.set(dkey, deps.length);
+    deps.push(entry);
+    const plat = st.dPlatF || st.dPlatR;
+    if (plat) platforms[j.jid] = plat;
+  }
+  deps.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return { deps, platforms };
+}
+
+/* v1.5.0 REMDEP-START: Abfahrten der Fern-Stationen (Facelift-System).
+   Zuerst fragt der regionale Live-Dienst der Region (VBB: rest-Schnittstelle
+   v6.vbb.transport.rest, VVS: offizielle EFA XML_DM_REQUEST, DVB: offene
+   Web-API webapi.vvo-online.de). Scheitert er, liefert er nichts oder passt
+   seine Stations-Auflösung nicht (VBB/VVS koordinatenverifiziert, DVB
+   namentlich), springt der deutschlandweite Fallback über den NAH.SH-HAFAS
+   (StationBoard, Produkt-Maske 511 = Schiene und ÖPNV ohne Taxi) ein:
+   bundesweiter Fahrplan mit Echtzeit, soweit die HAFAS-Zentrale sie kennt. */
+function isoHHMM(ms) {   // Epochen-Millisekunden -> "HH:MM" (Gerätezeit, wie die gesamte App)
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+async function rsDepsNahsh(m) {   // Fallback: NAH.SH-StationBoard unter der bekannten lid
+  const { date, time } = dbNow();
+  const res = await dbFetch([{ meth: "StationBoard",
+    req: { type: "DEP", stbLoc: { lid: m.lid }, date, time,
+      jnyFltrL: [{ type: "PROD", mode: "INC", value: "511" }], maxJny: 100 } }]);
+  const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+  if (!out || !out.jnyL) return null;
+  const prodL = (out.common && out.common.prodL) || [];
+  const deps = [], seen = new Set();
+  for (const j of out.jnyL) {
+    const prod = prodL[j.prodX] || {};
+    const st = j.stbStop || {};
+    const tS = st.dTimeS, tR = st.dTimeR;
+    if (!tS && !tR) continue;
+    if (seen.has(j.jid)) continue;
+    seen.add(j.jid);
+    const rawName = String(prod.name || "").trim();
+    const deIdx = rawName.indexOf("de:");
+    const cleanName = deIdx > 0 ? rawName.slice(0, deIdx).trim() : (deIdx === 0 ? "" : rawName);
+    const line = cleanName ||
+      String((prod.prodCtx && (prod.prodCtx.catOut || prod.prodCtx.catOutS)) || prod.addId || "").trim() || "Fahrt";
+    deps.push({
+      tripId: j.jid, line: line, direction: j.dirTxt || "",
+      plannedTime: dbHHMM(tS), actualTime: dbHHMM(tR || tS),
+      actualRelativeTime: dbRelMin(tR || tS) * 60,
+      status: (tR || st.dProgType === "PROGNOSED") ? "PREDICTED" : "PLANNED",   // PROGNOSED = Prognose ohne Echtzeit
+      alerts: [], plat: st.dPlatF || st.dPlatR || ""
+    });
+  }
+  deps.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return deps.length ? deps : null;
+}
+async function rsResolveVBB(m) {   // VBB-Stop-ID über die rest-Schnittstelle, koordinatenverifiziert (bis 500 m)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("vbb", "https://v6.vbb.transport.rest/locations?query=" +
+    encodeURIComponent(m.name) + "&results=8&fuzzy=true");
+  if (!res.ok) return null;
+  const locs = await res.json();
+  for (const l of (Array.isArray(locs) ? locs : [])) {
+    if (!l || l.type !== "stop" || !l.id) continue;
+    const la = (l.location && l.location.latitude) != null ? l.location.latitude : l.latitude;
+    const lo = (l.location && l.location.longitude) != null ? l.location.longitude : l.longitude;
+    if (la != null && lo != null && dist({ lat: la, lon: lo }, m) > 500) continue;
+    m.rId = String(l.id);
+    return m.rId;
+  }
+  return null;
+}
+async function rsDepsVBB(m) {   // Berlin/Brandenburg: plannedWhen/when/delay
+  const id = await rsResolveVBB(m);
+  if (!id) return null;
+  const res = await apiFetch("vbb", "https://v6.vbb.transport.rest/stops/" + encodeURIComponent(id) +
+    "/departures?results=40&duration=90&remarks=false");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const d of (j.departures || [])) {
+    if (!d || d.cancelled) continue;
+    const w = d.when || d.plannedWhen;
+    if (!w) continue;
+    const t = Date.parse(w), tP = Date.parse(d.plannedWhen || w);
+    if (!isFinite(t)) continue;
+    out.push({
+      tripId: String(d.tripId || d.id || ((d.line && d.line.name) || "vbb") + "|" + t),
+      line: String((d.line && d.line.name) || "").trim() || "Fahrt",
+      direction: String(d.direction || d.provenance || ""),
+      plannedTime: isoHHMM(tP), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: (d.when != null && d.delay != null) ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String((d.stop && d.stop.platform) || d.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+async function rsResolveVVS(m) {   // VVS-Stop-ID über den offiziellen EFA-Stopfinder, koordinatenverifiziert (bis 600 m)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("vvs", "https://www3.vvs.de/mngvvs/XML_STOPFINDER_REQUEST?SpEncId=0&language=de" +
+    "&outputFormat=rapidJSON&coordOutputFormat=EPSG:4326&type_sf=any&name_sf=" + encodeURIComponent(m.name));
+  if (!res.ok) return null;
+  const j = await res.json();
+  for (const l of (j.locations || [])) {
+    if (!l || !l.id) continue;
+    const la = l.lat != null ? l.lat : (Array.isArray(l.coord) ? l.coord[0] : null);
+    const lo = l.lon != null ? l.lon : (Array.isArray(l.coord) ? l.coord[1] : null);
+    if (la == null || lo == null) continue;
+    if (dist({ lat: la, lon: lo }, m) > 600) continue;
+    m.rId = String(l.id);
+    return m.rId;
+  }
+  return null;
+}
+async function rsDepsVVS(m) {   // Stuttgart-Region: EFA-DM mit Echtzeit (rapidJSON)
+  const id = await rsResolveVVS(m);
+  if (!id) return null;
+  const res = await apiFetch("vvs", "https://www3.vvs.de/mngvvs/XML_DM_REQUEST?SpEncId=0&language=de" +
+    "&coordOutputFormat=EPSG:4326&outputFormat=rapidJSON&version=10.2.10&mode=direct" +
+    "&type_dm=Stop&name_dm=" + encodeURIComponent(id) + "&omitDirection=1&useRealtime=1&limit=40");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const e of (j.departures || [])) {
+    if (!e || !e.servingLine) continue;
+    const tP = Date.parse(e.departureTimePlanned || "");
+    let t = NaN, hasRT = !!(e.isRealtimeControlled && e.departureTimeEstimated);
+    if (hasRT) t = Date.parse(e.departureTimeEstimated);
+    if (!isFinite(t)) { if (!isFinite(tP)) continue; t = tP; hasRT = false; }
+    out.push({
+      tripId: "vvs|" + (e.servingLine.code || e.servingLine.number || "?") + "|" + t,
+      line: String(e.servingLine.name || e.servingLine.number || "").trim() || "Fahrt",
+      direction: String(e.servingLine.direction || ""),
+      plannedTime: isoHHMM(isFinite(tP) ? tP : t), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: hasRT ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String(e.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+function dvbDate(s) {   // .NET-JSON-Datum "/Date(1698...+60)/" -> Millisekunden
+  const m = String(s || "").match(/Date\((\d+)(?:[+-]\d+)?\)/);
+  return m ? Number(m[1]) : null;
+}
+async function rsResolveDVB(m) {   // DVB-Stop-ID über den pointfinder (namentlich, GK4 ohne Koordinatenabgleich)
+  if (m.rId) return m.rId;
+  const res = await apiFetch("dvb", "https://webapi.vvo-online.de/tr/pointfinder?format=json&stopsOnly=true" +
+    "&assignedStops=false&limit=0&query=" + encodeURIComponent(m.name.replace(/…/g, "")) + "&dvb=true");
+  if (!res.ok) return null;
+  const j = await res.json();
+  const pts = String(j.Points || "").split(";");
+  const want = rsFold(m.name).slice(0, 8);
+  for (const pt of pts) {
+    const f = String(pt || "").split("|");
+    if (f.length < 4 || !/^\d+$/.test(f[0])) continue;
+    let ok = false;
+    for (let i = 2; i <= 3 && i < f.length; i++) {
+      const nn = rsFold(f[i]).slice(0, 8);
+      if (nn && (nn === want || nn.indexOf(want) === 0 || want.indexOf(nn) === 0)) { ok = true; break; }
+    }
+    if (!ok) continue;
+    m.rId = f[0];
+    return m.rId;
+  }
+  return null;
+}
+function mvvDT(d) {   // MVV-EFA-Datum {year,month,day,hour,minute} -> ISO (Minute kann einstellig sein)
+  if (!d || !d.year || d.month == null || d.day == null || d.hour == null || d.minute == null) return "";
+  const p = n => String(n).padStart(2, "0");
+  return d.year + "-" + p(d.month) + "-" + p(d.day) + "T" + p(d.hour) + ":" + p(d.minute) + ":00";
+}
+async function rsDepsMVV(m) {   // München/Umland: offizielle MVV-EFA /ng/ mit Echtzeit, namentlich und koordinatenverifiziert
+  const base = "https://efa.mvv-muenchen.de/ng/XSLT_DM_REQUEST?outputFormat=JSON&language=de&stateless=1" +
+    "&coordOutputFormat=WGS84%5BDD.DDDDD%5D&useRealtime=1&zope_command=enquiry&type_dm=stop" +
+    "&itOptionsActive=1&ptOptionsActive=1&mergeDep=1&useAllStops=1&mode=direct&anyMaxSizeHitList=10000&name_dm=";
+  const call = async id => {
+    const res = await apiFetch("mvv", base + encodeURIComponent(id));
+    return res.ok ? await res.json() : null;
+  };
+  const parsePoints = j => {   // dm.points kann dict {point} ODER Liste sein (mehrdeutige Namen)
+    const pts = (j && j.dm && j.dm.points) || null;
+    if (!pts) return [];
+    const arr = Array.isArray(pts) ? pts : (pts.point ? [].concat(pts.point) : []);
+    return arr.filter(p => p && p.usage === "dm" && p.stateless);
+  };
+  const mvvDepsArr = j => {   // departureList ist Liste oder {departure:[...]}
+    const dl = (j && j.departureList) || null;
+    if (!dl) return [];
+    return Array.isArray(dl) ? dl : [].concat(dl.departure || []);
+  };
+  const verify = (j, wantId) => {   // eindeutige Auflösung: Punkt-Koordinaten <= 600 m, sonst raus
+    for (const p of parsePoints(j)) {
+      const co = String(((p.ref || {}).coords) || "");
+      if (!co) continue;
+      const cl = co.split(",");
+      if (cl.length < 2) continue;
+      const la = parseFloat(cl[1]), lo = parseFloat(cl[0]);
+      if (!isFinite(la) || !isFinite(lo)) continue;
+      if (dist({ lat: la, lon: lo }, m) > 600) continue;
+      if (wantId && p.stateless !== wantId) continue;
+      m.rId = String(p.stateless);
+      return String(p.stateless);
+    }
+    return null;
+  };
+  let j = null;
+  if (m.rId) {
+    j = await call(m.rId);
+    if (!j || !verify(j, m.rId)) return null;
+  } else {
+    j = await call(m.name);
+    const pts = parsePoints(j);
+    let ok = !!(mvvDepsArr(j).length && verify(j, null));
+    if (!ok) {   // mehrdeutiger Name: Kandidaten einzeln nach-Resolve, Distanz entscheidet (max. 5 Versuche)
+      for (const p of pts.slice(0, 5)) {
+        const j2 = await call(p.stateless);
+        if (!j2) continue;
+        if (mvvDepsArr(j2).length && verify(j2, p.stateless)) { j = j2; ok = true; break; }
+      }
+    }
+    if (!ok) return null;
+  }
+  const dl = mvvDepsArr(j);
+  const now = Date.now();
+  const out = [];
+  for (const x of dl) {
+    if (!x || !x.servingLine) continue;
+    const sv = x.servingLine;
+    const isoP = mvvDT(x.dateTime);
+    if (!isoP) continue;
+    const hasRT = !!(x.realDateTime && sv.realtime === "1" && mvvDT(x.realDateTime));
+    const tP = Date.parse(isoP);
+    const tR = hasRT ? Date.parse(mvvDT(x.realDateTime)) : NaN;
+    const t = isFinite(tR) ? tR : tP;
+    if (!isFinite(t)) continue;
+    const cd = x.countdown != null ? parseInt(x.countdown, 10) : Math.round((t - now) / 60000);
+    if (!isFinite(cd) || cd < 0) continue;   // bereits abgefahrene Fahrten haben negativen Countdown
+    out.push({
+      tripId: "mvv|" + (sv.stateless || sv.code || "?") + "|" + t,
+      line: String(sv.symbol || sv.number || sv.name || "").trim() || "Fahrt",
+      direction: String(sv.direction || ""),
+      plannedTime: isoHHMM(isFinite(tP) ? tP : t), actualTime: isoHHMM(t),
+      actualRelativeTime: cd * 60,
+      status: hasRT ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: String(x.platformName || x.platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+async function rsDepsDVB(m) {   // Dresden: offene Web-API (RealTime/ScheduledTime als .NET-Datum)
+  const id = await rsResolveDVB(m);
+  if (!id) return null;
+  const res = await apiFetch("dvb", "https://webapi.vvo-online.de/dm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stopid: id, time: (new Date()).toISOString(), limit: 40,
+      isarrival: false, shorttermchanges: true, mentzonly: false })
+  });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const now = Date.now();
+  const out = [];
+  for (const d of (j.Departures || [])) {
+    if (!d) continue;
+    const tP = dvbDate(d.ScheduledTime), tE = dvbDate(d.RealTime);
+    if (tP == null) continue;
+    const t = tE != null ? tE : tP;
+    out.push({
+      tripId: "dvb|" + (d.Id || id) + "|" + t,
+      line: String(d.LineName || d.Line || "").trim() || "Fahrt",
+      direction: String(d.Direction || ""),
+      plannedTime: isoHHMM(tP), actualTime: isoHHMM(t),
+      actualRelativeTime: Math.round((t - now) / 1000),
+      status: tE != null ? "PREDICTED" : "PLANNED",
+      alerts: [], plat: (d.Platform && typeof d.Platform === "object") ? String(d.Platform.Name || "") : String(d.Platform || "")
+    });
+  }
+  out.sort((a, b) => a.actualRelativeTime - b.actualRelativeTime);
+  return out.length ? out : null;
+}
+/* v1.5.2 REMDEP-GTFS-START: DELFI-Verspaetungs-Overlay (gtfs.de) ueber gtfsproxy.php.
+   Der Proxy (gtfsproxy.php neben dieser Seite bzw. DONKEY_BASE im file-Kontext) hoert den
+   freien Sammelstream realtime.gtfs.de ab (GTFS-Realtime als Protokollpuffer, ca. 10 MB,
+   alle 10 Sekunden neu; Datenbasis DELFI, gtfs.de free, CC BY 4.0) und antwortet JE Station
+   mit einer kleinen Liste der dort aktiven Fahrten: l = Linie, d = Verspaetung in Sekunden
+   (negativ = frueher), p = planmaessige Abfahrtszeit HH:MM (nur Schienenfahrten aus den
+   stop_times der Regional- und Fernverkehrsfeeds, sonst null), s = stop_sequence,
+   t = Trip-ID. Fehler-Philosophie: antwortet der Proxy nicht oder mit ok:false, bleibt
+   alles einfach beim Anzeigestand, die Zeilen bleiben Plan-Sollzeiten. Seit v1.5.3 greift
+   im nah.sh-Gebiet ZUERST delfiproxy.php (echter DELFI-Pool, siehe REMDEP-DELFI), diese
+   Quelle ergaenzt nur Zeilen ohne DELFI-Treffer. */
+const GTFS_MIN_DELAY_S = 60;    // Overlay earliest ab 60 s Verspaetung
+const GTFS_SPREAD_S = 90;       // Bus-Konsistenz: Spannweite der Delays einer Linie
+const GTFS_MATCH_MIN = 2;       // Schiene: Planzeit-Ausgleichsfenster in Minuten
+const rsGtfsCache = { key: "", ts: 0, at: null };
+function rsGtfsProxyURL() {   // Web: relativ, Android file://: feste Produktiv-URL (wie DONKEY_BASE)
+  return (location && location.protocol === "file:")
+    ? "https://pixcaelium.timo-damm.de/apps/citysurfers/gtfsproxy.php" : "gtfsproxy.php";
+}
+/* v1.5.3 REMDEP-DELFI-START: delfiproxy.php zapft den ECHTEN DELFI-Pool (Mobilithek,
+   GTFS-Realtime per Clientzertifikat) an und bindet die Verspaetungen an die offiziellen
+   nah.sh-Solldaten (GTFS des Landes SH, CC BY 4.0). Im nah.sh-Footprint (Grob-BBox) hat
+   sein Overlay Vorrang, weil der DELFI-Pool dort lueckenlos ist; gtfsproxy uebernimmt nur
+   Zeilen ohne DELFI-Treffer (deckt Fernzuege, falls der Pool IC/ICE verpasst). Ausserhalb
+   des Fussabdrucks bleibt alles beim bisherigen gtfsproxy-Overlay, dort kennt delfiproxy
+   schlicht keine Stops. */
+function rsDelfiProxyURL() {   // Web: relativ, Android file://: feste Produktiv-URL (wie DONKEY_BASE)
+  return (location && location.protocol === "file:")
+    ? "https://pixcaelium.timo-damm.de/apps/citysurfers/delfiproxy.php" : "delfiproxy.php";
+}
+const DELFI_SH = { latMin: 53.3, latMax: 55.6, lonMin: 7.8, lonMax: 11.6 };   // Grob-BBox nah.sh
+function rsInSH(m) {   // liegt die Station im nah.sh-Footprint -> beide Proxys fragen
+  return !!(m && typeof m.lat === "number" && typeof m.lon === "number" &&
+    m.lat >= DELFI_SH.latMin && m.lat <= DELFI_SH.latMax &&
+    m.lon >= DELFI_SH.lonMin && m.lon <= DELFI_SH.lonMax);
+}
+const rsDelfiCache = { key: "", ts: 0, at: null };
+async function rsDelfiFetch(m) {   // wie rsGtfsFetch: 45 s Cache, Fehler = still kein Beitrag
+  const now = Date.now();
+  if (rsDelfiCache.key !== m.shortName || now - rsDelfiCache.ts > 45000 || !rsDelfiCache.at) {
+    const res = await apiFetch("delfi", rsDelfiProxyURL() + "?lat=" + m.lat.toFixed(4) + "&lon=" + m.lon.toFixed(4));
+    const j = res.ok ? await res.json().catch(() => null) : null;
+    if (!j || !j.ok || !Array.isArray(j.at)) return null;
+    rsDelfiCache.key = m.shortName;
+    rsDelfiCache.ts = now;
+    rsDelfiCache.at = j.at;
+  }
+  return rsDelfiCache.key === m.shortName ? rsDelfiCache.at : null;
+}
+/* v1.5.3 REMDEP-DELFI-END */
+function rsGtfsWrap(a, b) {   // Minuten-Differenz mit Mitternacht-Umbruch (kuerzester Weg)
+  let d = (a - b) % 1440;
+  if (d > 720) d -= 1440;
+  if (d < -720) d += 1440;
+  return d;
+}
+async function rsGtfsFetch(m) {   // je Station 45 s Cache; Proxy-Fehler = still kein Overlay
+  const now = Date.now();
+  if (rsGtfsCache.key !== m.shortName || now - rsGtfsCache.ts > 45000 || !rsGtfsCache.at) {
+    const res = await apiFetch("gtf", rsGtfsProxyURL() + "?lat=" + m.lat.toFixed(4) + "&lon=" + m.lon.toFixed(4));
+    const j = res.ok ? await res.json().catch(() => null) : null;
+    if (!j || !j.ok || !Array.isArray(j.at)) return null;
+    rsGtfsCache.key = m.shortName;
+    rsGtfsCache.ts = now;
+    rsGtfsCache.at = j.at;
+  }
+  return rsGtfsCache.key === m.shortName ? rsGtfsCache.at : null;
+}
+function rsDelayFor(at, lf, plMin) {   // Verspaetung einer Quelle fuer Linie+Planzeit suchen
+  if (plMin != null) for (const e of at) {   // Schiene: Linie passt und Planzeit im ±2-Minuten-Fenster
+    if (!e || !e.l || typeof e.d !== "number" || !e.p) continue;
+    if (rsFold(e.l) !== lf) continue;
+    if (Math.abs(rsGtfsWrap(plMin, hhmmToMin(e.p))) <= GTFS_MATCH_MIN) return e.d;
+  }
+  const ds = [];   // Bus/abhaengige Planbindung: konsistente Delays der ganzen Linie
+  for (const e of at) {
+    if (!e || !e.l || typeof e.d !== "number" || e.p) continue;
+    if (rsFold(e.l) === lf) ds.push(e.d);
+  }
+  if (ds.length) {
+    const mx = Math.max.apply(null, ds), mn = Math.min.apply(null, ds);
+    if (mx - mn <= GTFS_SPREAD_S) {
+      const s = ds.slice().sort((a, b) => a - b);
+      return s[Math.floor((s.length - 1) / 2)];
+    }
+  }
+  return null;
+}
+async function rsOverlayGtfs(m, rows) {   // nur geplante Zeilen, vvPREDICTED bleibt unberuehrt
+  try {   // v1.5.3: Quellen in Prioritaet - in SH delfiproxy zuerst, gtfsproxy ergaenzt
+    if (!m || m.lat == null || m.lon == null || !Array.isArray(rows)) return rows;
+    const planRows = rows.filter(r => r && r.status === "PLANNED");
+    if (!planRows.length) return rows;
+    const srcs = [];
+    if (rsInSH(m)) {   // delfiproxy: Fehler/warm/leer = still nur gtfsproxy (kein Beitrag)
+      const dAt = await rsDelfiFetch(m).catch(() => null);
+      if (dAt && dAt.length) srcs.push({ tag: "delfi", at: dAt });
+    }
+    const gAt = await rsGtfsFetch(m).catch(() => null);
+    if (gAt && gAt.length) srcs.push({ tag: "gtf", at: gAt });
+    if (!srcs.length) return rows;
+    for (const r of planRows) {
+      const lf = rsFold(r.line);
+      let d = null, tag = null;
+      for (const s of srcs) {
+        d = rsDelayFor(s.at, lf, hhmmToMin(r.plannedTime));
+        if (d != null) { tag = s.tag; break; }   // erste Quelle mit Treffer gewinnt
+      }
+      if (d == null || Math.abs(d) < GTFS_MIN_DELAY_S) continue;
+      r.gDelay = d;   // Sekunden, negativ = frueher; Uhrzeit und Countdown rechnen es ein
+      r.gSrc = tag;   // v1.5.3: Chip zeigt die Quelle (DELFI- oder gtfs.de-Realtime)
+      r.actualRelativeTime = (r.actualRelativeTime || 0) + d;
+    }
+    rows.sort((a, b) => (a.actualRelativeTime || 0) - (b.actualRelativeTime || 0));
+    return rows;
+  } catch (e) { return rows; }
+}
+async function rsGetDepartures(sn) {   // Facelift-System: regional zuerst, sonst nah.sh-Fallback
+  const m = remoteStops.get(sn);
+  if (!m || !m.lid) return null;
+  let rows = null;
+  try {
+    if (m.svc === "vbb") rows = await rsDepsVBB(m);
+    else if (m.svc === "vvs") rows = await rsDepsVVS(m);
+    else if (m.svc === "mvv") rows = await rsDepsMVV(m);
+    else if (m.svc === "dvb") rows = await rsDepsDVB(m);
+  } catch (e) { rows = null; }
+  if (!rows) { try { rows = await rsDepsNahsh(m); } catch (e) { rows = null; } }
+  if (rows && rows.some(r => r && r.status === "PLANNED"))
+
+    try { rows = await rsOverlayGtfs(m, rows); } catch (e) { /* Overlay ist zusaetzlich, nie kritisch */ }
+  return rows;
+}
+/* v1.5.2 REMDEP-GTFS-END */
+/* REMDEP-END */
+// Fahrtverlauf einer Zugfahrt inkl. Soll/Ist je Station (direkt aus JourneyDetails)
+async function dbTrip(tripId, depTime, kvgPlanned) {
+  try {
+    const res = await dbFetch([{ meth: "JourneyDetails", req: { jid: tripId } }]);
+    const out = res.svcResL && res.svcResL[0] && res.svcResL[0].res;
+    const j = out && out.journey;
+    if (!j || !j.stopL) throw new Error("no journey");
+    const locL = (out.common && out.common.locL) || [];
+    const prodL = (out.common && out.common.prodL) || [];
+    const prod = prodL[j.prodX] || {};
+    currentTrip.route = (prod.name || (kvgPlanned ? "Bus" : "DB")).trim();
+    currentTrip.direction = j.dirTxt || "";
+    // Geplante KVG-Fahrt: NAH.SH-Stationen (extId) auf bekannte KVG-Haltestellen
+    // abbilden – bekannte Stationen werden klickbar (neuer Reiter), GPS-Fortschritt
+    // und Wecker funktionieren. Die Zuordnung stammt aus dem NAH.SH-LID-Cache
+    // (nahshLocFor speichert je KVG-Station den LID inklusive extId „@L=…“).
+    let kvgExt = null;
+    if (kvgPlanned) {
+      kvgExt = {};
+      for (const ksn in nahshLocCache) {
+        const m = nahshLocCache[ksn] && nahshLocCache[ksn].lid
+          ? String(nahshLocCache[ksn].lid).match(/@L=(\d+)/) : null;
+        if (m && !kvgExt[m[1]]) kvgExt[m[1]] = ksn;
+      }
+    }
+    // Startindex bestimmen: die zur angeklickten Abfahrt passende Station+durchgang.
+    // JourneyDetails liefert den GANZEN Tageslauf der Fahrt; bei SEV-Schleifen
+    // steht dieselbe Haltestelle mehrfach darin. Gesucht ist der Durchgang, dessen
+    // geplante Zeit der Abfahrtszeit aus der Liste entspricht.
+    // Achtung: die extId in JourneyDetails (z.B. 4940199) weicht von unserer
+    // Stations-ID (z.B. DB:9049079) ab -> zusätzlich per Name vergleichen.
+    const stExt = String(currentTrip.sn || "").indexOf("DB:") === 0 ? String(currentTrip.sn).slice(3) : ""; // "DB:<extId>" -> extId (geplante KVG-Fahrten: nur Namensvergleich)
+    const stStop = stops.find(s => s.shortName === currentTrip.sn);
+    const stName = stStop ? String(stStop.name || "").replace(/\s*\(DB\)\s*$/, "").trim() : "";
+    const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+    const stN = norm(stName);
+    const isSt = p => {
+      const loc = locL[p.locX] || {};
+      if (String(loc.extId || "") === stExt) return true;
+      if (!stN || stN.length < 6) return false;
+      const n = norm(loc.name);
+      return (n && (n.indexOf(stN) === 0 || stN.indexOf(n) === 0)) ||
+             (n.length >= 6 && (n.indexOf(stN) >= 0 || stN.indexOf(n) >= 0));
+    };
+    const wantHHMM = depTime ? depTime.replace(":", "") : null; // "HHMM"
+    let start = -1, firstHit = -1;
+    for (let i = 0; i < j.stopL.length; i++) {
+      const p = j.stopL[i];
+      if (!isSt(p)) continue;
+      if (firstHit < 0) firstHit = i;
+      const tS = p.dTimeS ? (String(p.dTimeS).length > 6 ? String(p.dTimeS).slice(-6) : String(p.dTimeS)) : "";
+      if (wantHHMM && tS.slice(0, 4) === wantHHMM) { start = i; break; }
+    }
+    if (start < 0) start = (firstHit < 0) ? 0 : firstHit;
+    currentTrip.startIdx = start;   // angeklickte Station (SEV-Schleifen: eindeutiger Durchgang)
+    currentTrip.fromIdx = start;    // Standardansicht des Verlaufs beginnt hier (s. tripSectionHTML)
+    currentTrip.stops = j.stopL.map((p, k) => {   // ganzer Lauf: Abfahrts- bis Endstation
+      const idx = k;
+      const loc = locL[p.locX] || {};
+      const key = tripId + "#" + idx;
+      // Endstation hat keine Abfahrtszeit -> Ankunftszeit (aTimeS/aTimeR) anzeigen
+      const isArr = !p.dTimeS && !!p.aTimeS;
+      const planned = dbHHMM(p.dTimeS || p.aTimeS);
+      const actual = dbHHMM(p.dTimeR || p.dTimeS || p.aTimeR || p.aTimeS);
+      const [ph, pm] = (planned || "").split(":").map(Number);
+      const [ah, am] = (actual || "").split(":").map(Number);
+      currentTrip.delay[key] = {
+        plannedTime: planned, actualTime: actual,
+        delayMin: (isFinite(ph) && isFinite(pm) && isFinite(ah) && isFinite(am))
+          ? (ah * 60 + am) - (ph * 60 + pm) : null,
+        ts: Date.now()
+      };
+      // geplante KVG-Fahrt: extId auf KVG-Station abbilden (klickbar, GPS, Wecker),
+      // unbekannte Stationen (außerhalb des KVG-Bereichs / LID nicht im Cache)
+      // bekommen die NAH.SH-Kennung – reine Anzeige, kein Klick.
+      let snOut;
+      if (kvgExt && kvgExt[String(loc.extId || "")]) snOut = kvgExt[String(loc.extId || "")];
+      else snOut = loc.extId ? (kvgPlanned ? "NAH:" + loc.extId : "DB:" + loc.extId)
+                             : (kvgPlanned ? "NAH:x" + idx : "DB:x" + idx);
+      const kvgStop = kvgExt && kvgExt[String(loc.extId || "")]
+        ? stops.find(x => x.shortName === kvgExt[String(loc.extId || "")]) : null;
+      return {
+        shortName: snOut,
+        name: (kvgStop && kvgStop.name) || loc.name || "?", time: actual, isArr,
+        // eigene Koordinaten je Station (v1.3.12): Damit der blaue Leuchtpunkt
+        // und die 50-m-Fortschritt-Logik auch in NAH.SH-Laeufen (Zuege und
+        // geplante KVG-Fahrten) kontinuierlich laufen koennen, und zwar ueber
+        // JEDE Station, nicht nur ueber die bekannten DB-Bahnhoefe.
+        lat: (loc.crd && loc.crd.y != null) ? loc.crd.y / 1e6 : null,
+        lon: (loc.crd && loc.crd.x != null) ? loc.crd.x / 1e6 : null,
+        status: (p.dTimeR || p.aTimeR) ? "PREDICTED" : "PLANNED",
+        seq: idx, key
+      };
+    });
+    currentTrip.loading = false;
+  } catch (e) {
+    currentTrip.loading = false;
+    currentTrip.error = true;
+  }
+}
+
+// ---------- Abfahrtsdaten ----------
+const depCache = new Map(); // sn -> deps (bis globaler Reset)
+async function getDepartures(sn) {
+  if (depCache.has(sn)) return depCache.get(sn);
+  if (isRS(sn)) {   // v1.5.0: Fern-Station: regionaler Live-Dienst, sonst nah.sh-Fallback
+    const deps = await rsGetDepartures(sn);
+    if (deps) { depCache.set(sn, deps); return deps; }
+    return null;
+  }
+  if (isDB(sn)) {
+    try {
+      const r = await dbDepartures(sn);
+      if (!r) return null;
+      depCache.set(sn, r.deps);
+      dbPlatformCache.set(sn, r.platforms);
+      return r.deps;
+    } catch (e) { return null; }
+  }
+  try {
+    const res = await apiFetch("kvg", DEPART_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "stop=" + encodeURIComponent(sn)
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const deps = (data.actual || []).map(d => ({
+      tripId: d.tripId, line: d.patternText, direction: d.direction,
+      plannedTime: d.plannedTime, actualTime: d.actualTime,
+      actualRelativeTime: d.actualRelativeTime, status: d.status,
+      alerts: d.generalAlerts || []
+    }));
+    depCache.set(sn, deps);
+    return deps;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---------- Sichtbarkeits-Steuerung ----------
+const stopViews = new Map(); // sn -> {stop, meters, fetchTs, deps, platforms, fetched, reloading}
+function viewOf(sn) {
+  if (!stopViews.has(sn)) {
+    const stop = stops.find(s => s.shortName === sn) ||
+      (isRS(sn) ? remoteStops.get(sn) : null);   // v1.5.0: Fern-Stationen im selben View-System
+    if (!stop) return null;
+    stopViews.set(sn, { stop, meters: null, fetchTs: 0, deps: null, platforms: null, fetched: false, reloading: false, error: false });
+  }
+  return stopViews.get(sn);
+}
+async function enrichRow(stop, force) {
+  const v = viewOf(stop.shortName);
+  if (!v) return;
+  if (!v.meters || force) {
+    const m = await walkMeters(stop);
+    if (m != null && (!v.meters || Math.abs(v.meters - m) / Math.max(v.meters, 1) > 0.15)) v.meters = m;
+    else if (m != null && !v.meters) v.meters = m;
+  }
+  if (!v.fetched) {
+    v.reloading = true;
+    try {
+      const [deps, platforms] = await Promise.all([getDepartures(stop.shortName), loadPlatforms(stop.shortName)]);
+      v.deps = deps; v.platforms = platforms;
+      v.fetched = !!deps; v.fetchTs = Date.now();
+      v.error = !deps;   // fehlgeschlagene Erst-Abfrage: Fehlerzustand statt „lädt ewig“
+    } catch (e) {
+      v.error = true;   // nie mit hängendem reloading zurückbleiben
+    } finally {
+      v.reloading = false;
+    }
+    // Vorab-Laden abgeschlossen: Auch das Stations-Panel nachziehen. Ohne das
+    // blieb der frisch geöffnete Reiter bei „Daten werden geladen …“ hängen,
+    // wenn die Zeile angeklickt wurde, während ihr Vorab-Lauf noch lief
+    // (refetchStop springt dann am reloading-Guard an und rendert nie selbst).
+    renderPanels();
+  }
+}
+
+function renderViews() {
+  if (sugBox.hidden) return;
+  for (const el of sugBox.querySelectorAll("div[data-sn]")) renderView(el.dataset.sn, el);
+}
+
+// Nur diese Station: neue Abfrage (Auto-Cooldown 15 s)
+async function refetchStop(sn, manual) {
+  const v = viewOf(sn);
+  if (!v) return;
+  const now = Date.now();
+  // Auto-Aktualisierung mit Cooldown, damit Soll/Ist laufend frisch bleiben
+  if (!manual && now - (v.lastAuto || 0) < 40000) return;
+  if (v.reloading) return;
+  v.lastAuto = now;
+  v.reloading = true;
+  renderViews();
+  depCache.delete(sn);
+  let deps = null, platforms = null, err = false;
+  try {
+    [deps, platforms] = await Promise.all([getDepartures(sn), loadPlatforms(sn)]);
+  } catch (e) { err = true; }
+  if (deps) {
+    v.deps = deps; v.platforms = platforms;
+    v.fetched = true; v.fetchTs = Date.now(); v.error = false;
+  } else {
+    // Fehlgeschlagene Abfrage (Netzwerk/API-Fehler, null statt Abfahrten):
+    // Zustand sauber aufräumen und als Fehler markieren – NIE im „lädt …“-
+    // Zustand hängen bleiben. Sonst bliebe der Reiter für immer leer und
+    // selbst ↻ könnte ihn nicht mehr füllen (Bug „leerer Stationsreiter“).
+    err = true;
+    v.fetchTs = Date.now();
+    if (!v.deps || !v.deps.length) { v.fetched = false; v.deps = null; v.platforms = null; }
+    // mit Altdaten: letzte Abfahrten bleiben sichtbar, Hinweis im Panel
+  }
+  v.error = err;
+  v.reloading = false;
+  renderViews();
+  renderPanels();
+}
+
+// ---------- „später“/„früher“: Abfahrtsliste seitenweise blättern ----------
+// „später“ (unten): je Klick sechs weitere Einträge. KVG-Busse: Das Live-Fenster
+// ist kurz (~25 min); geplante Abfahrten kommen aus dem NAH.SH-Fahrplan
+// (LocMatch + StationBoard, Zuordnung max. 150 m von der KVG-Haltestelle).
+// DB: Die Fahrplan-Einträge kommen bereits mit der Live-Abfrage (rund 10 h) –
+// „später“ schaltet je Klick sechs Einträge jenseits des 6-h-Fensters frei.
+// „früher“ (oben): je Klick sechs bereits abgefahrene Verbindungen über die
+// NAH.SH-Abfahrtstafel mit zurückliegender Anfragezeit (nur Planzeit).
+async function laterDeps(sn) {
+  const v = viewOf(sn);
+  if (!v) return;
+  v.moreOpen = true;
+  v.fwdShown = (v.fwdShown || 0) + 6;

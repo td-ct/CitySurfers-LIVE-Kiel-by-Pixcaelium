@@ -1,0 +1,35 @@
+name: index-assemble
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ ".build/RUN" ]
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Teile zusammenfuegen und md5 pruefen"
+        run: |
+          cat .build/part-* > index.html
+          WANT=$(head -n 1 .build/RUN)
+          HAVE=$(md5sum index.html | cut -d' ' -f1)
+          if [ "$WANT" != "$HAVE" ]; then
+            echo "md5 mismatch: want=$WANT have=$HAVE" >&2
+            exit 1
+          fi
+
+      - name: "index.html committen, .build aufraeumen"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git rm -r --cached .build > /dev/null
+          rm -rf .build
+          git add index.html
+          git commit -m "index.html: v1.6.38 (Fahrplan-Failsafe ueber delfirouting) [skip ci]"
+          git push origin HEAD:main

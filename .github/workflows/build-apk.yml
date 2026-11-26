@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths-ignore: [ ".build/**" ]
+  workflow_run:
+    workflows: ["index-assemble"]
+    types: [ completed ]
 
 jobs:
   apk:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
