@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  issues: write
 jobs:
   assemble:
     runs-on: ubuntu-latest
@@ -18,10 +19,22 @@ jobs:
           echo "$(cut -d' ' -f1 .build/RUN)  index.html" | md5sum -c -
 
       - name: Commit: index.html auf main, Teile weg
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "pixcaelium-ci"
-          git config user.email "actions@github.com"
-          git add index.html
-          git rm -r -f .build
-          git commit -m "v1.6.34: Fern-Stationen im Umkreis einer entfernten aktiven Adresse (rsAddrNear, LocMatch-Ortssuche, 30-km-Radius, Distanz-Sortierung in der Haltestellenliste)"
-          git push origin HEAD:main
+          set -x
+          { git config user.name "pixcaelium-ci"
+            git config user.email "actions@github.com"
+            git add index.html
+            git rm -r -f .build
+            git commit -m "v1.6.34: Fern-Stationen im Umkreis einer entfernten aktiven Adresse (rsAddrNear, LocMatch-Ortssuche, 30-km-Radius, Distanz-Sortierung in der Haltestellenliste)"
+            git push origin HEAD:main
+          } > /tmp/asm.log 2>&1
+          RC=$?
+          cat /tmp/asm.log
+          if [ $RC -ne 0 ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "index-assemble fehlgeschlagen" \
+              --body "$(head -c 5000 /tmp/asm.log)" || true
+          fi
+          exit $RC
