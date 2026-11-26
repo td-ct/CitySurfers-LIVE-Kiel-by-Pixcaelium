@@ -4281,9 +4281,13 @@ async function fetchAtDeps(sn) {
     if (isDB(sn)) { lid = (dbStopOf(sn) || {}).lid || null; mask = "31"; }
     else if (isRS(sn)) { lid = ((remoteStops.get(sn) || {}).lid) || null; mask = "511"; }
     else lid = await nahshLocFor(stop);
-    if (!lid) { v.atDeps = null; v.atErr = "Haltestelle im nah.sh-Fahrplan unbekannt."; }
-    else {
-      const raw = await nahshBoardEntries(lid, new Date(T - 60000), mask);
+    let raw = null, nahshErr = null;
+    if (lid) {
+      try { raw = await nahshBoardEntries(lid, new Date(T - 60000), mask); }
+      catch (e) { raw = null; nahshErr = e; }
+    }
+    if (raw && raw.length) {   // nah.sh hat geliefert (wie immer, mit Echtzeit)
+      v.atSrc = "nah.sh";
       v.atDeps = raw.filter(e => e.absMs >= T - 60000)
         .sort((a, b) => a.absMs - b.absMs).slice(0, 40).map(e => {
           const now = Date.now();
@@ -4296,6 +4300,34 @@ async function fetchAtDeps(sn) {
           };
         });
       v.atErr = null;
+    } else {   // v1.6.38: leeres/gescheitertes nah.sh-Board -> delfirouting-Failsafe
+      const dayD = new Date(T); dayD.setHours(0, 0, 0, 0);
+      const dayMs = dayD.getTime();
+      const tD = new Date(Math.max(T - 60000, dayMs)), p2 = x => String(x).padStart(2, "0");
+      const tHM = p2(tD.getHours()) + ":" + p2(tD.getMinutes());
+      const dur = Math.max(15, Math.ceil((T + 150 * 60000 - tD.getTime()) / 60000));
+      let deps = null;
+      try { deps = await packDfrEntries(stop, dayMs, tHM, dur); }
+      catch (e) { deps = null; }
+      if (deps) {
+        v.atSrc = "delfirouting";
+        v.atDeps = deps.filter(e => e.depMin != null && e.depMin < 1440 &&
+            dayMs + e.depMin * 60000 >= T - 60000)
+          .sort((a, b) => a.depMin - b.depMin).slice(0, 40).map(e => {
+            const now = Date.now(), ms = dayMs + e.depMin * 60000;
+            return {
+              tripId: "dfr:" + e.trip + ":" + e.seq, line: e.line, direction: e.dir,
+              plannedTime: e.t, actualTime: e.depRT || e.t,
+              status: e.dly != null ? "PREDICTED" : "PLANNED",
+              actualRelativeTime: (ms - now) / 1000,
+              absMs: ms, plat: null, alerts: []
+            };
+          });
+        v.atErr = null;
+      } else {   // beide Kataloge scheiterten: Ursache von nah.sh weiterreichen
+        v.atDeps = null;
+        v.atErr = lid ? (nahshErr && nahshErr.message ? "Abfrage fehlgeschlagen (" + nahshErr.message + ")." : "Abfrage fehlgeschlagen (Netzwerk?).") : "Haltestelle im nah.sh-Fahrplan unbekannt.";
+      }
     }
   } catch (e) { v.atDeps = null; v.atErr = "Abfrage fehlgeschlagen (Netzwerk?)."; }
   v.atTs = Date.now();
@@ -4365,7 +4397,7 @@ function renderStationPanel() {
     else if (v.atErr)
       body += '<small class="rowinfo">⚠️ ' + escapeHtml(v.atErr) + ' ↻ oben oder „Jetzt“ und erneut wählen versucht es noch einmal.</small>';
     else if (!(v.atDeps || []).length)
-      body += '<small class="rowinfo dim">Keine Abfahrten ab ' + atLbl + ' gefunden (Fahrplan nah.sh).</small>';
+      body += '<small class="rowinfo dim">Keine Abfahrten ab ' + atLbl + ' gefunden (Fahrplan ' + escapeHtml(v.atSrc || "nah.sh") + ").</small>";
     else {
       body += '<small class="rowinfo dim">Abfahrten ab ' + atLbl + ' (Fahrplan, inklusive Echtzeit wo vorhanden):</small>';
       const tv = { stop: v.stop, meters: v.meters, fetchTs: Date.now(),
@@ -5447,40 +5479,125 @@ function packDiffMin(plan, act) {   // +X / -X Minuten zwischen zwei HH:MM (Mitt
 // (Richtung als Bevorzugung; passt keine Richtung, bleiben alle Eintraege der
 // Linie). Cache 6 h; der Ueberwacher frischt ungefragt alle 12 h auf.
 const packSchedCache = new Map();   // "sn|line|dir" -> { ts, days: [ [{t,ms}] x7 ], err }
+// v1.6.38: Fahrplan-Kataloge des Eichhoernchen-Alarms. Der Fahrplan (Mo-So)
+// und die Echtzeitpruefung laufen nicht mehr NUR ueber nah.sh, sondern ueber
+// eine wahlbare Quelle mit Fallback: nah.sh (HAFAS-StationBoard, Echtzeit im
+// nah.sh-Gebiet) und delfirouting (?dep=lat,lon des delfirouting.php auf
+// pixcaelium, v0.2.17: deutschlandweiter DELFI-Soll-Fahrplan fuer alle Tage
+// des Index, HEUTE zusaetzlich DELFI-Pool-Echtzeit). "Alle" misst beide
+// Fahrplane zu einem zusammen (Dedup nach Uhrzeit), die Pruefungskette legt
+// den Katalog des Fahrplans zuerst und laesst die andere Quelle als Fallback
+// hinterher (Timo-Wunsch 26.11.2026: dieselbe Auswahl wie im Route-Dialog).
+const PACK_SRC_NAME = { nahsh: "nah.sh", delfi: "delfirouting" };
+const PACK_SRCS = [
+  { id: "auto", label: "🌐 Alle",
+    title: "Fragt nah.sh UND delfirouting (eigener deutschlandweiter DELFI-Soll-Fahrplan auf pixcaelium) ab und misst beide Fahrplane zu einem: fehlt eine Verbindung in einem Katalog, liefert der andere. Die Echtzeitpruefung nutzt dieselben Quellen als Kette mit Fallback." },
+  { id: "nahsh", label: "nah.sh",
+    title: "Nah.sh-HAFAS wie die Abfahrtsliste, mit Echtzeit im nah.sh-Gebiet (ausserhalb oft leer); delfirouting springt bei der Pruefung als Fallback ein." },
+  { id: "delfi", label: "delfirouting",
+    title: "Eigener deutschlandweiter Soll-Fahrplan (delfirouting.php, DELFI-Daten, alle Wochentage), HEUTE mit Echtzeit aus dem DELFI-Pool; nah.sh bleibt Fallback der Pruefung." },
+];
+function packSrcName(id) { return PACK_SRC_NAME[id] || String(id || "?"); }
+function packSrcLabel(src) { return src === "nahsh" || src === "delfi" ? packSrcName(src) : "Alle (nah.sh + delfirouting)"; }
+function packSrcChain(src) {   // Fahrplan-Quellen je Katalog-Wahl des Alarms
+  if (src === "nahsh") return ["nahsh"];
+  if (src === "delfi") return ["delfi"];
+  return ["nahsh", "delfi"];
+}
+function packLiveChain(a) {   // Pruefungs-Kette: Fahrplan-Katalog zuerst, Rest als Fallback
+  const src = a.src || "auto";
+  if (src === "nahsh") return ["nahsh", "delfi"];
+  if (src === "delfi") return ["delfi", "nahsh"];
+  const used = (a.schedSrcs || []).filter(Boolean);
+  const out = [];
+  for (const s of used) if (out.indexOf(s) < 0) out.push(s);
+  for (const s of ["nahsh", "delfi"]) if (out.indexOf(s) < 0) out.push(s);
+  return out;
+}
+async function packDfrEntries(st, dayMs, tHM, durMin) {   // delfirouting ?dep=lat,lon (v0.2.17)
+  const u = drouteURL() + "dep=" + st.lat + "," + st.lon +
+    "&t=" + encodeURIComponent(tHM) + "&dur=" + durMin + "&day=" + packDateKey(dayMs) + "&limit=200";
+  const res = await apiFetch("delfi", u);
+  const j = await res.json().catch(() => null);
+  if (!j) throw new Error("delfirouting: Antwort nicht lesbar.");
+  if (!j.ok) throw new Error("delfirouting: " + (j.msg || j.code || "Fehler") + ".");
+  return (j.deps || []).map(e => ({
+    line: String(e.line || ""), dir: String(e.dir || ""), t: String(e.dep || ""),
+    depMin: e.depMin != null ? Number(e.depMin) : null,
+    dly: e.dly == null ? null : Number(e.dly),
+    depRT: e.depRT ? String(e.depRT) : null, trip: e.trip }));
+}
 function packDirMatch(want, have) {
   const a = String(want || "").toLowerCase().trim(), b = String(have || "").toLowerCase().trim();
   if (!a || !b) return false;
   return a.indexOf(b) >= 0 || b.indexOf(a) >= 0;
 }
+async function packSchedDayOfSrc(a, src, T) {   // v1.6.38: Fahrplan EINES Tages aus EINER Quelle
+  const ln = followNormLine(a.line);
+  const t0 = T.getTime(), t1 = t0 + 86400000;
+  if (src === "delfi") {
+    const st = packStopOf(a);
+    if (!st || st.lat == null || st.lon == null) throw new Error("Station ohne Koordinaten");
+    const deps = await packDfrEntries(st, t0, "00:00", 1440);
+    let hit = deps.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.dir));
+    if (!hit.length) hit = deps.filter(e => followNormLine(e.line) === ln);   // Richtung passt nicht: alle der Linie
+    hit = hit.filter(e => e.depMin != null && e.depMin < 1440);   // gleiche Kalendertag-Logik wie nah.sh
+    hit.sort((x, y) => x.depMin - y.depMin);
+    return hit.map(e => ({ t: e.t, ms: t0 + e.depMin * 60000 }));
+  }
+  const lid = await packLidOf(a);
+  if (!lid) throw new Error("Station nicht in nah.sh gefunden");
+  const entries = await nahshBoardEntries(lid, T, 511);
+  let hit = entries.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.direction));
+  if (!hit.length) hit = entries.filter(e => followNormLine(e.line) === ln);   // Richtung passt nicht: alle der Linie
+  hit = hit.filter(e => e.absMs >= t0 && e.absMs < t1);
+  hit.sort((x, y) => x.absMs - y.absMs);
+  return hit.map(e => {
+    const d = new Date(e.absMs);
+    return { t: String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"), ms: e.absMs };
+  });
+}
 async function packSchedOf(a, force) {
-  const key = a.sn + "|" + a.line + "|" + (a.dir || "");
+  const src = a.src || "auto";
+  const key = a.sn + "|" + a.line + "|" + (a.dir || "") + "|" + src;
   const c = packSchedCache.get(key);
   if (!force && c && Date.now() - c.ts < 6 * 3600000 && !c.err) return c;
-  const lid = await packLidOf(a);
-  if (!lid) { const e = { ts: Date.now(), days: null, err: "Station nicht in nah.sh gefunden" };
-    packSchedCache.set(key, e); return e; }
   const nowD = new Date(), today = packDayIdx(nowD);
-  const days = [];
+  const Td = [];
   for (let i = 0; i < 7; i++) {
     const k = (i - today + 7) % 7;
-    const T = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + k, 0, 0, 0);
-    let list = [];
-    try {
-      const entries = await nahshBoardEntries(lid, T, 511);
-      const ln = followNormLine(a.line);
-      let hit = entries.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.direction));
-      if (!hit.length) hit = entries.filter(e => followNormLine(e.line) === ln);   // Richtung passt nicht: alle der Linie
-      const t0 = T.getTime(), t1 = t0 + 86400000;
-      hit = hit.filter(e => e.absMs >= t0 && e.absMs < t1);
-      hit.sort((x, y) => x.absMs - y.absMs);
-      list = hit.map(e => {
-        const d = new Date(e.absMs);
-        return { t: String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"), ms: e.absMs };
-      });
-    } catch (err) { throw err; }
-    days.push(list);
+    Td[i] = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + k, 0, 0, 0);
   }
-  const res = { ts: Date.now(), days: days, err: null };
+  const chain = packSrcChain(src);
+  const perSrc = {};   // src -> [ [ {t,ms} ] x7 ] | null (Quelle gescheitert)
+  let lastErr = null;
+  for (const s of chain) {
+    try {
+      const days = [];
+      for (let i = 0; i < 7; i++) days.push(await packSchedDayOfSrc(a, s, Td[i]));
+      perSrc[s] = days;
+    } catch (err) { perSrc[s] = null; lastErr = err; }
+  }
+  const anyUp = chain.some(s => perSrc[s]);   // mindestens eine Quelle antwortete
+  if (!anyUp) { const e = { ts: Date.now(), days: null, err: "Fahrplanabfrage fehlgeschlagen (" +
+      chain.map(packSrcName).join(" und ") + "): " + (lastErr && lastErr.message ? lastErr.message : "Netzwerk?") };
+    packSchedCache.set(key, e); return e; }
+  const used = [];   // v1.6.38: Quellen mit mindestens einer Abfahrt (fuettert die Pruefungs-Kette)
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const map = new Map();   // Dedup nach HH:MM ueber alle Quellen
+    for (const s of chain) {
+      const d = perSrc[s];
+      if (!d || !d[i] || !d[i].length) continue;
+      if (used.indexOf(s) < 0) used.push(s);
+      for (const e of d[i]) if (!map.has(e.t)) map.set(e.t, e);
+    }
+    days.push(Array.from(map.values()).sort((x, y) => x.ms - y.ms));
+  }
+  const res = { ts: Date.now(), days: days, err: null,
+    srcTxt: used.length ? used.map(packSrcName).join(" + ") : chain.map(packSrcName).join(" + "),
+    srcs: used };
+  a.schedSrcs = used;   // Live-Kette: Katalog des Fahrplans zuerst (bei Alle: die, die lieferten)
   packSchedCache.set(key, res);
   return res;
 }
@@ -5568,43 +5685,89 @@ function firePack(a, txt) {
   renderTabs();
   renderAlarmInd();
 }
-// Eine Pruefung des naechsten Vorkommens: Echtzeit-Board um die Abfahrt,
-// Abgleich mit der Planzeit; Verspaetung >= 1 min oder Ausfall -> Alarm.
-async function packCheck(a) {
-  const occ = packNextOcc(a);
-  a.lastCheck = Date.now();
-  if (!occ) return;
+// Eine Pruefung des naechsten Vorkommens, v1.6.38: als KETTE ueber die
+// Kataloge des Alarms (Fahrplan-Katalog zuerst, andere als Fallback): je
+// Quelle Echtzeit-Board um die Abfahrt, Abgleich mit der Planzeit; erste
+// belastbare Antwort gewinnt (Verspätung > Echtzeit-pünktlich > Ausfall >
+// nur Soll), keine Quelle allein darf scheitern.
+async function packCheckSrc(a, occ, src) {   // -> {kind: delay|ok|gone|plan|none|err, txt}
+  const ln = followNormLine(a.line);
   try {
+    if (src === "delfi") {
+      const st = packStopOf(a);
+      if (!st || st.lat == null || st.lon == null) return { kind: "err", txt: "Station ohne Koordinaten (delfirouting)" };
+      const tStart = Math.max(occ.ms - 90 * 60000, occ.dayMs);   // Fenster bleibt im Zieldatum
+      const tD = new Date(tStart), p2 = x => String(x).padStart(2, "0");
+      const tHM = p2(tD.getHours()) + ":" + p2(tD.getMinutes());
+      const dur = Math.max(15, Math.ceil((occ.ms + 45 * 60000 - tStart) / 60000));
+      const deps = await packDfrEntries(st, occ.dayMs, tHM, dur);
+      let hit = deps.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.dir));
+      if (!hit.length) hit = deps.filter(e => followNormLine(e.line) === ln);
+      const trip = hit.find(e => e.depMin != null && Math.abs(occ.dayMs + e.depMin * 60000 - occ.ms) <= 2 * 60000);
+      if (trip) {
+        if (trip.dly != null && trip.dly >= 1)
+          return { kind: "delay", txt: "Verspätung +" + trip.dly + " min: Abfahrt jetzt ca. " + (trip.depRT || occ.t) + " Uhr." };
+        if (trip.dly != null)
+          return { kind: "ok", txt: "pünktlich laut DELFI-Echtzeit: Abfahrt " + occ.t + " Uhr an " + (a.name || a.sn) + "." };
+        return { kind: "plan", txt: "Abfahrt " + occ.t + " Uhr steht im delfirouting-Fahrplan (ohne Echtzeit-Angabe)." };
+      }
+      const near = hit.filter(e => e.depMin != null && Math.abs(occ.dayMs + e.depMin * 60000 - occ.ms) <= 45 * 60000);
+      if (hit.length)
+        return { kind: "gone", txt: "Verbindung fällt aus: keine Abfahrt Linie " + a.line + " um " + occ.t + " Uhr" +
+          (near.length ? " (die Linie fährt um " + near[0].t + " Uhr)" : "") + "." };
+      return { kind: "none", txt: "Linie " + a.line + " um " + occ.t + " Uhr nicht im delfirouting-Board gefunden" };
+    }
     const lid = await packLidOf(a);
-    if (!lid) { packMsgSet(a, "⚠ Station nicht in nah.sh auflösbar – Prüfung nicht möglich."); return; }
+    if (!lid) return { kind: "err", txt: "Station nicht in nah.sh auflösbar" };
     const entries = await nahshBoardEntries(lid, new Date(occ.ms - 90 * 60000), 511);
-    const ln = followNormLine(a.line);
     let hit = entries.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.direction));
     if (!hit.length) hit = entries.filter(e => followNormLine(e.line) === ln);
     const trip = hit.find(e => Math.abs(e.absMs - occ.ms) <= 2 * 60000);
     if (trip) {
       const dly = trip.hasRT ? packDiffMin(trip.plannedTime, trip.actualTime) : null;
-      if (dly != null && dly >= 1) {
-        if (a.firedFor !== occ.key) { a.firedFor = occ.key; savePackAlarms(); firePack(a, "Verspätung +" + dly + " min: Abfahrt jetzt ca. " + trip.actualTime + " Uhr."); }
-        else packMsgSet(a, "🚨 Verspätung +" + dly + " min (bereits gemeldet).");
-        return;
-      }
-      packMsgSet(a, "✓ pünktlich: Abfahrt " + occ.t + " Uhr an " + (a.name || a.sn) + " geprüft " +
-        new Date().toTimeString().slice(0, 5) + ".");
-    } else {
-      const near = hit.filter(e => Math.abs(e.absMs - occ.ms) <= 45 * 60000);
-      if (hit.length) {
-        if (a.firedFor !== occ.key) { a.firedFor = occ.key; savePackAlarms();
-          firePack(a, "Verbindung fällt aus: keine Abfahrt Linie " + a.line + " um " + occ.t + " Uhr" +
-            (near.length ? " (die Linie fährt um " + near[0].plannedTime + " Uhr)" : "") + "."); }
-        else packMsgSet(a, "🚨 Verbindung fällt aus (bereits gemeldet).");
-      } else {
-        packMsgSet(a, "⚠ Linie " + a.line + " um " + occ.t + " Uhr nicht im Board gefunden – Fahrplan prüfen.");
-      }
+      if (dly != null && dly >= 1)
+        return { kind: "delay", txt: "Verspätung +" + dly + " min: Abfahrt jetzt ca. " + trip.actualTime + " Uhr." };
+      if (dly != null)
+        return { kind: "ok", txt: "pünktlich laut nah.sh-Echtzeit: Abfahrt " + occ.t + " Uhr an " + (a.name || a.sn) + "." };
+      return { kind: "plan", txt: "Abfahrt " + occ.t + " Uhr steht im nah.sh-Board (ohne Echtzeit-Angabe)." };
     }
+    const near = hit.filter(e => Math.abs(e.absMs - occ.ms) <= 45 * 60000);
+    if (hit.length)
+      return { kind: "gone", txt: "Verbindung fällt aus: keine Abfahrt Linie " + a.line + " um " + occ.t + " Uhr" +
+        (near.length ? " (die Linie fährt um " + near[0].plannedTime + " Uhr)" : "") + "." };
+    return { kind: "none", txt: "Linie " + a.line + " um " + occ.t + " Uhr nicht im nah.sh-Board gefunden" };
   } catch (err) {
-    packMsgSet(a, "⚠ Prüfung fehlgeschlagen (Netzwerk/nah.sh?) – nächste Prüfung folgt automatisch.");
+    return { kind: "err", txt: String(err && err.message ? err.message : err) };
   }
+}
+async function packCheck(a) {
+  const occ = packNextOcc(a);
+  a.lastCheck = Date.now();
+  if (!occ) return;
+  const chain = packLiveChain(a);
+  const all = [];
+  for (const s of chain) all.push(Object.assign({ src: s }, await packCheckSrc(a, occ, s)));
+  const stamp = new Date().toTimeString().slice(0, 5);
+  const delay = all.find(r => r.kind === "delay");
+  if (delay) {
+    if (a.firedFor !== occ.key) { a.firedFor = occ.key; savePackAlarms(); firePack(a, delay.txt); }
+    else packMsgSet(a, "🚨 " + delay.txt + " (bereits gemeldet).");
+    return;
+  }
+  const ok = all.find(r => r.kind === "ok");
+  if (ok) { packMsgSet(a, "✓ " + ok.txt + " – geprüft " + stamp + " (" + packSrcName(ok.src) + ")."); return; }
+  const gone = all.find(r => r.kind === "gone");
+  if (gone) {
+    if (a.firedFor !== occ.key) { a.firedFor = occ.key; savePackAlarms(); firePack(a, gone.txt); }
+    else packMsgSet(a, "🚨 " + gone.txt + " (bereits gemeldet).");
+    return;
+  }
+  const plan = all.find(r => r.kind === "plan");
+  if (plan) { packMsgSet(a, "✓ " + plan.txt + " – geprüft " + stamp + " (" + packSrcName(plan.src) + ")."); return; }
+  const err = all.find(r => r.kind === "err");
+  if (err) { packMsgSet(a, "⚠ " + err.txt + " – Prüfung nicht möglich, nächste Prüfung folgt automatisch."); return; }
+  packMsgSet(a, "⚠ Linie " + a.line + " um " + occ.t + " Uhr in " +
+    chain.map(packSrcName).join(" und ") + " nicht gefunden – Fahrplan prüfen.");
 }
 // Ticker: alle 20 s faellige Prüfungen + ungefragte Fahrplan-Auffrischung
 async function packTick() {
@@ -5664,6 +5827,7 @@ function openPackDlg(ctx, edit) {
     tone: a ? a.tone !== false : true,
     snd: a ? (a.snd || cfg.snd) : cfg.snd,
     vol: a ? (a.vol != null ? a.vol : cfg.vol) : cfg.vol,
+    src: a ? (a.src || "auto") : "auto",   // v1.6.38: Fahrplan-Katalog
     selIdx: [-1, -1, -1, -1, -1, -1, -1],   // Blatt-Index je Tag im Fahrplan
     selWarn: [false, false, false, false, false, false, false]   // gewaehlte Zeit liegt am Vortag
   };
@@ -5677,6 +5841,9 @@ function openPackDlg(ctx, edit) {
     '<div class="dtitle">🐿️ Regelmäßige Verbindung</div>' +
     '<div class="pkghead"><div class="pkgst">' + escapeHtml(cur.name || cur.sn) + "</div>" +
       '<div class="pkgline"><span class="dl blink">' + escapeHtml(cur.line) + "</span> -> " + escapeHtml(cur.dir || "?") + "</div></div>" +
+    '<div class="dlabel">Fahrplan-Katalog</div>' +
+    '<div class="achips">' + PACK_SRCS.map(s =>
+      chip("s", s.id, s.label, cur.src === s.id, s.title)).join("") + "</div>" +
     '<div class="pkgsched dim">Fahrplan Mo–So wird geladen …</div>' +
     '<div class="pkgtable"></div>' +
     '<div class="dlabel">Überwachen ab (vor der Abfahrt)</div>' +
@@ -5746,10 +5913,11 @@ function openPackDlg(ctx, edit) {
   async function loadSched(force) {
     try {
       schedEl.textContent = "Fahrplan Mo–So wird geladen …";
-      const sc = await packSchedOf({ sn: cur.sn, name: cur.name, line: cur.line, dir: cur.dir }, force);
+      const sc = await packSchedOf({ sn: cur.sn, name: cur.name, line: cur.line, dir: cur.dir, src: cur.src }, force);
       if (sc.err || !sc.days) { schedEl.textContent = "⚠ Fahrplanabfrage fehlgeschlagen: " + sc.err; return; }
       sched = sc;
-      schedEl.textContent = "Fahrplan " + new Date(sc.ts).toTimeString().slice(0, 5) + " Uhr (nah.sh, ◀/▶ blättert je Tag, ⚠ = Uhrzeit am Vortag):";
+      schedEl.textContent = "Fahrplan " + new Date(sc.ts).toTimeString().slice(0, 5) + " Uhr (" +
+        (sc.srcTxt || packSrcLabel(cur.src)) + ", ◀/▶ blättert je Tag, ⚠ = Uhrzeit am Vortag):";
       for (let i = 0; i < 7; i++) {
         cur.selIdx[i] = pickInitial(i, sc.days[i]);
         cur.selWarn[i] = false;
@@ -5771,6 +5939,15 @@ function openPackDlg(ctx, edit) {
     if (g && g.dataset.g === "w") {
       cur.win = Number(g.dataset.v);
       wrap.querySelectorAll('[data-g="w"]').forEach(x => x.classList.toggle("on", x === g));
+      return;
+    }
+    if (g && g.dataset.g === "s") {   // v1.6.38: Katalog-Wechsel laedt den Fahrplan neu
+      if (cur.src === g.dataset.v) return;
+      cur.src = g.dataset.v;
+      wrap.querySelectorAll('[data-g="s"]').forEach(x => x.classList.toggle("on", x === g));
+      sched = null;
+      renderRows();
+      loadSched(true);
       return;
     }
     const n = e.target.closest("[data-pkn]");
@@ -5819,7 +5996,8 @@ function openPackDlg(ctx, edit) {
         sn: cur.sn, name: cur.name, line: cur.line, dir: cur.dir,
         days: cur.days.slice(), on: cur.on.map((b, i) => !!(b && cur.days[i])),
         win: cur.win, vib: !!(vib && vib.checked), tone: !!(tone && tone.checked),
-        snd: snd ? snd.value : cfg.snd, vol: vol ? Number(vol.value) : cfg.vol
+        snd: snd ? snd.value : cfg.snd, vol: vol ? Number(vol.value) : cfg.vol,
+        src: cur.src, schedSrcs: null   // v1.6.38: Katalog-Wahl; Live-Kette fuellt packSchedOf
       });
       base.lastCheck = 0; base.firedFor = "";
       if (!a) packAlarms.push(base);
@@ -5827,7 +6005,8 @@ function openPackDlg(ctx, edit) {
       pkgMsgUpdate();
       setLocNote("🐿️ Eichhörnchen-Alarm " + (a ? "geändert" : "gesetzt") + ": Linie " + cur.line + " -> " + cur.dir +
         " an " + cur.name + ", Tage " + base.on.map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") +
-        ", überwacht ab " + (base.win >= 60 ? base.win / 60 + " h" : base.win + " min") + " vor Abfahrt.");
+        ", überwacht ab " + (base.win >= 60 ? base.win / 60 + " h" : base.win + " min") +
+        " vor Abfahrt, Fahrplan-Katalog " + packSrcLabel(cur.src) + ".");
       wrap.remove();
       packTick();
       return;
@@ -14832,7 +15011,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>CitySurfers LIVE - Mehr Treffer, Blättern an der Liste, ▶ statt Auto-Suche (v1.6.21):</b> Timos Wünsche vom 25.11.2026 abends: (1) Die Verbindungssuche zeigt normalerweise wieder <b>fünf bis sechs Routen</b>: Reicht die erste Suchausbeute dafür nicht (wenige erreichbare Verbindungen im JETZT-Modus), blättert die Suche automatisch weiter (bis zu vier zusätzliche Runden), bis mindestens sechs erreichbare Verbindungen stehen. (2) Über und unter der Ergebnisliste stehen die Blätter-Knöpfe <b>◀ Frühere</b> und <b>＋ Weitere</b>: Sie laden frühere bzw. spätere Verbindungen NACH und fügen sie sofort einsortiert in die bestehende Liste ein, ohne die bisherigen Ergebnisse neu zu laden; frisch nachgeladene Karten sind leicht bläulich hinterlegt. Während des Nachladens bleibt die Liste stehen und an der Knopf-Stelle erscheint kurz der Hinweis „Suche Verbindungen (… Router …)“. (3) Die Kontrollen oben lösen <b>keine Suche mehr von selbst</b> aus: Zubringer-Schalter (🚲/🛴 mit 🅛), Fahrrad-Tempo, Spar-Schwelle und ☂ Regenschirm ändern nur die Einstellung (☂ bewertet die fertige Liste sofort neu), gestartet wird grundsätzlich über den <b>▶-Knopf</b>. Der ▶-Knopf steht im Route-Reiter jetzt klar rechts am Ende der Kontroll-Reihe, im Routen-Dialog groß rechts unten, und der ☂-Haken ist im Dialog in die Zeit-Zeile gewandert (mit dem ▶ getauscht).");
   h += P("<b>CitySurfers LIVE - Router Alle (parallel) und kurze Verpasst-Hinweise (v1.6.22):</b> Timos Wünsche vom 25.11.2026 spät: (1) Der Router <b>Alle</b> (bisher 🤖 Auto) fragt jetzt <b>alle passenden Router gleichzeitig</b> ab - NAH.SH und VBB mit Echtzeit, delfirouting (Soll-Fahrplan, bundesweit) und die Zug-Verbindungen zwischen den nächstgelegenen Bahnhöfen. Dubletten (dieselbe Fahrt über zwei Router) fliegen raus, die gemeinsame Sortierung (⏱/🚀/🔁/⭐) bewertet alle Treffer gleich, und die Vielfalt-Auswahl zieht aus dem ganzen Pool die 10 Karten. Ein gescheiterter Router blockiert die anderen nicht mehr, und unter der Liste steht kurz, wie viele Treffer jeder Router beigesteuert hat. (2) Die Warnhinweise der gewählten Verbindung sind jetzt kurz und nicht mehr definitiv: Der rote Kasten sagt nur noch <b>Aufbruch ggf. verpasst!</b>, der grüne <b>Schon aufgebrochen: Der Zubringer ist erledigt, du wartet bereits an der Haltestelle</b>. Kam der grüne Hinweis, erscheint die Meldung „wird nicht mehr angeboten“ nicht mehr; erst wenn laut Uhr eine Abfahrt im Routenverlauf bereits abgefahren ist und das GPS noch davor steht, heißt es <b>Anschluss ggf. verpasst</b>.");
   h += P("<b>CitySurfers LIVE - Fern-Stationen um eine entfernte Adresse (v1.6.34):</b> Eine aktive Adresse im Haltestellensuchfeld sortiert die Liste ja nach Entfernung zur Adresse - lag die Adresse ausserhalb des Kieler Raums, standen darin trotzdem nur die heimischen Haltestellen (bei einer Hamburger Adresse also Kieler Stops ab 100 km), weil Fern-Stationen bislang nur bei Suchtext ab drei Buchstaben ueber die Haltestellensuche auftauchten. Jetzt laedt die App bei einer Adresse weiter als 15 km vom naechsten heimischen Haltestellenumfeld automatisch die Fern-Stationen im 30-km-Radius um die Adresse nach (Suche mit dem Ort aus dem Adresslabel beim Nah.sh-Ortsverzeichnis, gecacht fuer 10 Minuten) und mischt sie in die Liste ein: Sie sortieren mit nach Entfernung zur Adresse, der Hamburger Hauptbahnhof steht bei einer Hamburger Adresse also ganz oben, mit Luftlinien-Fussweg wie bei jeder Fern-Station. GPS-Positionen und Adressen im Kiel-Umfeld bleiben unveraendert, Fehler des Ortsverzeichnisses bleiben still (dann zeigt sich die gewohnte Liste)."); 
-  h += P("<b>CitySurfers LIVE - Datum- und Zeit-Auswahl der Abfahrten im Stationsreiter (v1.6.37):</b> Die Auswahl der Abfahrtszeit steht jetzt in einer EIGENEN Zeile unter der Kopfzeile des Stationsreiters, in der Reihenfolge: erst das Datum, dann die Uhrzeit, dann der „Jetzt“-Knopf (nur sichtbar, wenn Datum oder Zeit gesetzt sind) und ganz rechts der ↻-Aktualisieren-Knopf (der aus der Kopfzeile hierher gewandert ist). Standard ist beides leer = jetzt: Die Abfahrtenliste zeigt wie immer die Live-Abfahrten ab jetzt. Waehlt man nur eine Uhrzeit, gilt sie heute (mehr als 6 Stunden Vergangenheit = Folgetag); waehlt man ein Datum (mit oder ohne Uhrzeit - ohne Uhrzeit gilt die aktuelle Uhrzeit), gilt genau dieses Datum ohne Tagessprung; die Liste zeigt dann bis zu 40 Abfahrten ab genau diesem Zeitpunkt (nah.sh-Fahrplan mit Echtzeit, wo vorhanden; für vergangene Anker bleiben nur die noch nicht abgefahrenen sichtbar). „Jetzt“ oder beide Felder leeren stellt die normale Live-Ansicht wieder her. Die Auswahl gilt je Haltestelle, waehrend man in einem der Felder tippt pausiert das Neurendern (Eingabe behaelt Fokus), und Klicks in die Auswahlzeile klappen den Reiter nicht zu. Hinweis: Funktioniert die Abfrage nicht, pruefe die nah.sh-Erreichbarkeit - das Gate antwortet bei Stoerungen auf jede Anfrage mit einem internen Serverfehler, dann zeigt der Reiter den Netzwerk-Hinweis.");
+  h += P("<b>CitySurfers LIVE - Fahrplan-Kataloge des Eichhoernchen-Alarms (v1.6.38):</b> Der Fahrplan des Eichhoernchen-Alarms lief bisher NUR ueber nah.sh - an Fern-Stationen wie Hamburg Hbf fand er dort keine einzige Abfahrt (Timos Befund, Screenshot). Der Dialog bietet deshalb jetzt die Zeile <b>Fahrplan-Katalog</b> mit denselben Chips wie der Route-Dialog: <b>🌐 Alle</b> (Standard), <b>nah.sh</b> und <b>delfirouting</b>. Alle fragt beide Kataloge ab und misst die Fahrplane je Wochentag zu einem zusammen (Dedup nach Uhrzeit): fehlt eine Verbindung in einem Katalog, liefert der andere. delfirouting nutzt den neuen Abfahrts-Endpunkt des eigenen Routers auf pixcaelium (delfirouting.php, DELFI-Soll-Fahrplan, alle Wochentage des Index, deutschlandweit), nah.sh bleibt der HAFAS wie die Abfahrtsliste; die Kopfzeile des Fahrplans nennt die Quelle(n), die geliefert haben. Die laufende <b>Echtzeitpruefung</b> laeuft als Kette: Der Katalog des Fahrplans zuerst, die andere Quelle als Fallback (bei Alle: nah.sh zuerst, delfirouting danach), und die erste belastbare Antwort gewinnt - Echtzeit-Verspaetung vor Echtzeit-puenktlich, Ausfall vor reiner Soll-Bestaetigung. Jede Quelle darf einzeln stoeren, ohne dass die Pruefung scheitert; die Meldungen nennen die Quelle, die geantwortet hat. Bestehende Alarme bleiben ohne Umstellung auf Alle (nah.sh zuerst, delfirouting als Fallback). Die <b>Datum-/Zeit-Auswahl der Stationsreiter</b> (v1.6.37) faellt bei gescheiterter oder leerer nah.sh-Ausgabe ebenfalls auf das delfirouting-Board zurueck (Soll-Fahrplan, HEUTE mit DELFI-Echtzeit), der Hinweis unter der Liste nennt dann delfirouting als Quelle - scheitern beide, bleibt der bekannte Netzwerk-Hinweis."); h += P("<b>CitySurfers LIVE - Datum- und Zeit-Auswahl der Abfahrten im Stationsreiter (v1.6.37):</b> Die Auswahl der Abfahrtszeit steht jetzt in einer EIGENEN Zeile unter der Kopfzeile des Stationsreiters, in der Reihenfolge: erst das Datum, dann die Uhrzeit, dann der „Jetzt“-Knopf (nur sichtbar, wenn Datum oder Zeit gesetzt sind) und ganz rechts der ↻-Aktualisieren-Knopf (der aus der Kopfzeile hierher gewandert ist). Standard ist beides leer = jetzt: Die Abfahrtenliste zeigt wie immer die Live-Abfahrten ab jetzt. Waehlt man nur eine Uhrzeit, gilt sie heute (mehr als 6 Stunden Vergangenheit = Folgetag); waehlt man ein Datum (mit oder ohne Uhrzeit - ohne Uhrzeit gilt die aktuelle Uhrzeit), gilt genau dieses Datum ohne Tagessprung; die Liste zeigt dann bis zu 40 Abfahrten ab genau diesem Zeitpunkt (nah.sh-Fahrplan mit Echtzeit, wo vorhanden; für vergangene Anker bleiben nur die noch nicht abgefahrenen sichtbar). „Jetzt“ oder beide Felder leeren stellt die normale Live-Ansicht wieder her. Die Auswahl gilt je Haltestelle, waehrend man in einem der Felder tippt pausiert das Neurendern (Eingabe behaelt Fokus), und Klicks in die Auswahlzeile klappen den Reiter nicht zu. Hinweis: Funktioniert die Abfrage nicht, pruefe die nah.sh-Erreichbarkeit - das Gate antwortet bei Stoerungen auf jede Anfrage mit einem internen Serverfehler, dann zeigt der Reiter den Netzwerk-Hinweis.");
   h += P("<b>CitySurfers LIVE - Zeit-Auswahl der Abfahrten im Stationsreiter (v1.6.36):</b> In der Kopfzeile des Stationsreiters („Abfahrten: <Name>“, zwischen GPS-Knopf und ↻) steht eine kleine Uhrzeit-Auswahl plus - bei gesetzter Zeit - ein „Jetzt“-Knopf. Standard ist leer = jetzt: Die Abfahrtenliste zeigt wie immer die Live-Abfahrten ab jetzt. Waehlt man eine Uhrzeit (z.B. 17:30), laedt die App den nah.sh-Fahrplan ab genau dieser Zeit und zeigt die Abfahrten ab 17:30 Uhr als Liste (mit Echtzeit, wo nah.sh sie schon kennt; angezeigt werden die ab der gewaehlten Zeit noch nicht abgefahrenen Fahrten). Eine gewaehlte Zeit mehr als 6 Stunden in der Vergangenheit gilt als Folgetag (gleiche Regel wie bei den Folgefahrten). Der „Jetzt“-Knopf (oder die Zeit im Feld loeschen) stellt die normale Live-Ansicht ab jetzt wieder her. Die Zeit gilt je Haltestelle (jeder Reiter behaelt seine Auswahl), ↻ frischt auch die verankerte Liste auf, waehrend man im Feld tippt wird die Anzeige nicht neu aufgebaut (Eingabe behaelt Fokus). Fern-Stationen und DB-Stationen nutzen dieselbe Auswahl mit ihrer bekannten Haltestellen-Kennung und Produktmaske.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen-Fahrplan fuer Fern-Stationen/Zuege + drei eigene Android-Nachrichten (v1.6.35):</b> Der Eichhoernchen-Dialog fand fuer Fern-Stationen (z.B. Hamburg Hbf) und Zuege keine Fahrplanauskunft, weil er die Haltestelle per Namenssuche bei nah.sh neu aufloeste - die gespeicherte Haltestellen-Kennung (Lid) der Fern-Station wird jetzt direkt benutzt (wie seit v1.6.33 in der Fahrplan-Folgeliste), heimische KVG-Haltestellen laufen ueber denselben Pfad wie die Abfahrtsliste. Zweitens poppt das Eichhoernchen-Nachrichtenfenster nicht mehr bei jeder Pruef-Aktualisierung irgendwo auf: Es oeffnet sich nur noch, wenn ein Alarm neu ausloest, sonst laufen die Meldungen still mit - sichtbar ueber das 🐿️-Symbol (Ausklappliste mit der letzten Meldung je Alarm) und als eigene Android-System-Nachricht. Drittens hat jeder der drei Wecker-Typen jetzt seine EIGENE Android-Nachricht (⏰ Wecker gesamt, 🏠 Finde nach Hause, 🐿️ Eichhoernchen), jede regelmessig aktualisiert; Popup nur beim Ausloesen.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen in der Statusleiste + Fern-Stationen haengen nicht mehr (v1.6.33):</b> Das Eichhoernchen 🐿️ steht jetzt als drittes Symbol neben ⏰ und 🏠 in der Statusleiste oben: ohne gestellten Eichhoernchen-Alarm ausgegraut, ab einem Alarm in seiner Eichhoernchen-Farbe (Braunorange) mit Anzahl. Antippen zeigt die Liste aller Eichhoernchen-Alarme (Linie, Richtung, Tage, Station, naechste Abfahrt) - ✎ bearbeitet den Alarm im gewohnten Eichhoernchen-Dialog, ✗ loescht ihn, ein Antippen der Zeile oeffnet ebenfalls den Dialog. Zusaetzlich ein wichtiger Fix: Abfahrtstafeln von Fern-Stationen (z. B. Hamburg Hbf) liessen die App einfrieren - die Folgefahrten-Hinweise unter den Zeilen versuchten fuer Fern-Stationen einen Fahrplan-Abruf ohne gueltige Haltestellen-Kennung, der sofort fehlschlug, und der Fehler-Neuversuch lieferte ueber die Neu-Render-Kette den naechsten sofortigen Fehlversuch: eine Endlosschleife, die den Rechner dauerhaft beschaeftigte. Jetzt nutzen die Folgefahrten die bekannte Kennung der Fern-Station (alle Verkehrsmittel wie ihre Abfahrtstafel) und ein gescheiterter Abruf wird hoechstens einmal pro Minute erneut versucht - die Hinweise erscheinen dann auch fuer Fern-Stationen. Mit Fussweg-Pruefungen oder GPS hatte das Hängen nichts zu tun.");
@@ -17700,7 +17879,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.37 · Build: 26.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.38 · Build: 26.11.2026</div>
 </div>
 </body>
 </html>
