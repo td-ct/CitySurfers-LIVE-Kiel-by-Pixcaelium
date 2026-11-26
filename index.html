@@ -709,7 +709,13 @@
     border-radius: 999px; padding: 3px 8px; background: rgba(77,143,214,.12); }
   #fhInd::before { display: none; }
   #fhInd[hidden] { display: none; }
-  #alarmInd.empty, #fhInd.empty { color: #94a3b8; border-color: #334155;
+  /* 🐿️ Eichhörnchen-Alarm-Status (v1.6.33): gleiche Größe wie ⏰ und 🏠,
+     Normalfarbe = Eichhörnchen-Braunorange; ohne Alarme ausgegraut (wie ⏰/🏠) */
+  #pkgInd { --c: #d97706; color: #d97706; font-size: 1rem; border: 1px solid #92400e;
+    border-radius: 999px; padding: 3px 8px; background: rgba(217,119,6,.12); }
+  #pkgInd::before { display: none; }
+  #pkgInd[hidden] { display: none; }
+  #alarmInd.empty, #fhInd.empty, #pkgInd.empty { color: #94a3b8; border-color: #334155;
     background: transparent; filter: grayscale(1); opacity: 0.55; }
   #fhList { position: fixed; top: 42px; right: 12px; z-index: 52; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
@@ -718,8 +724,11 @@
   #alarmList { position: fixed; top: 42px; right: 12px; z-index: 52; background: #1e293b;
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
-  #alarmList .alrow, #fhList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
-  #alarmList .alrow:hover, #fhList .alrow:hover { background: #273449; border-radius: 6px; }
+  #pkgList { position: fixed; top: 42px; right: 12px; z-index: 52; background: #1e293b;
+    border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
+    min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
+  #alarmList .alrow, #fhList .alrow, #pkgList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  #alarmList .alrow:hover, #fhList .alrow:hover, #pkgList .alrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
     border-radius: 6px; padding: 2px 7px; font-size: 0.75rem; }
@@ -849,10 +858,12 @@
   <span class="accbar" id="accBar" hidden title=""><i></i><i></i><i></i><i></i><i></i></span>
   <button class="ind" id="alarmInd" title="Gestellte Wecker: Zahl = Anzahl, Klick zeigt die Weckerliste (anzeigen, deaktivieren, löschen)">⏰</button>
   <button class="ind" id="fhInd" title="Finde nach Hause: Zahl = aktive Hinweise, Klick zeigt die Hinweisliste; ausgegraut = gerade keine">🏠</button>
+  <button class="ind" id="pkgInd" title="Eichhörnchen-Alarme: Zahl = Anzahl, Klick zeigt die Liste deiner Eichhörnchen-Alarme (bearbeiten oder löschen); ausgegraut = gerade keiner gestellt">🐿️</button>
   <button class="ind ledbtn" id="ledStrip" aria-label="Datenquellen-LEDs: je Dienst eine kleine LED, blinkt beim Abruf; rotes Ausrufezeichen: trotz Versuchen keine Verbindung seit dem Zurücksetzen, gelbes: instabile Verbindung; antippen zeigt die Übertragungs-Statistik" title="Datenquellen-LEDs: jede kleine LED steht für einen Dienst (DELFI, nah.sh, gtfs.de, OSM, OSRM, VBB, VVS, MVV, DVB, Donkey, KVG) und blinkt, wenn er Daten liefert. Ein rotes ! über einer LED heißt: Dieser Dienst wurde seit dem letzten Zurücksetzen versucht, hatte aber noch keine einzige erfolgreiche Verbindung. Ein gelbes ! heißt: instabile Verbindung, Erfolge und Fehlversuche gemischt. Antippen klappt die Legende mit Kurzbezeichnung und Spezifikation je Dienst auf"></button>
 </div>
 <div id="alarmList" hidden></div>
 <div id="fhList" hidden></div>
+<div id="pkgList" hidden></div>
 <div id="apiStats" hidden></div>
 <div id="gpsDlg" hidden>
   <div class="accbox">
@@ -5209,6 +5220,7 @@ let packAlarms = [];
 try { packAlarms = JSON.parse(localStorage.getItem("kvg-packalarms") || "[]") || []; } catch (e) {}
 function savePackAlarms() {
   try { localStorage.setItem("kvg-packalarms", JSON.stringify(packAlarms)); } catch (e) {}
+  try { renderPkgInd(); } catch (e) {}   // v1.6.33: 🐿️-Symbol der Statusleiste mitführen
 }
 function packStopOf(a) {   // Stations-Objekt (KVG oder Fern-Station) zum Alarm
   return stops.find(s => s.shortName === a.sn) ||
@@ -7428,7 +7440,7 @@ function renderAlarmInd() {
 alarmInd.addEventListener("click", e => {
   e.stopPropagation();
   alarmList.hidden = !alarmList.hidden;
-  if (!alarmList.hidden) fhList.hidden = true;   // nur eine der beiden Info-Listen
+  if (!alarmList.hidden) { fhList.hidden = true; pkgList.hidden = true; }   // nur eine der Info-Listen
   renderAlarmInd();
 });
 document.addEventListener("click", e => {
@@ -7483,7 +7495,7 @@ function renderFhInd() {
 fhInd.addEventListener("click", e => {
   e.stopPropagation();
   fhList.hidden = !fhList.hidden;
-  if (!fhList.hidden) alarmList.hidden = true;   // nur eine der beiden Info-Listen
+  if (!fhList.hidden) { alarmList.hidden = true; pkgList.hidden = true; }   // nur eine der Info-Listen
   renderFhInd();
 });
 document.addEventListener("click", e => {
@@ -7513,6 +7525,74 @@ fhList.addEventListener("click", e => {
     }
     setLocNote("🏠 Finde-nach-Hause für „" + name + "“ gelöscht.");
     renderFhInd();   // Liste sofort ohne den gelöschten Eintrag neu aufbauen
+  }
+});
+
+// ---------- 🐿️ Eichhörnchen-Alarme in der Statusleiste (v1.6.33) ----------
+// Gleiche Mechanik wie ⏰ und 🏠: ausgegraut, solange kein Eichhörnchen-Alarm
+// gestellt ist; ab einem Alarm leuchtet das Symbol in seiner Eichhörnchen-
+// Farbe (Braunorange) und zeigt die Zahl. Klick zeigt die Liste aller
+// Eichhörnchen-Alarme (Linie, Richtung, Tage, Station, nächste Abfahrt);
+// ✎ öffnet den zugehörigen 🐿️-Dialog zum Bearbeiten, ✗ löscht den Alarm.
+function renderPkgInd() {
+  const n = packAlarms.length;
+  pkgInd.classList.toggle("empty", !n);
+  pkgInd.textContent = "🐿️" + (n ? " " + n : "");
+  if (pkgList.hidden) return;
+  if (!n) {
+    pkgList.innerHTML = '<div class="alrow"><span class="afsname dim">Keine Eichhörnchen-Alarme gestellt – 🐿️ an einer Abfahrtszeile im Stationsreiter setzt einen.</span></div>';
+    return;
+  }
+  pkgList.innerHTML = packAlarms.map(a => {
+    const days = (a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag";
+    const occ = packNextOcc(a);
+    const next = occ ? " · nächste: " + PACK_DAYS[occ.wd] + " " + occ.t : "";
+    return '<div class="alrow" data-pkrow="' + escapeHtml(a.id) + '" title="Eichhörnchen-Dialog zum Bearbeiten öffnen">' +
+      '<span class="afsname">🐿️ ' + escapeHtml(a.line) + " → " + escapeHtml(a.dir || "?") +
+      " · <b>" + escapeHtml((a.days || []).filter(Boolean)[0] || "?") + "</b> · " + escapeHtml(days) +
+      ' · <span class="dim">' + escapeHtml(a.name || a.sn) + escapeHtml(next) + "</span></span>" +
+      '<button class="afbtn" data-pkedit="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm bearbeiten (öffnet den 🐿️-Dialog)">✎</button>' +
+      '<button class="afbtn" data-pkdel="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm löschen">✗</button></div>';
+  }).join("");
+}
+pkgInd.addEventListener("click", e => {
+  e.stopPropagation();
+  pkgList.hidden = !pkgList.hidden;
+  if (!pkgList.hidden) { alarmList.hidden = true; fhList.hidden = true; }   // nur eine der Info-Listen
+  renderPkgInd();
+});
+document.addEventListener("click", e => {
+  if (!pkgList.hidden && !e.target.closest("#pkgList") && !e.target.closest("#pkgInd"))
+    pkgList.hidden = true;
+});
+pkgList.addEventListener("click", e => {
+  const edit = e.target.closest("[data-pkedit]");
+  if (edit) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === edit.dataset.pkedit);
+    if (a) openPackDlg(null, a);
+    return;
+  }
+  const del = e.target.closest("[data-pkdel]");
+  if (del) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === del.dataset.pkdel);
+    if (a) {
+      packAlarms = packAlarms.filter(x => x.id !== a.id);   // gleiche Kette wie im 🐿️-Dialog
+      stopRinging(a.id, true);
+      firedAlarms.delete(a.id);
+      savePackAlarms();
+      setLocNote("🐿️ Eichhörnchen-Alarm gelöscht: Linie " + a.line + " an " + (a.name || a.sn) + ".");
+      pkgMsgUpdate();
+      renderPkgInd();   // Liste sofort ohne den gelöschten Eintrag neu aufbauen
+    }
+    return;
+  }
+  const row = e.target.closest("[data-pkrow]");   // Zeile ohne Knopf antippen = bearbeiten
+  if (row) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === row.dataset.pkrow);
+    if (a) openPackDlg(null, a);
   }
 });
 alarmList.addEventListener("click", e => {
@@ -9001,6 +9081,7 @@ function busLinesHTML(v, horizonSec, withFollow) {
 // GEWÄHLTEN Route (jeweils an derselben Stelle: über der Kopfzeile).
 const FOLLOW_WIN_MS = 3 * 60 * 60 * 1000;     // Blick in die nächsten 3 Stunden
 const FOLLOW_CACHE_MS = 3 * 60 * 1000;         // Fahrplan ist ruhig: 3 Minuten Cache
+const FOLLOW_ERR_RETRY_MS = 60 * 1000;        // v1.6.33: nach einem Fetch-Fehler nur einmal pro Minute erneut (kein Endlos-Retry-Loop)
 const followCache = new Map();                 // key -> { ts, list, inflight, err }
 const followLocCache = new Map();              // Stationsname -> { ts, lid }   (NAH.SH-Lid)
 function followNormLine(l) {
@@ -9119,7 +9200,11 @@ function followHintHTML(key, fetchFn, anchorMs, exclTripId, dirHint, nowMs) {
   nowMs = nowMs || Date.now();
   let c = followCache.get(key) || null;
   const fresh = !!c && !c.inflight && !c.err && Date.now() - c.ts <= FOLLOW_CACHE_MS;
-  if (!fresh && (!c || !c.inflight)) {
+  // v1.6.33: Nach einem Fehler KEINEN sofortigen Neuversuch im selben Render-Tick -
+  // der Neuversuch lief über .finally -> renderPanels -> hier wieder Neuversuch als
+  // Endlosschleife (App-Freeze bei Fern-Stationen, deren Folgefahrten-Abruf fehlschlug).
+  const errHold = !!c && !c.inflight && !!c.err && Date.now() - c.ts < FOLLOW_ERR_RETRY_MS;
+  if (!fresh && !errHold && (!c || !c.inflight)) {
     const prev = c || { ts: 0, list: [] };
     prev.inflight = true;
     followCache.set(key, prev);
@@ -9152,6 +9237,10 @@ async function fetchTripFollow(sn, line, dirHint) {
     const d = dbStopOf(sn);
     lid = d && d.lid || null;
     mask = "31";
+  } else if (isRS(sn)) {   // v1.6.33: Fern-Station – Lid aus dem Reiter-System, alle Produkte wie ihre Abfahrtstafel
+    const m = remoteStops.get(sn);
+    lid = m && m.lid || null;
+    mask = "511";
   } else {
     const st = stops.find(s => s.shortName === sn);
     lid = st ? await nahshLocFor(st) : null;
@@ -14489,6 +14578,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>CitySurfers LIVE – On-Demand-Suche, Direktweg zuerst und ☂ Regenschirm (v1.6.12):</b> Die Verbindungssuche des Route-Reiters aktualisiert ihre Ergebnisse <b>NIE von selbst</b> – auch nicht bei laufender GPS-Quelle: Eine neue Suche läuft ausschließlich, wenn du den <b>▶-Knopf</b> drückst, ein Steuer-Element oben im Reiter änderst (Start/Ziel, Router, Zeit, Modus, Sortierung) oder den ↻-Knopf der gewählten Route antippst; zwischen den Suchen bleibt die Anzeige ruhig stehen. Oben im Route-Reiter stehen jetzt <b>alle Kontrollen des Route-Dialogs</b> direkt bereit: Start und Ziel (mit Auswahl-Dialogen, GPS-Übernahme, ✕ und ⇅ Tauschen samt NAH.SH-Abgleich), die Router-Chips, Abfahrt/Ankunft-Zeit, Produktfilter, Zubringer-Modus und der ☂-Haken – so lässt sich die gegebene Suche direkt verfeinern, ganz ohne den Dialog. Neu ist die <b>Direktweg-Karte</b>: Ein Fuß-, Rad- oder Rollerweg unter 5 Minuten zwischen Start und Ziel wird immer angeboten und ganz oben angezeigt; auch ein gegenüber jeder ÖPNV- und Mikromobilitäts-Verbindung schnellerer Direktweg steht ganz oben, die übrigen Verbindungen bleiben dahinter (v1.6.13: der Direktweg verdrängt nie die Liste). Das <b>☂-Regenschirm-Häkchen</b> minimiert darüber hinaus ganz allgemein die Zeit im Freien (außerhalb von ÖPNV und Bahn): Die Bewertung (⭐ Beste) zieht Fuß-, Rad- und Roller-Minuten dann stark herauf. Ohne ÖPNV-Treffer bleibt der Direktweg immer das letzte Angebot."); h += P("<b>CitySurfers LIVE – Leih-Modus-Direktweg mit Ausleih- und Rückgabestation (v1.6.13):</b> Timos Korrektur vom 24.11.2026 abends: (1) Der schnellere Direktweg steht zwar weiterhin ganz oben, aber er verdrängt die ÖPNV- und Mikromobilitäts-Liste nicht mehr – alle Verbindungen bleiben sichtbar und wählbar, der Hinweis über den Karten nennt nur noch die Reihenfolge. (2) Damit der Direktweg im Leih-Modus (🚲 Fahrrad oder 🛴 Roller) nicht vom Rad am Start ausgeht, das nie dort stand, rechnet er jetzt die echten Donkey-Stationen mit: Fußweg zur Ausleih-Station mit dem nächsten freien Fahrrad (je nach Ausleihe-Häkchen plus 2 Minuten Holen), Fahrt zur dem Ziel nächsten Rückgabestation (Radstrecke über OSRM gemessen, sonst Luftlinie × 1,3, Leihfahrrad 17, Leihroller 18 km/h) und Fußweg ans Ziel (plus 2 Minuten Abstellen). Steht gerade kein freies Fahrrad im Feed, bleibt als Direktweg der ehrliche Fußweg; sind die Leihrad-Daten nicht erreichbar, nennt der Fußweg-Hinweis das. Die Direktweg-Karte zeigt alle Beine wie eine normale Verbindung (öffnen als Unter-Reiter, Countdown, ＋ Weitere wirft sie nicht weg)."); h += P("<b>CitySurfers LIVE – Zusatz-Verbindungen ab der Haltestelle neben dir (v1.6.14):</b> Timos Befund vom 24.11.2026: Vom GPS-Start „Am Botanischen Garten 18“, nur rund 200 m von der Haltestelle Botanischer Garten entfernt, zeigte die Verbindungssuche auf einmal keine Fahrt mehr ab dieser Haltestelle. Ursache ist der NAH.SH-Router selbst: Ab etwa 150 m Abstand sammelt er nur noch Alternativen mit längeren Fußwegen zu entfernteren Haltestellen (weil deren Fahrten mit dem kürzeren Ziel-Weg rechnerisch früher ankommen) und liefert die nahen Einstiege schlicht nicht mit. Die App heilt das jetzt: Liegt der Start (Adresse oder GPS-Position) höchstens 300 m Luftlinie von einer KVG-Haltestelle, startet die Suche zusätzlich eine zweite Runde ab genau dieser Haltestelle und stellt jedem Treffer den Zubringer-Fußweg davor (Aufbruchzeit und Countdown entsprechend früher, Hinweis am Weg-Abschnitt nennt die Haltestelle). Dubletten fliegen vor dem Mischen raus (NAH.SH hat die Fahrt doch angeboten), und nur Treffer bis 25 Minuten nach der besten Verbindungsankunft nehmen teil (maximal 6 Stück). Nur im Fuß-Modus, nur bei Abfahrtssuche, nur beim Router Alle (früher Auto) oder NAH.SH."); h += P("<b>CitySurfers LIVE \u2013 delfirouting-Aufbruchzeiten, echte Bahnhöfe, zwei Zubringer-Schalter (v1.6.15):</b> Timos Befunde vom 24.11.2026, Screenshots \u201eAm Botanischen Garten → UKSH\u201c: (1) delfirouting übernahm als Abfahrtszeit die erste ÖPNV-Teilstrecke statt des echten Aufbruchs und rechnete die Dauer ohne Datum; die App rechnet jetzt selbst: Aufbruch = erste Fahrt minus vorangegangene Zubringer-Minuten, Ankunft = letzte Fahrt plus nachlaufende Zubringer, Dauer aus echten absoluten Zeiten mit Datum, und auch Fahrrad-/Roller-Beine erscheinen im Tempo der Schalter (eigen 15/20/25 km/h, Leihfahrrad 17 km/h inkl. 2 min Ausleihe, E-Bike 22 km/h, Roller 18 km/h inkl. 2 min). (2) Der Router \u201eBahnhöfe\u201c legte Start und Ziel per Adress-Text über LocMatch an zufällige Orte (\u201eKiel Kieler Straße\u201c); jetzt sucht die App per Umkreis um die Koordinate echte Schienen-Stationen (LocGeoPos, bevorzugt reine Bahnhöfe, keine Bushaltestellen) und filtert die Fahrten auf Schienenverkehr. (3) Der Drei-Modi-Schalter und das Ausleihe-Häkchen wichen den zwei getrennten Fahrrad-/Roller-Schaltern (Details im Zubringer-Schalter-Absatz); Donkey-Stationen rechnet der Direktweg nur noch im Leihfahrrad-Zustand ein."); h += P("<b>CitySurfers LIVE – GPS-ehrlicher Aufbruch-Hinweis, Strahl im Verlauf, VBB-Wunschzeit (v1.6.16):</b> Timos Screenshot vom 24.11.2026 abends (X60, 18:02 geplant, GPS-Punkt klar an der Haltestelle): (1) Der rote Warnkasten \u201eAufbruch verpasst\u201c zog bisher allein den Uhr-Vergleich, das GPS blieb unber\u00fccksichtigt. Jetzt pr\u00fcft er den echten Fortschritts-Zustand mit: Ist der Zubringer laut GPS-Rechnung erledigt oder stehst du bereits an der Einstiegs-Haltestelle, erscheint der gr\u00fcne Hinweis \u201eSchon aufgebrochen\u201c stattdessen, und auch der Countdown-Chip am Weg-Abschnitt meldet dann neutral \u201eunterwegs\u201c statt \u201eAufbruch verpasst\u201c. Rot bleibt der Kasten nur noch, wenn wirklich ohne Position gegen die Uhr verpasst wurde. (2) Im aufgeklappten Bus-/Bahn-Fahrtverlauf der gew\u00e4hlten Route l\u00e4uft jetzt ein eigener hellblauer Fortschritts-Strahl zwischen den Stations-Kreisen mit: Die Zeilen zeichnen eigene Leisten-Segmente \u00fcber der Abschnitts-F\u00fcllung, deshalb war der Strahl dort bisher unsichtbar, obwohl die Kreise blau wurden; er f\u00fcllt stationssynchron bis zur Punkt-Position, l\u00e4uft mit der GPS-Projektion auch r\u00fcckw\u00e4rts (v1.6.17: Die Spitze zeigt exakt die GPS-Projektion; die Zeit entscheidet nur noch in unsicheren F\u00e4llen.) (3) Der VBB-Dienst ignoriert den bisher gesendeten \u201ewhen\u201c-Parameter still und lieferte Verbindungen ab Server-Jetztzeit; die App fragt jetzt mit \u201edeparture\u201c und damit wirklich ab der gew\u00e4hlten Wunschzeit."); h += P("<b>CitySurfers LIVE – Exakte Strahl-Spitze und Route-Dialog-Reparatur (v1.6.17):</b> Timos Wünsche vom 24.11.2026 spät: (1) Die Spitze des hellblauen Fortschritts-Strahls zeigt jetzt <b>haargenau deine Position auf der Projektion deiner Route</b>, sowohl im Fahrtverlauf eines Stations-Reiters als auch im Gesamtfahrtverlauf einer gewählten Route: Die App berechnet die Abstände der aktuellen GPS-Position zu allen Stationen der Route, nimmt die zwei nächsten und legt die Strahl-Spitze genau dorthin, wie sich die Abstände zueinander verhalten, zwischen diesen beiden Stationen, mitlaufend vorwärts wie rückwärts. Die Zeit (Raum-Zeit-Prognose aus Live-Ist und beobachteter Verspätung) fließt nur noch in unsicheren Fällen ein, in denen die Geometrie nicht eindeutig ist: kein GPS-Signal, Position weit abseits der Route oder eine Strecke, die auf sich selbst zurückführt (derselbe Bus fährt denselben Weg zurück). In diesen Fällen läuft die Spitze zeitproportional; in allen anderen (<95 % der Fälle) entscheidet allein die Geometrie. Im Gesamtfahrtverlauf einer Route bleiben die Farben wie gewohnt: Fußwege (Zubringer) in Pink, Bus-/Bahn-Abschnitte in Hellblau, die Stations-Punkte leuchten weiter blau, nichts wird ausgegraut. (2) Reparatur: Beim \u00d6ffnen des Route-Dialogs erschien \u201eInterner Fehler: routeRain is not defined\u201c \u2013 der Regenschirm-Schalter (Zeit im Freien minimieren) hatte in der v1.6.16-Reparatur seine Deklaration verloren; der ☂-Haken funktioniert jetzt wieder, auch sein gespeicherter Zustand bleibt erhalten."); h += P("<b>CitySurfers LIVE – Vielfaeltige Verbindungssuche und Sortier-Block (v1.6.18):</b> Timos Wuensche vom 24.11.2026 nachts: (1) Die Verbindungssuche sammelt jetzt <b>mindestens 10 verschiedene Verbindungen</b> mit echter Vielfalt statt dreier Varianten desselben Busses: Sie blaettert so lange weiter, bis die Ergebnisliste neben der Zielzahl auch mindestens <b>drei verschiedene erste Fahrten</b> (Einstiege) enthaelt, und waehlt aus der Suchausbeute die 10 Angebotenen so, dass je Sortierart (⏱ Ankunft, 🚀 Fahrzeit, 🔁 Umstiege, ⭐ Beste) die jeweils zwei besten dastehen und die Einstiege reihum ueber verschiedene erste Fahrten verteilt sind. (2) Damit naehere Einstiege nicht hinter einem einzigen weit entfernten Bus verschwinden, Sucht die App jetzt von den <b>bis zu drei naechsten Haltestellen</b> neben dem Start jeweils gesondert (bis zu drei Treffer je Station, hoechstens 6 gesamt); und in duennen Ergebnissen (spaete Stunden, weniger als 10 Treffer) weitet sich das Toleranzfenster von 25 auf 75 Minuten aus, damit spaehere und dafuer viel naehere Verbindungen gegen den einzigen 12-Minuten-Fussweg-Bus gewinnen, gerade auch im ☂-Modus. (3) Die vier Sortier-Knoepfe sind <b>nur Sortierregeln</b>: Sie sortieren die fertige Liste sofort neu, ohne eine neue Suche zu starten (so war es technisch schon, jetzt auch sichtbar). Als eigener Block <b>\u201eSortierung\u201e</b> stehen sie direkt ueber der Ergebnisliste, unterhalb der Such-Steuerung."); h += P("<b>CitySurfers LIVE - Fahrrad- und Roller-Beine auf allen Routern + Scooter-App-Deep-Links (v1.6.19):</b> Timos Befund vom 25.11.2026: Mit aktiviertem Fahrrad- oder Roller-Schalter blieben alle Zubringer und Umstiege Fusswege, NAH.SH plant solche Beine naemlich nur zu Fuss (getIV liefert nur reine Ganzstrecken-Varianten, keinen gemischten Bike-Zubringer, im Live-Test geprueft). Die App rechnet deshalb jetzt bei JEDEM Router (NAH.SH, VBB, delfirouting, Bahnhof-Zug-Routing) die Fuss-Beine selbst um: Ab mehr als 7 Gehminuten Strecke wird der Weg zum Fahrrad- oder Roller-Bein mit App-Tempo (eigenes Fahrrad 15/20/25 km/h, Leihfahrrad 17 km/h, Roller 18 km/h, im Leih-Zustand jeweils inklusive 2 Minuten Holen und Abstellen - die zwei Minuten sind damit auch bei den neuen Rollern ueberall mitgerechnet), kuerzere Wege bleiben ehrlich zu Fuss. Der erste Zubringer verschiebt die Aufbruchzeit nach hinten (schneller = spaeter los), der letzte bringt eine fruehere Ankunft, und in der MITTE bleibt die Bus- oder Bahnzeit fest: dort waechst der Umstiegs-Puffer. Bei der Bahnhof-Abfrage gilt dasselbe, auch dort zaehlen lange Umstiege jetzt im gewaehlten Modus. Und die Links der Leihrroller-Anbieter (Voi, Dott, Bolt) sind keine Webseiten-Links mehr: Auf dem Handy oeffnen sie per intent-Link direkt die jeweilige App, fehlt die App, oeffnet der Link ihre Play-Store-Seite; die Android-App der CitySurfers reicht die intent-Links ans System weiter. Die Links stehen jetzt NUR im Unter-Reiter einer gewaehlten Verbindung mit Roller-Bein (Leih-Modus), nicht mehr an jeder Karte der Verbindungssuche."); h += P("<b>CitySurfers LIVE - JETZT-Modus und Erreichbarkeit der Ergebnisse (v1.6.20):</b> Timos Befund vom 25.11.2026: Eine Suche mit zurueckliegender Zeit endete bisher in der roten Meldung „Keine der gefundenen Verbindungen ist mit dem Zubringerweg zeitig zu schaffen“. Das ist jetzt hoechstens noch eine Warnung, nie ein Abbruch. Der neue <b>🕓 JETZT-Schalter</b> neben dem Zeitfeld (Route-Reiter und Route-Dialog, Standard eingeschaltet) laesst Datum und Uhrzeit kontinuierlich mitlaufen, die Suche plant immer ab jetzt. Aenderst du Datum oder Uhrzeit selbst, schaltet der Modus automatisch ab: Dann bleibt die gewaehlte Zeit stehen, auch in der Vergangenheit, und die Ergebnisliste zeigt ALLE Verbindungen bedingungslos - nicht mehr Schaffbare tragen rote „vor X min.“-Markierungen. Im JETZT-Modus blendet die Liste nicht mehr schaffbare Verbindungen standardmaessig aus; der Link <b>„Zeige nicht erreichbare (n)“</b> direkt ueber der ersten Karte blendet sie auf Rueckruf ein (und wieder aus). Die Sortier-Knoepfe ueber der Liste sind reine Listensortierer: Sie sortieren sofort um, ohne neue Abfrage (so war es technisch schon, jetzt auch beschriftet); zusaetzlich bekommt die gewaehlte Sortierart bei der Suche-Vielfalt drei statt zwei Vertreter, damit der Wunsch schon beim Anfragen zaehlt. Der Sortier-Block ist jetzt per Abtrennlinie vom Suchfeld darueber abgesetzt.");
   h += P("<b>CitySurfers LIVE - Mehr Treffer, Blättern an der Liste, ▶ statt Auto-Suche (v1.6.21):</b> Timos Wünsche vom 25.11.2026 abends: (1) Die Verbindungssuche zeigt normalerweise wieder <b>fünf bis sechs Routen</b>: Reicht die erste Suchausbeute dafür nicht (wenige erreichbare Verbindungen im JETZT-Modus), blättert die Suche automatisch weiter (bis zu vier zusätzliche Runden), bis mindestens sechs erreichbare Verbindungen stehen. (2) Über und unter der Ergebnisliste stehen die Blätter-Knöpfe <b>◀ Frühere</b> und <b>＋ Weitere</b>: Sie laden frühere bzw. spätere Verbindungen NACH und fügen sie sofort einsortiert in die bestehende Liste ein, ohne die bisherigen Ergebnisse neu zu laden; frisch nachgeladene Karten sind leicht bläulich hinterlegt. Während des Nachladens bleibt die Liste stehen und an der Knopf-Stelle erscheint kurz der Hinweis „Suche Verbindungen (… Router …)“. (3) Die Kontrollen oben lösen <b>keine Suche mehr von selbst</b> aus: Zubringer-Schalter (🚲/🛴 mit 🅛), Fahrrad-Tempo, Spar-Schwelle und ☂ Regenschirm ändern nur die Einstellung (☂ bewertet die fertige Liste sofort neu), gestartet wird grundsätzlich über den <b>▶-Knopf</b>. Der ▶-Knopf steht im Route-Reiter jetzt klar rechts am Ende der Kontroll-Reihe, im Routen-Dialog groß rechts unten, und der ☂-Haken ist im Dialog in die Zeit-Zeile gewandert (mit dem ▶ getauscht).");
   h += P("<b>CitySurfers LIVE - Router Alle (parallel) und kurze Verpasst-Hinweise (v1.6.22):</b> Timos Wünsche vom 25.11.2026 spät: (1) Der Router <b>Alle</b> (bisher 🤖 Auto) fragt jetzt <b>alle passenden Router gleichzeitig</b> ab - NAH.SH und VBB mit Echtzeit, delfirouting (Soll-Fahrplan, bundesweit) und die Zug-Verbindungen zwischen den nächstgelegenen Bahnhöfen. Dubletten (dieselbe Fahrt über zwei Router) fliegen raus, die gemeinsame Sortierung (⏱/🚀/🔁/⭐) bewertet alle Treffer gleich, und die Vielfalt-Auswahl zieht aus dem ganzen Pool die 10 Karten. Ein gescheiterter Router blockiert die anderen nicht mehr, und unter der Liste steht kurz, wie viele Treffer jeder Router beigesteuert hat. (2) Die Warnhinweise der gewählten Verbindung sind jetzt kurz und nicht mehr definitiv: Der rote Kasten sagt nur noch <b>Aufbruch ggf. verpasst!</b>, der grüne <b>Schon aufgebrochen: Der Zubringer ist erledigt, du wartet bereits an der Haltestelle</b>. Kam der grüne Hinweis, erscheint die Meldung „wird nicht mehr angeboten“ nicht mehr; erst wenn laut Uhr eine Abfahrt im Routenverlauf bereits abgefahren ist und das GPS noch davor steht, heißt es <b>Anschluss ggf. verpasst</b>.");
+  h += P("<b>CitySurfers LIVE - Eichhoernchen in der Statusleiste + Fern-Stationen haengen nicht mehr (v1.6.33):</b> Das Eichhoernchen 🐿️ steht jetzt als drittes Symbol neben ⏰ und 🏠 in der Statusleiste oben: ohne gestellten Eichhoernchen-Alarm ausgegraut, ab einem Alarm in seiner Eichhoernchen-Farbe (Braunorange) mit Anzahl. Antippen zeigt die Liste aller Eichhoernchen-Alarme (Linie, Richtung, Tage, Station, naechste Abfahrt) - ✎ bearbeitet den Alarm im gewohnten Eichhoernchen-Dialog, ✗ loescht ihn, ein Antippen der Zeile oeffnet ebenfalls den Dialog. Zusaetzlich ein wichtiger Fix: Abfahrtstafeln von Fern-Stationen (z. B. Hamburg Hbf) liessen die App einfrieren - die Folgefahrten-Hinweise unter den Zeilen versuchten fuer Fern-Stationen einen Fahrplan-Abruf ohne gueltige Haltestellen-Kennung, der sofort fehlschlug, und der Fehler-Neuversuch lieferte ueber die Neu-Render-Kette den naechsten sofortigen Fehlversuch: eine Endlosschleife, die den Rechner dauerhaft beschaeftigte. Jetzt nutzen die Folgefahrten die bekannte Kennung der Fern-Station (alle Verkehrsmittel wie ihre Abfahrtstafel) und ein gescheiterter Abruf wird hoechstens einmal pro Minute erneut versucht - die Hinweise erscheinen dann auch fuer Fern-Stationen. Mit Fussweg-Pruefungen oder GPS hatte das Hängen nichts zu tun.");
   h += P("<b>CitySurfers LIVE - Symbolwechsel zum Eichhoernchen (v1.6.32):</b> Timo hat sich nach dem ersten Ausprobieren gegen das Paket entschieden: Der Alarm fuer regelmaessige Verbindungen heisst jetzt Eichhoernchen-Alarm und traegt ueberall das Eichhoernchen-Symbol 🐿️ - an jeder Abfahrtszeile, im Dialog, auf dem Setzen-/Aendern-Knopf, im Nachrichtenfenster (Wachposten) und in den Meldungen. Alles andere ist unveraendert.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen-Alarm fuer regelmaessige Verbindungen (v1.6.31):</b> Timos Wunsch vom 26.11.2026: An jeder Abfahrtszeile im Stationsreiter oeffnet der 🐿️-Knopf den Dialog fuer eine REGELMAESSIGE Verbindung (Symbol Eichhoernchen 🐿️, Timos zweite Wahl statt des Pakets - es steht fuer regelmaessig-alarmierend, das Murmeltier-Prinzip): Oben der Stationsname, darunter die Linie als blaues Schild, dahinter -> und die Fahrtrichtung. Je Wochentag (Mo bis So untereinander) steht die fahrplanmaessige Abfahrt dieser Linie an dieser Station, eingerahmt von ◀ (fruehere Verbindung, ein Druck = ein Schritt) und ▶ (spaetere, ein Druck = ein Schritt); liegt die gewaehlte fruehere Uhrzeit am jeweiligen Vortag, warnt ⚠ in der Auswahl - es bleibt derselbe eine Alarm. Rechts daneben je Tag eine Checkbox; mit mindestens einem Haken laesst sich der Alarm setzen. Das Ueberwachungsfenster ist waehlbar (30 min / 60 min Standard / 6 h / 12 h / 24 h vor Abfahrt), die Pruefung wird dynamisch angepasst: alle 3 min ab 30 min vor Abfahrt, alle 6 min ab 60 min, alle 30 min ab 6 h, stuendlich ab 12 h, alle 2 h davor. Bei Verspaetung (ab 1 min) oder Ausfall klingelt/vibriert der Alarm wie die anderen Wecker (Vibration/Weckton/Tonart/Lautstaerke im Dialog waehlbar) und schreibt in das eigene 🐿️-Nachrichtenfenster (immer dasselbe Fenster, nur der Inhalt aendert sich; Antippen einer Zeile oeffnet den zugehoerigen Dialog). Der Alarm gilt UNBEGRENZT: Die App wiederholt die Fahrplanabfrage ungefragt (mindestens alle 12 h, nah.sh-Fahrplan), weist im Nachrichtenfenster auf Probleme hin und mahnt an, verschwundene Uhrzeiten im Dialog anzupassen. Alle gesetzten 🐿️-Alarme stehen unten im Dialog; ein Antippen oeffnet denselben Dialog zum Editieren - der Knopf, der beim ersten Aufruf Abbrechen heisst, heisst dort Loeschen.");
   h += P("<b>CitySurfers LIVE - Reiter unabhaengig von Auswahlen (v1.6.30):</b> Timos Regel vom 26.11.2026: KEIN Reiter haengt mehr an irgendwelchen Auswahlen im Stationssuchfeld oder in den Adress-/Routing-Feldern. (1) Das Stationssuchfeld ist nur ein Suchfeld: Sein ✕ leert das Feld und schliesst KEINEN Reiter mehr, und das Antippen eines Reiters ueberschreibt den getippten Suchtext nicht mehr. (2) Routing: Die Start-/Ziel-Felder oben im Reiter sind ein Schmierzettel fuer die NAECHSTE Suche - ▶ im Reiter und ▶ Route suchen im Dialog eroeffnen IMMER einen eigenen neuen parallelen Reiter daneben; der offene Reiter behaelt seine Ergebnisse und Unter-Reiter unverändert und schliesst nur ueber sein eigenes ✕. (3) Unter-Reiter (Fahrten im Stationsreiter, gewählte Routen im Route-Reiter, MM-Routen im MM-Reiter) schliessen ausschliesslich ueber ihr eigenes ✕ oder gemeinsam mit ihrem uebergeordneten Reiter - keine Suche, kein Feld und kein ✕ irgendwo anders wischt sie weg. Der ↻-Knopf im Reiter laedt dagegen weiterhin nur die Echtzeit-Daten desselben Reiters neu.");
@@ -17337,6 +17427,7 @@ renderBigToggles();
 renderBigBtns();
 renderAlarmInd();   // ⏰ der Statusleiste initial füllen (Zahl, Farbe, Geofences)
 renderFhInd();      // 🏠 der Statusleiste initial füllen
+renderPkgInd();     // 🐿️ der Statusleiste initial füllen (v1.6.33)
 setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffrischen
 
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
@@ -17352,7 +17443,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.32 · Build: 26.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.33 · Build: 26.11.2026</div>
 </div>
 </body>
 </html>
