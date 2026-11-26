@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * delfirouting.php - v0.2.15
+ * delfirouting.php - v0.2.16
  * Eigenes deutschlandweites OEPNV-Routing (Tuer zu Tuer) aus DELFI-Fahrplandaten.
  * Primaerquelle ist das DODP-Gesamtdeutschland-Zip (opendata-oepnv.de,
  * Soll-Daten bis ca. 31.3.2027, einmaliger Vollbau mit 128-Tage-Bitmasken je
@@ -32,6 +32,25 @@ declare(strict_types=1);
  *   (c) DFR_SCAN_MIN 240 -> 120 Minuten: Zwei Stunden Abfahrtsfenster
  *       je Stop reichen fuer frueheste-Ankunft plus Alternativen locker.
  *   (d) SPEICHER-NOTKAPPE: tCache-Flash ab 400.000 Eintraegen (502-).
+ * v0.2.16 Abend-noconns + Early-Exit (26.11.2026, Routing-Test 10 Metropolen
+ *   intern / 10 Nachbar- / 10 Langstrecken: 5 von 10 Langstrecken plus
+ *   Nuernberg->Bamberg liefen abends mit noconns ins Leere, obwohl der
+ *   Bahnhof-Fallback der App 6-9 Zug-Verbindungen fand; tagsueber liefen
+ *   dieselben Paare). Zwei Hebel:
+ *   (a) EARLY-EXIT: Sobald die Welle eine Zielankunft hat und mehr als
+ *       DFR_EARLY_S Sekunden verstrichen sind, endet die Suche - die
+ *       teuersten Spaetwellen ohne echte Verbesserung entfallen
+ *       (Hamburg->Kiel 27,5 s -> ~13 s), Ergebnisqualitaet unangetastet,
+ *       solange die Welle frueher konvergiert.
+ *   (b) ZIEL-HOP-WIEDERHOLUNG: Lief die normale Welle komplett ohne
+ *       Zielankunft (abends duenner Takt: Anschluss-Wartezeit am Hub
+ *       oft > 120-min-Scan-Fenster, DFR_DEP_CAP=15 schneidet die seltene
+ *       spaete Abfahrt an kleinen Stops ab), startet EINE Wiederholung
+ *       mit weitem Fenster DFR_SCAN_WIDE=360, Deckel DFR_DEP_WIDE=45
+ *       und DFR_ROUNDS_WIDE Wellen - nur im verbleibenden Zeitbudget,
+ *       nur wenn vorher noconns geliefert worden waere, und ab der
+ *       ERSTEN Zielankunft sofort fertig. dbg liefert jetzt auch bei
+ *       noconns das Wellenprofil (retry-Welle markiert).
  * v0.2.15 Abfahrts-Deckel je Stop (25.11.2026, wenige Stunden nach dem
  *   v0.2.14-Deploy: Kiel- und Berlin-Binnenrouten liefen jetzt im Budget,
  *   Alex->Potsdam aber weiter gegen die 25 s; die teuren Wellen laufen VOR
@@ -291,7 +310,7 @@ declare(strict_types=1);
  * PHP pack:route N/V/n/v/P/g == Python struct '>I'/'<I'/'<H'/'<Q'/'<f'.
  */
 
-const DFR_V          = 'delfirouting 0.2.15';
+const DFR_V          = 'delfirouting 0.2.16';
 const DFR_TT_URL     = '';            /* DODP opendata-oepnv.de-Link (spaeter) */
 const DFR_RT_URL     = 'https://realtime.gtfs.de/realtime-free.pb';
 const DFR_DODP_FRESH = 1814400;       /* DODP-Zip zaehlt 21 Tage als frisch */
@@ -315,6 +334,10 @@ const DFR_MARK_TAIL = 600;     /* v0.2.13: Ferne-Frontier: zusaetzlich die SPAET
 const DFR_KEEP_SLACK = 60;    /* v0.2.14: Ziel-Pruning: tau >= bestFin+X wird nicht mehr gescannt */
 const DFR_STAG_ROUNDS = 2;   /* v0.2.14: Abbruch nach X Wellen ohne bestFinish-Verbesserung (ab Welle 4) */
 const DFR_DEP_CAP    = 15;   /* v0.2.15: je Stop je Welle max. so viele erste Abfahrten scannen (RAPTOR-Naeherung) */
+const DFR_EARLY_S    = 12;   /* v0.2.16: nach erster Zielankunft Suche spaetestens nach so vielen Sekunden abbrechen */
+const DFR_SCAN_WIDE  = 360;  /* v0.2.16: Ziel-Hop-Wiederholung: weites Abfahrtsfenster (Minuten) */
+const DFR_DEP_WIDE   = 45;   /* v0.2.16: Ziel-Hop-Wiederholung: Abfahrts-Deckel je Stop je Welle */
+const DFR_ROUNDS_WIDE= 12;   /* v0.2.16: Ziel-Hop-Wiederholung: Wellenzahl der Wiederholung */
 const DFR_POOL_TTL  = 90;       /* v0.2.13: DELFI-Pool-Strom-Flussalter (s) */
 const DFR_POOL_MIN  = 400000;      /* v0.2.13: Plausibilitaet Pool-Strom (~4..40 MB) */
 const DFR_POOL_MAX  = 40000000;
@@ -2370,6 +2393,9 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
     foreach ($accFrom as $a)
         $walkFrom[$a[0]] = [dfr_vm_wave($vm, $a[3], (float)$a[2]), $a[2], $a[1]];
 
+    $rounds = DFR_ROUNDS; $scanMin = DFR_SCAN_MIN; $depCap = DFR_DEP_CAP;
+    $wideTried = false;   /* v0.2.16: Early-Exit + Ziel-Hop-Wiederholung */
+    while (true) {
     $tau = []; $parent = []; $marked = [];
     $finCut = 26100; $prevMinFin = -1; $stag = 0;   /* v0.2.14: Pruning/Stagnation */
     foreach ($accFrom as $a) {
@@ -2381,7 +2407,7 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
     }
     $bestFinish = [];
     if ($dbgOn) $dbg = [];
-    for ($r = 0; $r < DFR_ROUNDS; $r++) {
+    for ($r = 0; $r < $rounds; $r++) {
         if (!$marked) break;
         $markedIn = count($marked);
         if (count($marked) > DFR_MARK_CAP) {
@@ -2435,8 +2461,8 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
             for ($i = $first; $i < $count; $i++) {
                 $o = $i * 8;
                 $dep = unpack('v', substr($recs, $o, 2))[1];
-                if ($dep > $ts + DFR_SCAN_MIN) break;
-                if (++$seenDep > DFR_DEP_CAP) break;
+                if ($dep > $ts + $scanMin) break;   /* v0.2.16: Phase-Variable statt Konstante */
+                if (++$seenDep > $depCap) break;   /* v0.2.16: Phase-Variable statt Konstante */
                 $rr = substr($recs, $o, 8);
                 $u = unpack('vdep/Vtrip/vseq', $rr);
                 if (isset($tripSeq[$u['trip']]) && $u['seq'] >= $tripSeq[$u['trip']])
@@ -2498,6 +2524,11 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
             $stag = ($prevMinFin >= 0 && $minFin >= $prevMinFin) ? $stag + 1 : 0;
             $prevMinFin = $minFin;
             if ($r >= 3 && $stag >= DFR_STAG_ROUNDS) { if ($dbgOn) $dbg[] = ['round' => $r, 'stag_break' => 1]; break; }
+            /* v0.2.16: EARLY-EXIT - erste Zielankunft steht, Restbudget < 25-12 s */
+            if (time() > $tEnd - (DFR_TIMEOUT_S - DFR_EARLY_S)) {
+                if ($dbgOn) $dbg[] = ['round' => $r, 'early_break' => 1];
+                break;
+            }
         }
         if ($dbgOn) {
             $bestFin = $bestFinish ? min($bestFinish) : null;
@@ -2505,7 +2536,15 @@ function dfr_route(DfrIdx $ix, float $fLa, float $fLo, float $tLa, float $tLo,
             $dbg[$cnt] = array_merge($dbg[$cnt] ?? [], ['nxt' => count($nxt), 'fin' => $bestFin]);
         }
     }
-    if (!$bestFinish) return ['err' => 'noconns'];
+    if ($bestFinish) break;   /* v0.2.16: Zielankunft steht - Ketten bauen */
+    if ($wideTried || time() > $tEnd) break;   /* Ziel-Hop genau einmal */
+    $wideTried = true;
+    $rounds = DFR_ROUNDS_WIDE; $scanMin = DFR_SCAN_WIDE; $depCap = DFR_DEP_WIDE;
+    if ($dbgOn) $dbg[] = ['retry' => 'wide', 'scan' => $scanMin, 'cap' => $depCap,
+        'rounds' => $rounds];
+    }   /* v0.2.16: Ende Wiederholungs-Huelle; in der Wiederholung beendet die
+         * erste Zielankunft die Suche ueber den Early-Exit (Restbudget klein) */
+    if (!$bestFinish) return ['err' => 'noconns', 'dbg' => $dbgOn ? $dbg : null];   /* v0.2.16: dbg auch bei noconns */
     asort($bestFinish);
     /* v0.2.12: Kette je Ziellauf zuerst MIT Stop-Nummern einsammeln, Leg-
      * Aufbau danach mit Merge der Fuss-/Modus-Ketten an BEIDEN Enden. */
@@ -2918,9 +2957,9 @@ function dfr_query_run(array $q): void {
             : ($res['err'] === 'timeout'
                 ? 'Anfrage ueberschreitet das Zeitlimit; bitte erneut versuchen.'
                 : 'Keine Verbindung gefunden.');
-        if ($res['err'] === 'timeout' && $wantDbg && is_array($res['dbg']))
+        if (($res['err'] === 'timeout' || $res['err'] === 'noconns') && $wantDbg && is_array($res['dbg']))
             dfr_out(['ok' => false, 'code' => $res['err'], 'dbg' => $res['dbg'],
-                'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);   /* v0.2.15: Diagnose bei Timeout */
+                'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);   /* v0.2.15: Diagnose bei Timeout; v0.2.16: auch noconns */
         else dfr_out(['ok' => false, 'code' => $res['err'],
             'day' => $ix->day, 'ms' => $ms, 'msg' => $msg]);
     }
@@ -3036,4 +3075,3 @@ function dfr_query_run(array $q): void {
             'mem' => @ini_get('memory_limit')]);
     }
 })();
-
