@@ -728,6 +728,9 @@
     border: 1px solid #334155; border-radius: 10px; padding: 6px; font-size: 0.8rem;
     min-width: 250px; max-width: 330px; box-shadow: 0 8px 22px #000000cc; }
   #alarmList .alrow, #fhList .alrow, #pkgList .alrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer; }
+  #pkgList .alrow { flex-wrap: wrap; }   // v1.6.35: Meldungszeile unter der Kopfzeile
+  #pkgList .alrowmsg { flex-basis: 100%; font-size: .72rem; padding: 0 4px; }
+  #pkgList .alrow.ring .afsname { color: #f87171; }
   #alarmList .alrow:hover, #fhList .alrow:hover, #pkgList .alrow:hover { background: #273449; border-radius: 6px; }
   .afsname { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
@@ -5297,6 +5300,7 @@ try { packAlarms = JSON.parse(localStorage.getItem("kvg-packalarms") || "[]") ||
 function savePackAlarms() {
   try { localStorage.setItem("kvg-packalarms", JSON.stringify(packAlarms)); } catch (e) {}
   try { renderPkgInd(); } catch (e) {}   // v1.6.33: 🐿️-Symbol der Statusleiste mitführen
+  try { renderAlarmInd(); } catch (e) {}   // v1.6.35: eigene Android-Nachricht sofort mitpflegen
 }
 function packStopOf(a) {   // Stations-Objekt (KVG oder Fern-Station) zum Alarm
   return stops.find(s => s.shortName === a.sn) ||
@@ -5305,6 +5309,17 @@ function packStopOf(a) {   // Stations-Objekt (KVG oder Fern-Station) zum Alarm
 function packLidOf(a) {   // NAH.SH-Lid der Alarm-Station (gecacht im Alarm)
   if (a.lid) return Promise.resolve(a.lid);
   const st = packStopOf(a);
+  // v1.6.35: Fern-Station (RS:, Lid aus dem Reiter-Register) und Kieler DB-
+  // Station haben ihre NAH.SH-Lid bereits gespeichert – genau wie die Fahrplan-
+  //Folgeliste (v1.6.33) sie benutzt. LocMatch per Stationsname liefert fuer
+  // auswaertige Stationen (z.B. Hamburg Hbf) keine brauchbare Lid, weshalb der
+  // Eichhoernchen-Dialog dort keine Fahrplanauskunft fuer Zuege fand.
+  const db = isDB(a.sn) ? dbStopOf(a.sn) : null;
+  const saved = (db && db.lid) || (st && st.lid) || null;
+  if (saved) { a.lid = saved; savePackAlarms(); return Promise.resolve(saved); }
+  // heimische KVG-Haltestelle: Lid wie die Abfahrtsliste ueber nahshLocFor
+  if (st && !st.rs && !isRS(a.sn) && !isDB(a.sn))
+    return nahshLocFor(st).then(lid => { if (lid) { a.lid = lid; savePackAlarms(); } return lid; });
   return followLoc(a.name || (st && st.name) || "", st ? st.lat : null, st ? st.lon : null)
     .then(lid => { if (lid) { a.lid = lid; savePackAlarms(); } return lid; });
 }
@@ -5423,13 +5438,18 @@ function pkgMsgUpdate() {
       "</div>";
   }).join("");
   if (body.dataset.last !== h) { body.dataset.last = h; body.innerHTML = h; }
-  el.hidden = false;
+  // v1.6.35: KEIN el.hidden = false mehr hier – das Fenster geht NICHT mehr bei
+  // jedem Pruef-Update als Popup auf, sondern nur noch, wenn ein Alarm neu
+  // ausloest (firePack). Zustaendig sonst: 🐿️-Symbol der Statusleiste und die
+  // eigene Android-Nachricht.
+  renderPkgInd();   // v1.6.35: Meldung in die 🐿️-Ausklappliste am Symbol mitnehmen
   renderAlarmInd();
 }
 // Ausloesung: laeut wie die anderen Wecker (Vibration/Weckton, bis ⏰/🔕 stoppt)
 function firePack(a, txt) {
   const aKey = a.id;
   packMsgSet(a, "🚨 " + txt);
+  pkgMsgEnsure().hidden = false;   // Popup NUR beim neu ausgeloeesten Alarm
   if (alarmsOff) return;   // globale Aus-Taste: nicht laeuten, Meldung steht im Fenster
   if (ringing.has(aKey)) return;
   firedAlarms.add(aKey);
@@ -5508,7 +5528,7 @@ async function packTick() {
   }
 }
 setInterval(() => { packTick(); }, 20000);
-setTimeout(() => { pkgMsgUpdate(); }, 3000);   // Fenster nach Start einmal auffuellen (falls Alarme gestellt)
+setTimeout(() => { pkgMsgUpdate(); }, 3000);   // nach Start einmal fuellen (versteckt; Popup nur bei Ausloesung)
 // ---------- 🐿️-Dialog ----------
 function openPackDlg(ctx, edit) {
   const old = document.getElementById("packDlg");
@@ -7427,6 +7447,29 @@ function alarmRingEpoch(a) {
   if (depMs < Date.now() - 60000) depMs += 86400000;   // nachts: nächster Tag
   return depMs - a.leadMin * 60000;
 }
+// v1.6.35: Eigene Android-Nachricht der Eichhoernchen-Alarme (neben ⏰ gesamt
+// und 🏠 fh-scan): eine Karte je Status, mit jedem Pruef-Update aktualisiert
+// (still, Popup gibt es nur beim Ausloesen selbst). Ohne Alarme null -> Karte weg.
+function packNativeEntry() {
+  if (!packAlarms.length) return null;
+  const now = Date.now();
+  const lines = packAlarms.map(a => {
+    const occ = packNextOcc(a);
+    let s = a.line + " -> " + (a.dir || "?") + " · " +
+      ((a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag") +
+      (occ ? " · nächste " + PACK_DAYS[occ.wd] + " " + occ.t + " Uhr" : "");
+    if (a.lastMsg && a.lastMsgTs && now - a.lastMsgTs < 36 * 3600000) s += " · " + a.lastMsg;
+    return s;
+  });
+  const ringN = packAlarms.filter(a => ringing.has(a.id)).length;
+  return {
+    key: "eichhoernchen",
+    title: "🐿️ " + packAlarms.length + (packAlarms.length === 1 ? " Eichhörnchen-Alarm" : " Eichhörnchen-Alarme") +
+      (ringN ? " · läutet!" : ""),
+    text: lines.join("\n"),
+    tab: ""
+  };
+}
 function renderAlarmInd() {
   // Einträge einmal berechnen: für die Weckerliste und für die Android-
   // Benachrichtigungen (eine je Wecker, mit Sprung zum passenden Reiter)
@@ -7456,9 +7499,14 @@ function renderAlarmInd() {
     entries.push({ aKey: aKey, a: { name: r.name || "Wecker", tabSn: "" },
       cond: "läutet jetzt", when: "", ring: true });
   }
-  // In der App: EINE Sammel-Benachrichtigung für alle Wecker, laufend aktualisiert
-  // (auch leer: dann verschwindet sie). Tap öffnet den Reiter des nächsten Weckers.
+  // In der App: EINE Sammel-Benachrichtigung je Wecker-Typ (⏰ gesamt, 🐿️ je
+  // Status), laufend aktualisiert (auch leer: dann verschwindet sie). Tap oeffnet
+  // den Reiter des naechsten Weckers. v1.6.35: Die Eichhoernchen-Alarme bekommen
+  // ihre EIGENE Android-Nachricht (neben ⏰ wecker-gesamt und 🏠 fh-scan), die
+  // mit jedem Pruef-Update aktualisiert wird; syncAlarms erwartet ALLE aktiven
+  // Nachrichten in EINEM Array (fehlende keys werden geloescht).
   if (window.KvgNative) {
+    const arr = [];
     if (entries.length) {
       const sorted = entries.slice().sort((a, b) => {
         const ea = a.ring ? 0 : (alarmRingEpoch(a.a) != null ? alarmRingEpoch(a.a) : Infinity);
@@ -7476,17 +7524,18 @@ function renderAlarmInd() {
           : { akey: en.aKey, mode: "pause", label: "Aus: " + (a.name || "Wecker") });
         else acts.push({ akey: en.aKey, mode: "delete", label: "Löschen: " + (a.name || "Wecker") });
       }
-      nativeCall("syncAlarms", JSON.stringify([{
+      arr.push({
         key: "wecker-gesamt",
         title: "⏰ " + entries.length + (entries.length === 1 ? " Wecker" : " Wecker") +
           (sorted[0].a.name ? " · nächster: " + sorted[0].a.name : ""),
         text: entries.map(en => en.a.name + " – " + en.cond + en.when).join("\n"),
         tab: sorted[0].a.tabSn || "",
         actions: acts
-      }]));
-    } else {
-      nativeCall("syncAlarms", "[]");   // kein Wecker: Benachrichtigung verschwindet
+      });
     }
+    const pe = packNativeEntry();   // v1.6.35: eigene 🐿️-Nachricht
+    if (pe) arr.push(pe);
+    nativeCall("syncAlarms", JSON.stringify(arr));   // leer: alle Nachrichten verschwinden
   }
   syncGeofences();   // native Geofences für Distanz-Wecker (Hintergrund) aktualisieren
   // ⏰ in der Statusleiste: immer sichtbar, ausgegraut ohne Wecker, mit Zahl
@@ -7623,12 +7672,17 @@ function renderPkgInd() {
     const days = (a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag";
     const occ = packNextOcc(a);
     const next = occ ? " · nächste: " + PACK_DAYS[occ.wd] + " " + occ.t : "";
-    return '<div class="alrow" data-pkrow="' + escapeHtml(a.id) + '" title="Eichhörnchen-Dialog zum Bearbeiten öffnen">' +
+    // v1.6.35: letzte Meldung des Wachpostens direkt in der Liste (das Fenster
+    // poppt nur noch beim Ausloesen, Kommunikation laeuft ueber diese Liste)
+    const msg = a.lastMsg && a.lastMsgTs && Date.now() - a.lastMsgTs < 36 * 3600000 ? a.lastMsg : "";
+    return '<div class="alrow' + (ringing.has(a.id) ? " ring" : "") + '" data-pkrow="' + escapeHtml(a.id) + '" title="Eichhörnchen-Dialog zum Bearbeiten öffnen">' +
       '<span class="afsname">🐿️ ' + escapeHtml(a.line) + " → " + escapeHtml(a.dir || "?") +
       " · <b>" + escapeHtml((a.days || []).filter(Boolean)[0] || "?") + "</b> · " + escapeHtml(days) +
       ' · <span class="dim">' + escapeHtml(a.name || a.sn) + escapeHtml(next) + "</span></span>" +
       '<button class="afbtn" data-pkedit="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm bearbeiten (öffnet den 🐿️-Dialog)">✎</button>' +
-      '<button class="afbtn" data-pkdel="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm löschen">✗</button></div>';
+      '<button class="afbtn" data-pkdel="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm löschen">✗</button>' +
+      (msg ? '<div class="alrowmsg dim">' + escapeHtml(msg) + "</div>" : "") +
+      "</div>";
   }).join("");
 }
 pkgInd.addEventListener("click", e => {
@@ -14655,6 +14709,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>CitySurfers LIVE - Mehr Treffer, Blättern an der Liste, ▶ statt Auto-Suche (v1.6.21):</b> Timos Wünsche vom 25.11.2026 abends: (1) Die Verbindungssuche zeigt normalerweise wieder <b>fünf bis sechs Routen</b>: Reicht die erste Suchausbeute dafür nicht (wenige erreichbare Verbindungen im JETZT-Modus), blättert die Suche automatisch weiter (bis zu vier zusätzliche Runden), bis mindestens sechs erreichbare Verbindungen stehen. (2) Über und unter der Ergebnisliste stehen die Blätter-Knöpfe <b>◀ Frühere</b> und <b>＋ Weitere</b>: Sie laden frühere bzw. spätere Verbindungen NACH und fügen sie sofort einsortiert in die bestehende Liste ein, ohne die bisherigen Ergebnisse neu zu laden; frisch nachgeladene Karten sind leicht bläulich hinterlegt. Während des Nachladens bleibt die Liste stehen und an der Knopf-Stelle erscheint kurz der Hinweis „Suche Verbindungen (… Router …)“. (3) Die Kontrollen oben lösen <b>keine Suche mehr von selbst</b> aus: Zubringer-Schalter (🚲/🛴 mit 🅛), Fahrrad-Tempo, Spar-Schwelle und ☂ Regenschirm ändern nur die Einstellung (☂ bewertet die fertige Liste sofort neu), gestartet wird grundsätzlich über den <b>▶-Knopf</b>. Der ▶-Knopf steht im Route-Reiter jetzt klar rechts am Ende der Kontroll-Reihe, im Routen-Dialog groß rechts unten, und der ☂-Haken ist im Dialog in die Zeit-Zeile gewandert (mit dem ▶ getauscht).");
   h += P("<b>CitySurfers LIVE - Router Alle (parallel) und kurze Verpasst-Hinweise (v1.6.22):</b> Timos Wünsche vom 25.11.2026 spät: (1) Der Router <b>Alle</b> (bisher 🤖 Auto) fragt jetzt <b>alle passenden Router gleichzeitig</b> ab - NAH.SH und VBB mit Echtzeit, delfirouting (Soll-Fahrplan, bundesweit) und die Zug-Verbindungen zwischen den nächstgelegenen Bahnhöfen. Dubletten (dieselbe Fahrt über zwei Router) fliegen raus, die gemeinsame Sortierung (⏱/🚀/🔁/⭐) bewertet alle Treffer gleich, und die Vielfalt-Auswahl zieht aus dem ganzen Pool die 10 Karten. Ein gescheiterter Router blockiert die anderen nicht mehr, und unter der Liste steht kurz, wie viele Treffer jeder Router beigesteuert hat. (2) Die Warnhinweise der gewählten Verbindung sind jetzt kurz und nicht mehr definitiv: Der rote Kasten sagt nur noch <b>Aufbruch ggf. verpasst!</b>, der grüne <b>Schon aufgebrochen: Der Zubringer ist erledigt, du wartet bereits an der Haltestelle</b>. Kam der grüne Hinweis, erscheint die Meldung „wird nicht mehr angeboten“ nicht mehr; erst wenn laut Uhr eine Abfahrt im Routenverlauf bereits abgefahren ist und das GPS noch davor steht, heißt es <b>Anschluss ggf. verpasst</b>.");
   h += P("<b>CitySurfers LIVE - Fern-Stationen um eine entfernte Adresse (v1.6.34):</b> Eine aktive Adresse im Haltestellensuchfeld sortiert die Liste ja nach Entfernung zur Adresse - lag die Adresse ausserhalb des Kieler Raums, standen darin trotzdem nur die heimischen Haltestellen (bei einer Hamburger Adresse also Kieler Stops ab 100 km), weil Fern-Stationen bislang nur bei Suchtext ab drei Buchstaben ueber die Haltestellensuche auftauchten. Jetzt laedt die App bei einer Adresse weiter als 15 km vom naechsten heimischen Haltestellenumfeld automatisch die Fern-Stationen im 30-km-Radius um die Adresse nach (Suche mit dem Ort aus dem Adresslabel beim Nah.sh-Ortsverzeichnis, gecacht fuer 10 Minuten) und mischt sie in die Liste ein: Sie sortieren mit nach Entfernung zur Adresse, der Hamburger Hauptbahnhof steht bei einer Hamburger Adresse also ganz oben, mit Luftlinien-Fussweg wie bei jeder Fern-Station. GPS-Positionen und Adressen im Kiel-Umfeld bleiben unveraendert, Fehler des Ortsverzeichnisses bleiben still (dann zeigt sich die gewohnte Liste)."); 
+  h += P("<b>CitySurfers LIVE - Eichhoernchen-Fahrplan fuer Fern-Stationen/Zuege + drei eigene Android-Nachrichten (v1.6.35):</b> Der Eichhoernchen-Dialog fand fuer Fern-Stationen (z.B. Hamburg Hbf) und Zuege keine Fahrplanauskunft, weil er die Haltestelle per Namenssuche bei nah.sh neu aufloeste - die gespeicherte Haltestellen-Kennung (Lid) der Fern-Station wird jetzt direkt benutzt (wie seit v1.6.33 in der Fahrplan-Folgeliste), heimische KVG-Haltestellen laufen ueber denselben Pfad wie die Abfahrtsliste. Zweitens poppt das Eichhoernchen-Nachrichtenfenster nicht mehr bei jeder Pruef-Aktualisierung irgendwo auf: Es oeffnet sich nur noch, wenn ein Alarm neu ausloest, sonst laufen die Meldungen still mit - sichtbar ueber das 🐿️-Symbol (Ausklappliste mit der letzten Meldung je Alarm) und als eigene Android-System-Nachricht. Drittens hat jeder der drei Wecker-Typen jetzt seine EIGENE Android-Nachricht (⏰ Wecker gesamt, 🏠 Finde nach Hause, 🐿️ Eichhoernchen), jede regelmessig aktualisiert; Popup nur beim Ausloesen.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen in der Statusleiste + Fern-Stationen haengen nicht mehr (v1.6.33):</b> Das Eichhoernchen 🐿️ steht jetzt als drittes Symbol neben ⏰ und 🏠 in der Statusleiste oben: ohne gestellten Eichhoernchen-Alarm ausgegraut, ab einem Alarm in seiner Eichhoernchen-Farbe (Braunorange) mit Anzahl. Antippen zeigt die Liste aller Eichhoernchen-Alarme (Linie, Richtung, Tage, Station, naechste Abfahrt) - ✎ bearbeitet den Alarm im gewohnten Eichhoernchen-Dialog, ✗ loescht ihn, ein Antippen der Zeile oeffnet ebenfalls den Dialog. Zusaetzlich ein wichtiger Fix: Abfahrtstafeln von Fern-Stationen (z. B. Hamburg Hbf) liessen die App einfrieren - die Folgefahrten-Hinweise unter den Zeilen versuchten fuer Fern-Stationen einen Fahrplan-Abruf ohne gueltige Haltestellen-Kennung, der sofort fehlschlug, und der Fehler-Neuversuch lieferte ueber die Neu-Render-Kette den naechsten sofortigen Fehlversuch: eine Endlosschleife, die den Rechner dauerhaft beschaeftigte. Jetzt nutzen die Folgefahrten die bekannte Kennung der Fern-Station (alle Verkehrsmittel wie ihre Abfahrtstafel) und ein gescheiterter Abruf wird hoechstens einmal pro Minute erneut versucht - die Hinweise erscheinen dann auch fuer Fern-Stationen. Mit Fussweg-Pruefungen oder GPS hatte das Hängen nichts zu tun.");
   h += P("<b>CitySurfers LIVE - Symbolwechsel zum Eichhoernchen (v1.6.32):</b> Timo hat sich nach dem ersten Ausprobieren gegen das Paket entschieden: Der Alarm fuer regelmaessige Verbindungen heisst jetzt Eichhoernchen-Alarm und traegt ueberall das Eichhoernchen-Symbol 🐿️ - an jeder Abfahrtszeile, im Dialog, auf dem Setzen-/Aendern-Knopf, im Nachrichtenfenster (Wachposten) und in den Meldungen. Alles andere ist unveraendert.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen-Alarm fuer regelmaessige Verbindungen (v1.6.31):</b> Timos Wunsch vom 26.11.2026: An jeder Abfahrtszeile im Stationsreiter oeffnet der 🐿️-Knopf den Dialog fuer eine REGELMAESSIGE Verbindung (Symbol Eichhoernchen 🐿️, Timos zweite Wahl statt des Pakets - es steht fuer regelmaessig-alarmierend, das Murmeltier-Prinzip): Oben der Stationsname, darunter die Linie als blaues Schild, dahinter -> und die Fahrtrichtung. Je Wochentag (Mo bis So untereinander) steht die fahrplanmaessige Abfahrt dieser Linie an dieser Station, eingerahmt von ◀ (fruehere Verbindung, ein Druck = ein Schritt) und ▶ (spaetere, ein Druck = ein Schritt); liegt die gewaehlte fruehere Uhrzeit am jeweiligen Vortag, warnt ⚠ in der Auswahl - es bleibt derselbe eine Alarm. Rechts daneben je Tag eine Checkbox; mit mindestens einem Haken laesst sich der Alarm setzen. Das Ueberwachungsfenster ist waehlbar (30 min / 60 min Standard / 6 h / 12 h / 24 h vor Abfahrt), die Pruefung wird dynamisch angepasst: alle 3 min ab 30 min vor Abfahrt, alle 6 min ab 60 min, alle 30 min ab 6 h, stuendlich ab 12 h, alle 2 h davor. Bei Verspaetung (ab 1 min) oder Ausfall klingelt/vibriert der Alarm wie die anderen Wecker (Vibration/Weckton/Tonart/Lautstaerke im Dialog waehlbar) und schreibt in das eigene 🐿️-Nachrichtenfenster (immer dasselbe Fenster, nur der Inhalt aendert sich; Antippen einer Zeile oeffnet den zugehoerigen Dialog). Der Alarm gilt UNBEGRENZT: Die App wiederholt die Fahrplanabfrage ungefragt (mindestens alle 12 h, nah.sh-Fahrplan), weist im Nachrichtenfenster auf Probleme hin und mahnt an, verschwundene Uhrzeiten im Dialog anzupassen. Alle gesetzten 🐿️-Alarme stehen unten im Dialog; ein Antippen oeffnet denselben Dialog zum Editieren - der Knopf, der beim ersten Aufruf Abbrechen heisst, heisst dort Loeschen.");
@@ -17520,7 +17575,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.34 · Build: 26.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.35 · Build: 26.11.2026</div>
 </div>
 </body>
 </html>
