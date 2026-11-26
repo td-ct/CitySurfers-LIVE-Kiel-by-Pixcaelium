@@ -18,7 +18,7 @@ jobs:
         run: |
           set -e
           test -d .build
-          cat $(find .build -maxdepth 1 -name 'p*' | sort) > index.html
+          cat $(find .build -maxdepth 1 -name 'p[0-9][0-9]' | sort) > index.html
           test "$(wc -c < index.html)" = "1133067"
           grep -q "Version 1.6.38" index.html
           wc -c index.html
