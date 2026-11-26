@@ -781,7 +781,6 @@
   .pkgday .pkd { width: 2em; color: #94a3b8; }
   .pkgday .pkn { background: none; border: 1px solid #1e3a5f; color: #7dd3fc; border-radius: 4px; cursor: pointer; padding: 0 6px; }
   .pkgday .pkt { min-width: 3.6em; text-align: center; font-weight: 700; }
-  .pkgday .pkt.warn { color: #eab308; }
   .pkgday .pkw { color: #eab308; }
   .pkgday .pkon { margin-left: auto; display: flex; align-items: center; gap: 4px; color: #e2e8f0; }
   .pkgrow { border: 1px solid #1e3a5f; border-radius: 6px; padding: 4px 8px; margin: 2px 0; cursor: pointer; }
@@ -5661,9 +5660,22 @@ async function packSchedDayOfSrc(a, src, T) {   // v1.6.38: Fahrplan EINES Tages
   }
   const lid = await packLidOf(a);
   if (!lid) throw new Error("Station nicht in nah.sh gefunden");
-  const entries = await nahshBoardEntries(lid, T, 511);
-  let hit = entries.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.direction));
-  if (!hit.length) hit = entries.filter(e => followNormLine(e.line) === ln);   // Richtung passt nicht: alle der Linie
+  // v1.6.43: Das Board liefert max. 120 Abfahrten je Anfrage - an starken Halte-
+  // stellen endete die Tagesliste mitten am Tag und ◀/▶ fanden die spaeteren
+  // Verbindungen nicht. Der Fahrplan eines Tages wird jetzt STUECKWEISE nachge-
+  // laden, bis die Antwort kleiner als 120 ausfaellt oder der Tag zu Ende ist:
+  // Die Auswahl je Wochentag umfasst wieder alle Fahrten dieses Tages.
+  const raw = [];
+  let Tb = new Date(t0);
+  for (let page = 0; page < 6; page++) {
+    const es = await nahshBoardEntries(lid, Tb, 511);
+    for (const e of es) if (e.absMs >= Tb.getTime()) raw.push(e);
+    if (es.length < 120) break;   // Antwort unter dem Limit: Tag vollstaendig
+    Tb = new Date(es[es.length - 1].absMs + 60000);
+    if (Tb.getTime() >= t1) break;
+  }
+  let hit = raw.filter(e => followNormLine(e.line) === ln && packDirMatch(a.dir, e.direction));
+  if (!hit.length) hit = raw.filter(e => followNormLine(e.line) === ln);   // Richtung passt nicht: alle der Linie
   hit = hit.filter(e => e.absMs >= t0 && e.absMs < t1);
   hit.sort((x, y) => x.absMs - y.absMs);
   return hit.map(e => {
@@ -5972,8 +5984,7 @@ function openPackDlg(ctx, edit) {
     vol: a ? (a.vol != null ? a.vol : cfg.vol) : cfg.vol,
     msgWin: a ? a.msgWin !== false : true,   // v1.6.42: eigenes Nachrichtenfenster dieser Alarm-Art offen halten
     src: a ? (a.src || "auto") : "auto",   // v1.6.38: Fahrplan-Katalog
-    selIdx: [-1, -1, -1, -1, -1, -1, -1],   // Blatt-Index je Tag im Fahrplan
-    selWarn: [false, false, false, false, false, false, false]   // gewaehlte Zeit liegt am Vortag
+    selIdx: [-1, -1, -1, -1, -1, -1, -1]   // Blatt-Index je Tag im Fahrplan
   };
   const wrap = document.createElement("div");
   wrap.className = "dlgwrap";
@@ -6032,27 +6043,34 @@ function openPackDlg(ctx, edit) {
       if (t && cur.on[i]) any = true;
       return '<div class="pkgday">' +
         '<span class="pkd">' + dn + "</span>" +
-        '<button class="pkn" data-pkn="-1" data-pkd="' + i + '" title="Frühere Verbindung dieses Tages (ein Druck = ein Schritt); liegt sie am Vortag, erscheint ⚠">◀</button>' +
-        '<span class="pkt' + (cur.selWarn[i] ? " warn" : "") + '">' + escapeHtml(t || "–") +
-          (cur.selWarn[i] ? ' <span class="pkw" title="Diese Uhrzeit liegt am Vortag">⚠</span>' : "") + "</span>" +
-        '<button class="pkn" data-pkn="1" data-pkd="' + i + '" title="Spätere Verbindung dieses Tages (ein Druck = ein Schritt)">▶</button>' +
+        '<button class="pkn" data-pkn="-1" data-pkd="' + i + '" title="Frühere Verbindung dieses Tages (ein Druck = ein Schritt); vor der ersten Uhrzeit geht es am selben Tag mit der letzten weiter">◀</button>' +
+        '<span class="pkt">' + escapeHtml(t || "–") + "</span>" +
+        '<button class="pkn" data-pkn="1" data-pkd="' + i + '" title="Spätere Verbindung dieses Tages (ein Druck = ein Schritt); nach der letzten Uhrzeit geht es am selben Tag mit der ersten weiter">▶</button>' +
         '<label class="pkon"><input type="checkbox" data-pkc="' + i + '"' + (cur.on[i] ? " checked" : "") + "> " + dn + "</label>" +
         "</div>";
     }).join("");
     tbl.innerHTML = h;
     okBtn.disabled = !(sched && sched.days && any && cur.days.some(x => x));
   }
-  function pickInitial(i, list) {   // Startzeit je Tag: gespeicherte/exakte Zeit, sonst naechste zur Referenz
+  function pickInitial(i, list) {   // v1.6.43: Startzeit je Tag = die Uhrzeit, die der
+    // übergebenen Verbindungszeit (cur.ref, z. B. die im Stationsreiter gewählte
+    // Abfahrtszeit) AM NAECHSTEN liegt - egal ob davor oder danach, an Gleichstand
+    // gewinnt die spaetere; im Edit-Modus zaelt stattdessen die gespeicherte Zeit
+    // dieses Tages (fand sie der neue Fahrplan nicht mehr, bleibt sie Referenz).
     if (!list || !list.length) return null;
-    const refMin = packMinOf(cur.ref) != null ? packMinOf(cur.ref) : 8 * 60;
-    let ex = -1;
-    if (a && a.days[i]) ex = list.findIndex(e => e.t === a.days[i]);
-    if (ex >= 0) return ex;
-    let best = 0;
+    const aRef = (a && a.days && a.days[i]) || null;
+    const refMin = packMinOf(aRef) != null ? packMinOf(aRef) :
+      (packMinOf(cur.ref) != null ? packMinOf(cur.ref) : 8 * 60);
+    if (aRef) {
+      const ex = list.findIndex(e => e.t === aRef);
+      if (ex >= 0) return ex;
+    }
+    let best = 0, bestD = null;
     for (let k = 0; k < list.length; k++) {
       const m = packMinOf(list[k].t);
-      if (m != null && m >= refMin) { best = k; break; }
-      best = 0;
+      if (m == null) continue;
+      const d = Math.abs(m - refMin);
+      if (bestD == null || d < bestD || (d === bestD && m > refMin)) { bestD = d; best = k; }
     }
     return best;
   }
@@ -6063,10 +6081,9 @@ function openPackDlg(ctx, edit) {
       if (sc.err || !sc.days) { schedEl.textContent = "⚠ Fahrplanabfrage fehlgeschlagen: " + sc.err; return; }
       sched = sc;
       schedEl.textContent = "Fahrplan " + new Date(sc.ts).toTimeString().slice(0, 5) + " Uhr (" +
-        (sc.srcTxt || packSrcLabel(cur.src)) + ", ◀/▶ blättert je Tag, ⚠ = Uhrzeit am Vortag):";
+        (sc.srcTxt || packSrcLabel(cur.src)) + ", ◀/▶ blättert je Tag im Kreis, am Tagesende weiter am selben Tag):";
       for (let i = 0; i < 7; i++) {
         cur.selIdx[i] = pickInitial(i, sc.days[i]);
-        cur.selWarn[i] = false;
         cur.days[i] = cur.selIdx[i] >= 0 ? sc.days[i][cur.selIdx[i]].t : (cur.days[i] || null);
       }
       renderRows();
@@ -6097,17 +6114,16 @@ function openPackDlg(ctx, edit) {
       return;
     }
     const n = e.target.closest("[data-pkn]");
-    if (n && sched && sched.days) {   // Blättern: ein Druck = ein Schritt, nur die naechste Uhrzeit
+    if (n && sched && sched.days) {   // v1.6.43: Blättern BLEIBT am selben Wochentag und
+      // laeuft im Kreis: nach der letzten Uhrzeit des Tages geht es mit der ersten
+      // weiter (aufsteigend ab 0 Uhr), vor der ersten mit der letzten (absteigend).
+      // Per Definition liegt jede waehlbare Uhrzeit immer am angewaehlten Tag.
       const i = Number(n.dataset.pkd), dirn = Number(n.dataset.pkn);
       if (!sched.days[i] || !sched.days[i].length) return;
       if (cur.selIdx[i] == null || cur.selIdx[i] < 0) { cur.selIdx[i] = 0; }
-      let ni = cur.selIdx[i] + dirn;
-      let nd = i, warn = false;
-      if (ni < 0) { nd = (i + 6) % 7; const L = sched.days[nd] || []; ni = L.length - 1; warn = true; }
-      else if (ni >= sched.days[i].length) { nd = (i + 1) % 7; ni = 0; warn = false; }
-      const L = sched.days[nd] || [];
-      if (ni < 0 || ni >= L.length) return;
-      cur.selIdx[i] = ni; cur.selWarn[i] = warn;
+      const L = sched.days[i];
+      const ni = (cur.selIdx[i] + dirn % L.length + L.length) % L.length;
+      cur.selIdx[i] = ni;
       cur.days[i] = L[ni].t;
       renderRows();
       return;
@@ -15367,7 +15383,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
   h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route-, Stations- und MM-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten, MM-Reiter mit Abholstation, Abholrad, Rückgabe, Ziel und geplanter Ankunft je übernommener Route), Adress- und Stations-Favoriten oder alles gemeinsam. Von jeder Reiter-Art werden alle zurzeit offenen Reiter vorausgewählt angehakt mitgeschickt, der Haken ist je Reiter einzeln entfernbar. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen: dann die App über cslk.apk aktualisieren.");
   h += sec("📜 Versions-Historie: Feature-Liste je Version");
-  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.42). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (⏰, 🏠, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (⏰, 🏠, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
+  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.43). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.43</b>: Eichhörnchen-Dialog: Die mitgegebene Verbindungszeit (z. B. die im Stationsreiter gewählte Abfahrtszeit, Beispiel 07:30 Uhr um 0:05 Uhr) ist jetzt die Referenz für ALLE Wochentage, je Tag startet die Auswahl auf der Uhrzeit, die dieser Zeit am nächsten liegt (Gleichstand gewinnt die spätere, z. B. wenn der Zug am Wochenende anders fährt); das ⚠ „Uhrzeit am Vortag“ entfiel, per Definition liegt jede wählbare Uhrzeit immer am angewählten Tag; ◀/▶ bleiben am selben Wochentag und laufen im Kreis (nach der letzten Uhrzeit weiter mit der ersten ab 0 Uhr aufsteigend, vor der ersten weiter mit der letzten absteigend); der Tagesfahrplan wird an starken Haltestellen Stück für Stück nachgeladen (Board liefert max. 120 Abfahrten je Anfrage), bis der ganze Tag in der Auswahl steht.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (⏰, 🏠, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (⏰, 🏠, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE") + "</div>";
   return h;
 }
@@ -18202,7 +18218,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.42 · Build: 26.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.43 · Build: 27.11.2026</div>
 </div>
 </body>
 </html>
