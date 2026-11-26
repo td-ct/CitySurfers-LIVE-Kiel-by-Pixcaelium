@@ -4111,7 +4111,7 @@ renderBigToggles();
 renderBigBtns();
 renderAlarmInd();   // ⏰ der Statusleiste initial füllen (Zahl, Farbe, Geofences)
 renderFhInd();      // 🏠 der Statusleiste initial füllen
-renderPkgInd();     // 🐿️ der Statusleiste initial f��llen (v1.6.33)
+renderPkgInd();     // 🐿️ der Statusleiste initial füllen (v1.6.33)
 setInterval(renderBigBtns, 15000);   // Beschriftungen der Schnellknöpfe auffrischen
 
 // Farben der GPS-Knöpfe initial bewerten (grau = GPS aus, grün/gelb je gespeicherter Position)
