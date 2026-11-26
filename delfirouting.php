@@ -3075,3 +3075,4 @@ function dfr_query_run(array $q): void {
             'mem' => @ini_get('memory_limit')]);
     }
 })();
+
