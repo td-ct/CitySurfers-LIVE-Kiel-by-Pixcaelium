@@ -5983,6 +5983,7 @@ function openPackDlg(ctx, edit) {
     snd: a ? (a.snd || cfg.snd) : cfg.snd,
     vol: a ? (a.vol != null ? a.vol : cfg.vol) : cfg.vol,
     msgWin: a ? a.msgWin !== false : true,   // v1.6.42: eigenes Nachrichtenfenster dieser Alarm-Art offen halten
+    msgAnd: a ? a.msgAnd !== false : true,   // v1.6.44: Update im Android-Benachrichtigungszentrum (nur Anzeige, Alarm läuft weiter)
     src: a ? (a.src || "auto") : "auto",   // v1.6.38: Fahrplan-Katalog
     selIdx: [-1, -1, -1, -1, -1, -1, -1]   // Blatt-Index je Tag im Fahrplan
   };
@@ -6009,6 +6010,8 @@ function openPackDlg(ctx, edit) {
       '<label class="dstage"><input type="checkbox" class="atone"' + (cur.tone ? " checked" : "") + "> Weckton</label>" +
       '<label class="dstage" title=" Nachrichtenfenster der 🐿️-Alarme offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + (cur.msgWin ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
+      '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der 🐿️-Alarme aus; der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
+        '<input type="checkbox" class="amand"' + (cur.msgAnd ? " checked" : "") + "> In Android benachrichtigen</label>" +
       '<label class="dstage">Ton <select class="asnd">' +
         ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cur.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") + "</select></label>" +
       '<label class="dstage">Lautstärke <input type="range" class="avol" min="0.1" max="1" step="0.05" value="' + cur.vol + '"></label>' +
@@ -6160,6 +6163,7 @@ function openPackDlg(ctx, edit) {
         win: cur.win, vib: !!(vib && vib.checked), tone: !!(tone && tone.checked),
         snd: snd ? snd.value : cfg.snd, vol: vol ? Number(vol.value) : cfg.vol,
         msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes Nachrichtenfenster
+        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked),   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
         src: cur.src, schedSrcs: null   // v1.6.38: Katalog-Wahl; Live-Kette fuellt packSchedOf
       });
       base.lastCheck = 0; base.firedFor = "";
@@ -6446,8 +6450,14 @@ function updateFhNotification() {
   try { fhMsgUpdate(false); } catch (e) {}   // v1.6.42: 🏠-Nachrichtenfenster im Takt mitführen
   if (!window.KvgNative) return;
   if (fhOff) { nativeCall("cancelNotify", "fh-scan"); return; }   // global aus: Nachricht weg
-  if (!fhCandidates.size) { nativeCall("cancelNotify", "fh-scan"); return; }
-  const arr = [...fhCandidates.values()];
+  // v1.6.44 (Timo-Wunsch 27.11.2026): Der 🏠-Platz im Android-Benachrichtigungs-
+  // zentrum führt nur Funde von Zielen mit Haken „In Android benachrichtigen“;
+  // ohne Treffer verschwindet die Nachricht, die Suche läuft weiter.
+  const arr = [...fhCandidates.values()].filter(c => {
+    const t = fhTargets().find(x => x.id === c.tid);
+    return !t || t.cfg.msgAnd !== false;
+  });
+  if (!arr.length) { nativeCall("cancelNotify", "fh-scan"); return; }
   const title = "🏠 Finde nach Hause: " + arr.length +
     (arr.length === 1 ? " mögliche Fahrt" : " mögliche Fahrten");
   const text = arr.map(c => "Linie " + c.line + " → " + c.dir + ", " + c.station +
@@ -6542,6 +6552,7 @@ async function fhNotify(tgt, st, dep, aMin, bestS) {
   // 🏠-Symbol der Statusleiste (aktive Hinweise zählen auch im Browser)
   const candKey = tgt.id + "|" + dep.line + "→" + dep.direction + "|" + dep.tripId + "|" + st.shortName;
   fhCandidates.set(candKey, {
+    tid: tgt.id,   // v1.6.44: Ziel-Verknüpfung für den Android-Haken „In Android benachrichtigen“
     line: dep.line, dir: dep.direction, station: st.name, clock: depClock,
     los: losMin, until: (aMin + 5) * 60000 + new Date().setHours(0, 0, 0, 0)
   });
@@ -6614,6 +6625,8 @@ function openFhDlg(kind, id) {
     '<label class="dstage"><input type="checkbox" class="fhtone"' + (cfg.tone !== false ? " checked" : "") + "> Hinweiston</label>" +
     '<label class="dstage" title="Nachrichtenfenster der 🏠-Hinweise offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
       '<input type="checkbox" class="fhwin"' + (cfg.msgWin !== false ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
+    '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der 🏠-Hinweise aus; die Suche läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
+      '<input type="checkbox" class="fhand"' + (cfg.msgAnd !== false ? " checked" : "") + "> In Android benachrichtigen</label>" +
     '<label class="dstage">Ton <select class="fhsnd">' +
       ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === (cfg.snd || acfg.snd) ? " selected" : "") + ">" + x[1] + "</option>").join("") +
       "</select></label>" +
@@ -6637,12 +6650,14 @@ function openFhDlg(kind, id) {
       cfg.vib = wrap.querySelector(".fhvib").checked;
       cfg.tone = wrap.querySelector(".fhtone").checked;
       cfg.msgWin = !!(wrap.querySelector(".fhwin") && wrap.querySelector(".fhwin").checked);   // v1.6.42: eigenes Nachrichtenfenster
+      cfg.msgAnd = !!(wrap.querySelector(".fhand") && wrap.querySelector(".fhand").checked);   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
       cfg.posR = Number(wrap.querySelector(".fhposR").value);
       cfg.losWin = Number(wrap.querySelector(".fhlos").value);
       cfg.tgtR = Number(wrap.querySelector(".fhtgtR").value);
       cfg.snd = wrap.querySelector(".fhsnd").value;
       cfg.vol = Number(wrap.querySelector(".fhvol").value);
       if (kind === "addr") saveAddrFavs(); else saveFhStopCfg();
+      try { updateFhNotification(); } catch (err) {}   // v1.6.44: Android-Platz sofort nach Haken-Wechsel auffrischen
       if (cfg.on && window.KvgNative && !fhNotifAsked) {
         fhNotifAsked = true;
         nativeCall("requestNotifPerm");   // Freigabe für System-Hinweise (falls noch nicht erteilt)
@@ -6859,6 +6874,8 @@ function openAlarmDialog(tripId, preSn) {
       '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
       '<label class="dstage" title="Nachrichtenfenster der ⏰-Wecker offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + ((old.msgWin !== false) ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
+      '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der ⏰-Wecker aus; der Wecker selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
+        '<input type="checkbox" class="amand"' + ((old.msgAnd !== false) ? " checked" : "") + "> In Android benachrichtigen</label>" +
       '<label class="dstage">Ton <select class="asnd">' +
         ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cfg.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") +
         "</select></label>" +
@@ -6892,6 +6909,8 @@ function openAlarmDialog(tripId, preSn) {
     old = (aKey && alarms.get(aKey)) || {};
     const mwEl = wrap.querySelector(".amwin");   // v1.6.42: gespeicherten Haken nach dem Stations-Wechsel vorbelegen
     if (mwEl) mwEl.checked = old.msgWin !== false;
+    const maEl = wrap.querySelector(".amand");   // v1.6.44: Android-Haken ebenfalls nach Station-Wechsel vorbelegen
+    if (maEl) maEl.checked = old.msgAnd !== false;
     selDist = old.dist || null;
     selLead = old.leadMin || null;
     if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
@@ -6949,7 +6968,8 @@ function openAlarmDialog(tripId, preSn) {
         tabSn: currentBus ? currentBus.sn : (currentStop ? currentStop.shortName : null),
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0,
-        msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked) });   // v1.6.42: eigenes ⏰-Nachrichtenfenster
+        msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes ⏰-Nachrichtenfenster
+        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked) });   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
       saveAlarms();
       // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
       // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
@@ -7076,6 +7096,8 @@ function openRouteAlarmDialog() {
       '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
       '<label class="dstage" title="Nachrichtenfenster der ⏰-Wecker offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + ((old.msgWin !== false) ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
+      '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der ⏰-Wecker aus; der Wecker selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
+        '<input type="checkbox" class="amand"' + ((old.msgAnd !== false) ? " checked" : "") + "> In Android benachrichtigen</label>" +
       '<label class="dstage">Ton <select class="asnd">' +
         ALARM_SOUNDS.map(x => '<option value="' + x[0] + '"' + (x[0] === cfg.snd ? " selected" : "") + ">" + x[1] + "</option>").join("") +
         "</select></label>" +
@@ -7106,6 +7128,8 @@ function openRouteAlarmDialog() {
     old = (aKey && alarms.get(aKey)) || {};
     const mwEl = wrap.querySelector(".amwin");   // v1.6.42: gespeicherten Haken nach dem Stations-Wechsel vorbelegen
     if (mwEl) mwEl.checked = old.msgWin !== false;
+    const maEl = wrap.querySelector(".amand");   // v1.6.44: Android-Haken ebenfalls nach Station-Wechsel vorbelegen
+    if (maEl) maEl.checked = old.msgAnd !== false;
     selDist = old.dist || null;
     selLead = old.leadMin || null;
     if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
@@ -7164,7 +7188,8 @@ function openRouteAlarmDialog() {
         tabSn: null,   // gehört der Route, keinem Reiter: überlebt Reiter-Schließen
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0,
-        msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked) });   // v1.6.42: eigenes ⏰-Nachrichtenfenster
+        msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes ⏰-Nachrichtenfenster
+        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked) });   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
       saveAlarms();
       if (selLead && !alarmsOff) {
         const ms = nativeAlarmEpoch(aKey, selLead);
@@ -7941,9 +7966,13 @@ function alarmRingEpoch(a) {
 // und 🏠 fh-scan): eine Karte je Status, mit jedem Pruef-Update aktualisiert
 // (still, Popup gibt es nur beim Ausloesen selbst). Ohne Alarme null -> Karte weg.
 function packNativeEntry() {
-  if (!packAlarms.length) return null;
+  // v1.6.44 (Timo-Wunsch 27.11.2026): Der 🐿️-Platz im Android-Benachrichtigungs-
+  // zentrum führt nur Alarme mit Haken „In Android benachrichtigen“; ohne
+  // Treffer verschwindet die Nachricht, die Alarme laufen weiter.
+  const shown = packAlarms.filter(a => a.msgAnd !== false);
+  if (!shown.length) return null;
   const now = Date.now();
-  const lines = packAlarms.map(a => {
+  const lines = shown.map(a => {
     const occ = packNextOcc(a);
     let s = a.line + " -> " + (a.dir || "?") + " · " +
       ((a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag") +
@@ -7951,10 +7980,10 @@ function packNativeEntry() {
     if (a.lastMsg && a.lastMsgTs && now - a.lastMsgTs < 36 * 3600000) s += " · " + a.lastMsg;
     return s;
   });
-  const ringN = packAlarms.filter(a => ringing.has(a.id)).length;
+  const ringN = shown.filter(a => ringing.has(a.id)).length;
   return {
     key: "eichhoernchen",
-    title: "🐿️ " + packAlarms.length + (packAlarms.length === 1 ? " Eichhörnchen-Alarm" : " Eichhörnchen-Alarme") +
+    title: "🐿️ " + shown.length + (shown.length === 1 ? " Eichhörnchen-Alarm" : " Eichhörnchen-Alarme") +
       (ringN ? " · läutet!" : ""),
     text: lines.join("\n"),
     tab: ""
@@ -7997,8 +8026,14 @@ function renderAlarmInd() {
   // Nachrichten in EINEM Array (fehlende keys werden geloescht).
   if (window.KvgNative) {
     const arr = [];
-    if (entries.length) {
-      const sorted = entries.slice().sort((a, b) => {
+    // v1.6.44 (Timo-Wunsch 27.11.2026): Der ⏰-Platz im Android-Benachrichtigungs-
+    // zentrum („wecker-gesamt“) führt nur Wecker mit Haken „In Android
+    // benachrichtigen“; ohne Treffer verschwindet die Nachricht, die Wecker
+    // laufen weiter. Nativ läutende Wecker ohne Alarm-Objekt (Seite neu geladen)
+    // stehen immer drin, sie klingeln gerade.
+    const naEntries = entries.filter(en => en.ring || en.a.msgAnd !== false);
+    if (naEntries.length) {
+      const sorted = naEntries.slice().sort((a, b) => {
         const ea = a.ring ? 0 : (alarmRingEpoch(a.a) != null ? alarmRingEpoch(a.a) : Infinity);
         const eb = b.ring ? 0 : (alarmRingEpoch(b.a) != null ? alarmRingEpoch(b.a) : Infinity);
         return ea - eb;
@@ -8016,9 +8051,9 @@ function renderAlarmInd() {
       }
       arr.push({
         key: "wecker-gesamt",
-        title: "⏰ " + entries.length + (entries.length === 1 ? " Wecker" : " Wecker") +
+        title: "⏰ " + naEntries.length + (naEntries.length === 1 ? " Wecker" : " Wecker") +
           (sorted[0].a.name ? " · nächster: " + sorted[0].a.name : ""),
-        text: entries.map(en => en.a.name + " – " + en.cond + en.when).join("\n"),
+        text: naEntries.map(en => en.a.name + " – " + en.cond + en.when).join("\n"),
         tab: sorted[0].a.tabSn || "",
         actions: acts
       });
@@ -15336,6 +15371,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += sec("⏰ Wecker");
   h += P("<b>Distanz-Wecker</b> klingeln, sobald du der Haltestelle bis auf die gewählte Distanz näherst (<b>250 m bis 10 km</b>) – im Hintergrund über Android-Geofencing, deshalb muss Android für die App „Immer zulassen“ (Standort) gesetzt sein. <b>Zeit-Wecker</b> klingeln 2/5/10/20 Minuten vor planmäßiger bzw. voraussichtlicher Abfahrt. Distanz wird <b>nur mit aktiver GPS-Ortung</b> gemessen (◎ oben): Ohne GPS bliebe der Abstand gegen eine stehenbleibende alte Position falsch, deshalb ruht der Wecker dann still (mit Warnhinweis am Eintrag und beim Stellen). Bahnhöfe der DB sind eingeschlossen, ihre Koordinaten kommen aus der Bahnhof-Liste. Der ⏰-Indikator sammelt alle; Wecker leben je Station, Reitermitnahme inklusive.");
   h += P("<b>Eigenes Nachrichtenfenster je Alarm-Art (v1.6.42):</b> ⏰ Wecker, 🏠 Finde nach Hause und 🐿️ Eichhörnchen haben je ein kleines eigenes Fenster in der Ecke. Im jeweiligen Alarm-Dialog setzt die Checkbox <b>„Eigenes Nachrichtenfenster“</b>, ob das Fenster der Art offen bleibt (solange mindestens ein Alarm der Art den Haken hat); nimmst du den Haken raus oder klickst das Fenster mit ✕ weg, bleibt es weg – <b>aber nur bis ein Alarm der Art auslöst</b>: Dann erscheint das zugehörige Fenster auf jeden Fall wieder. Im 🐿️-Fenster stehen alle gespeicherten Alarme untereinander mit Linie, Richtung, Tagen und der nächsten Abfahrt; das <b>↻</b> je Zeile prüft genau diesen Alarm sofort live über alle Fahrplan-Kataloge. Das ⏰-Fenster listet die gestellten Wecker mit Bedingung und letzter Meldung, das 🏠-Fenster die aktiven Funde und überwachten Ziele.");
+  h += P("<b>Android-Benachrichtigungen je Alarm-Art (v1.6.44):</b> Jede der drei Alarm-Arten hat im Android-Benachrichtigungszentrum ihren eigenen Platz (⏰ ein Sammelplatz für alle Wecker, 🏠 für alle Finde-nach-Hause-Funde, 🐿️ für alle Eichhörnchen-Alarme), den die App laufend aktualisiert, statt für jede Meldung eine neue Nachricht anzulegen. Ob ein Alarm dort mit drin steht, entscheidet in jedem Alarm-Dialog die Checkbox <b>„In Android benachrichtigen“</b> (direkt neben „Eigenes Nachrichtenfenster“): Haken weg blendet <b>nur die Android-Benachrichtigung</b> aus, der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben unberührt). Hat keine Art mehr einen angehakten Alarm, verschwindet dessen Platz im Benachrichtigungszentrum; läutende Wecker, die Android selbst im Hintergrund ausgelöst hat, bleiben trotzdem drin, solange sie klingeln.");
   h += sec("🗂 Reiter: Stationen und Routen nebeneinander");
   h += P("<b>Beliebig viele Reiter:</b> Jede Stationsuche und jede geplante Route öffnet ihren eigenen Reiter in der Leiste – 🚏 kennzeichnet Stationen, 🧭 Routen. Auf schmalen Handy-Displays bricht die Leiste auf mehrere Zeilen um und scrollt notfalls senkrecht. Die Reihenfolge änderst du per <b>Ziehen</b> (Drag &amp; Drop) oder mit den <b>◀ ▶</b>-Knöpfen im Reiter.");
   h += P("<b>Umbenennen und Behalten:</b> Langes Drücken (oder Rechtsklick) auf einen Reiter öffnet ein Namensfeld – auch ein leerer Name ist erlaubt, dann greift wieder der Standardname. Die offenen Reiter samt Reihenfolge und aktuellem Stand sind nach einem App-Neustart oder Neuladen wieder da, die MM-Reiter (🚲 Micromobility) samt ihrer übernommenen Routen genau wie Stations- und Route-Reiter; ein Tipp auf ✕ schließt einen Reiter endgültig.");
@@ -15383,7 +15419,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
   h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route-, Stations- und MM-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten, MM-Reiter mit Abholstation, Abholrad, Rückgabe, Ziel und geplanter Ankunft je übernommener Route), Adress- und Stations-Favoriten oder alles gemeinsam. Von jeder Reiter-Art werden alle zurzeit offenen Reiter vorausgewählt angehakt mitgeschickt, der Haken ist je Reiter einzeln entfernbar. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen: dann die App über cslk.apk aktualisieren.");
   h += sec("📜 Versions-Historie: Feature-Liste je Version");
-  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.43). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.43</b>: Eichhörnchen-Dialog: Die mitgegebene Verbindungszeit (z. B. die im Stationsreiter gewählte Abfahrtszeit, Beispiel 07:30 Uhr um 0:05 Uhr) ist jetzt die Referenz für ALLE Wochentage, je Tag startet die Auswahl auf der Uhrzeit, die dieser Zeit am nächsten liegt (Gleichstand gewinnt die spätere, z. B. wenn der Zug am Wochenende anders fährt); das ⚠ „Uhrzeit am Vortag“ entfiel, per Definition liegt jede wählbare Uhrzeit immer am angewählten Tag; ◀/▶ bleiben am selben Wochentag und laufen im Kreis (nach der letzten Uhrzeit weiter mit der ersten ab 0 Uhr aufsteigend, vor der ersten weiter mit der letzten absteigend); der Tagesfahrplan wird an starken Haltestellen Stück für Stück nachgeladen (Board liefert max. 120 Abfahrten je Anfrage), bis der ganze Tag in der Auswahl steht.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (⏰, 🏠, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (⏰, 🏠, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
+  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.44). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.44</b>: Alle drei Alarm-Arten (⏰, 🏠, 🐿️) melden sich doppelt: im In-App-Popup UND im Android-Benachrichtigungszentrum, wo jede Art ihren eigenen Platz behält und ihre Updates selbst hineinschreibt (⏰ ein Sammelplatz für alle Wecker, 🏠 für alle Finde-nach-Hause-Funde, 🐿️ für alle Eichhörnchen-Alarme); je Alarm entscheidet die neue Checkbox „In Android benachrichtigen“ (in allen Alarm-Dialogen, neben „Eigenes Nachrichtenfenster“), ob dessen Meldungen in Android stehen – Haken weg blendet nur die Android-Benachrichtigung aus, der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben); ohne mindestens einen angehakten Alarm einer Art verschwindet deren Platz im Benachrichtigungszentrum.<br><b>v1.6.43</b>: Eichhörnchen-Dialog: Die mitgegebene Verbindungszeit (z. B. die im Stationsreiter gewählte Abfahrtszeit, Beispiel 07:30 Uhr um 0:05 Uhr) ist jetzt die Referenz für ALLE Wochentage, je Tag startet die Auswahl auf der Uhrzeit, die dieser Zeit am nächsten liegt (Gleichstand gewinnt die spätere, z. B. wenn der Zug am Wochenende anders fährt); das ⚠ „Uhrzeit am Vortag“ entfiel, per Definition liegt jede wählbare Uhrzeit immer am angewählten Tag; ◀/▶ bleiben am selben Wochentag und laufen im Kreis (nach der letzten Uhrzeit weiter mit der ersten ab 0 Uhr aufsteigend, vor der ersten weiter mit der letzten absteigend); der Tagesfahrplan wird an starken Haltestellen Stück für Stück nachgeladen (Board liefert max. 120 Abfahrten je Anfrage), bis der ganze Tag in der Auswahl steht.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (⏰, 🏠, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (⏰, 🏠, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE") + "</div>";
   return h;
 }
@@ -18218,7 +18254,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.43 · Build: 27.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.44 · Build: 27.11.2026</div>
 </div>
 </body>
 </html>
