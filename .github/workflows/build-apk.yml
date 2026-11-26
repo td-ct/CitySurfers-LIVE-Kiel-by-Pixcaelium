@@ -60,7 +60,7 @@ jobs:
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           gh release create "$TAG" cslk.apk cslkd.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "CitySurfers LIVE Kiel – Android App" \
+            --title "CitySurfers LIVE – Android App" \
             --notes "Mini-App: WebView + native Wecker (AlarmManager) und Vibration.
           cslk.apk = Release-Build, cslkd.apk = Debug-Build (parallele Installation möglich).
           Beide mit CI-Debug-Key signiert: Updates durch Deinstallieren + Neuinstallieren." \
