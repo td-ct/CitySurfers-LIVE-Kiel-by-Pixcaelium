@@ -275,6 +275,10 @@
   }
   .rowref:hover { color: #e2e8f0; border-color: #4d8fd6; }
   .rowref:active { color: #e2e8f0; border-color: #4d8fd6; }
+  /* v1.6.36: Zeit-Auswahl (Abfahrten ab HH:MM) in der Stations-Kopfzeile */
+  .sechead .depat { background: #0b1220; border: 1px solid #334155; color: #e2e8f0; border-radius: 7px; font-size: .78rem; padding: 2px 5px; cursor: pointer; flex-shrink: 0; font-family: inherit; }
+  .sechead .atnow { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 7px; font-size: .72rem; padding: 2px 7px; cursor: pointer; flex-shrink: 0; }
+  .sechead .atnow:hover, .sechead .depat:hover { color: #e2e8f0; border-color: #4d8fd6; }
   .star { background: none; border: none; cursor: pointer; font-size: 1.1rem; line-height: 1;
     color: #fbbf24; padding: 2px 4px; flex-shrink: 0; }
   .star.off { color: #475569; }
@@ -4221,6 +4225,76 @@ function tabGpsBtnHTML(sn) {
         : "GPS an (±" + Math.round((accPos && accPos.acc) || 0) + " m) für die Fußwege dieses Reiters – Klick schaltet das GPS aus";
   return '<button class="gpsbtn' + gpsBtnCls(st) + '" data-depgps="1" title="' + title + '">GPS</button>';
 }
+// v1.6.36: Stations-Panel-Inhalt setzen - tippt der Nutzer gerade in die Zeit-
+// Auswahl, wird das Neurendern fuer diese Runde ausgesetzt (Input behält Fokus).
+function stationPanelSetHTML(inner, withMarquee) {
+  const ae = document.activeElement;
+  if (ae && ae.classList && ae.classList.contains("depat") &&
+      stationPanel.contains(ae)) return;   // nicht rendern, Eingabe läuft
+  if (stationPanel.dataset.last !== inner) {
+    stationPanel.dataset.last = inner;
+    stationPanel.innerHTML = inner;
+    if (withMarquee) marqueeify(stationPanel);
+  }
+}
+// ---------- v1.6.36: Abfahrten ab gewählter Uhrzeit (Zeit-Auswahl im Kopf) ----------
+// HH:MM -> absolute Zeit heute; liegt sie mehr als 6 h in der Vergangenheit,
+// gehört sie zum Folgetag (gleiche Regel wie der Folgefahrten-Anker).
+function depAtAnchorMs(hm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hm || ""));
+  if (!m) return null;
+  const d = new Date();
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  if (d.getTime() < Date.now() - 6 * 3600000) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+// Fahrplan-Liste ab dem Anker laden (nah.sh-Board ab Ankerzeit, je Stationstyp
+// die passende Lid + Produktmaske, max. 40 Einträge, 10-min-Frische)
+async function fetchAtDeps(sn) {
+  const v = viewOf(sn);
+  const stop = stops.find(s => s.shortName === sn);
+  if (!v || !stop || !v.atHm) return;
+  const T = depAtAnchorMs(v.atHm);
+  if (T == null) return;
+  v.atMs = T;
+  v.atLoading = true;
+  renderPanels();
+  try {
+    let lid, mask = "32";
+    if (isDB(sn)) { lid = (dbStopOf(sn) || {}).lid || null; mask = "31"; }
+    else if (isRS(sn)) { lid = ((remoteStops.get(sn) || {}).lid) || null; mask = "511"; }
+    else lid = await nahshLocFor(stop);
+    if (!lid) { v.atDeps = null; v.atErr = "Haltestelle im nah.sh-Fahrplan unbekannt."; }
+    else {
+      const raw = await nahshBoardEntries(lid, new Date(T - 60000), mask);
+      v.atDeps = raw.filter(e => e.absMs >= T - 60000)
+        .sort((a, b) => a.absMs - b.absMs).slice(0, 40).map(e => {
+          const now = Date.now();
+          return {
+            tripId: e.tripId, line: e.line, direction: e.direction,
+            plannedTime: e.plannedTime, actualTime: e.actualTime,
+            status: e.hasRT ? "PREDICTED" : "PLANNED",
+            actualRelativeTime: (e.absMs - now) / 1000,
+            absMs: e.absMs, plat: e.plat || null, alerts: []
+          };
+        });
+      v.atErr = null;
+    }
+  } catch (e) { v.atDeps = null; v.atErr = "Abfrage fehlgeschlagen (Netzwerk?)."; }
+  v.atTs = Date.now();
+  v.atLoading = false;
+  renderPanels();
+}
+// Zeit-Auswahl setzen ("" = jetzt): Liste neu laden und anzeigen
+function setDepAt(sn, hm) {
+  const v = viewOf(sn);
+  if (!v) return;
+  v.atHm = hm || "";
+  v.atDeps = null; v.atTs = 0; v.atErr = null;
+  if (v.atHm) fetchAtDeps(sn);
+  else { setLocNote("Abfahrten wieder ab jetzt."); renderPanels(); }
+  renderViews();
+}
 function renderStationPanel() {
   if (!currentStop) { stationPanel.hidden = true; stationPanel.innerHTML = ""; return; }
   const v = stopViews.get(currentStop.shortName);
@@ -4240,21 +4314,39 @@ function renderStationPanel() {
         escapeHtml(RS_SVC_LABEL[rsMeta.svc] || "nah.sh") + "</span>"
       : starHTML(currentStop.shortName)) +
     tabGpsBtnHTML(currentStop.shortName) +
+    // v1.6.36: Zeit-Auswahl - Abfahrten ab gewaehlter Uhrzeit, Standard jetzt
+    '<input type="time" class="depat" data-at="' + escapeHtml(currentStop.shortName) +
+      '" value="' + escapeHtml(v && v.atHm || "") +
+      '" title="Abfahrten ab dieser Uhrzeit anzeigen (leer oder „Jetzt“ = ab jetzt)">' +
+    ((v && v.atHm) ? '<button class="atnow" data-atnow="' + escapeHtml(currentStop.shortName) +
+      '" title="Zurück auf jetzt schalten">Jetzt</button>' : "") +
     '<button class="rowref" data-ref="' + escapeHtml(currentStop.shortName) +
       '" title="Diese Haltestelle neu abfragen">↻</button>' +
     (stationPanelOpen ? "" : ' <span class="sfrozen" title="Eingefroren: dieser Block aktualisiert sich nicht mehr">❄</span>') +
     "</div>";
   if (!stationPanelOpen) {
     const inner = head + stationPanelCache;
-    if (stationPanel.dataset.last !== inner) {
-      stationPanel.dataset.last = inner;
-      stationPanel.innerHTML = inner;
-    }
+    stationPanelSetHTML(inner, false);
     stationPanel.hidden = false;
     return;
   }
   let body = "";
-  if (v && v.fetched) {
+  if (v && v.atHm) {   // v1.6.36: Zeit-Anker gesetzt - Liste ab gewählter Uhrzeit
+    if (!v.atDeps && !v.atLoading && (!v.atTs || Date.now() - v.atTs > 600000))
+      fetchAtDeps(currentStop.shortName);   // 10-min-Frische wie die Plan-Fahrten
+    if (v.atLoading)
+      body += '<small class="rowinfo dim">Abfahrten ab ' + escapeHtml(v.atHm) + ' Uhr werden geladen …</small>';
+    else if (v.atErr)
+      body += '<small class="rowinfo">⚠️ ' + escapeHtml(v.atErr) + ' ↻ oben oder „Jetzt“ und erneut wählen versucht es noch einmal.</small>';
+    else if (!(v.atDeps || []).length)
+      body += '<small class="rowinfo dim">Keine Abfahrten ab ' + escapeHtml(v.atHm) + ' Uhr gefunden (Fahrplan nah.sh).</small>';
+    else {
+      body += '<small class="rowinfo dim">Abfahrten ab ' + escapeHtml(v.atHm) + ' Uhr (Fahrplan, inklusive Echtzeit wo vorhanden):</small>';
+      const tv = { stop: v.stop, meters: v.meters, fetchTs: Date.now(),
+        deps: v.atDeps, platforms: v.platforms };
+      body += busLinesHTML(tv, null, true).map(l => l.html).join("");
+    }
+  } else if (v && v.fetched) {
     if (v.error)   // letzte Aktualisierung fehlgeschlagen: Altdaten + Hinweis statt Stillstand
       body += '<small class="rowinfo dim">⚠️ Aktualisierung fehlgeschlagen – zeige den letzten Stand. ↻ oben versucht es erneut.</small>';
     // Live-Abfrage leer (z. B. mitten in der Nacht): planmäßige Verbindungen
@@ -4283,11 +4375,7 @@ function renderStationPanel() {
       body += '<small class="rowinfo dim">Alle angezeigten Abfahrten sind abgefahren – werde neu geladen …</small>';
       stationPanelCache = body;
       const innerStale = head + body;
-      if (stationPanel.dataset.last !== innerStale) {
-        stationPanel.dataset.last = innerStale;
-        stationPanel.innerHTML = innerStale;
-        marqueeify(stationPanel);
-      }
+      stationPanelSetHTML(innerStale, true);
       stationPanel.hidden = false;
       refetchStop(currentStop.shortName, false);
       return;
@@ -4313,11 +4401,7 @@ function renderStationPanel() {
   }
   stationPanelCache = body;   // Körper fürs Einfrieren (Abfahrtszeilen ohne Kopf)
   const inner = head + body;
-  if (stationPanel.dataset.last !== inner) {
-    stationPanel.dataset.last = inner;
-    stationPanel.innerHTML = inner;
-    marqueeify(stationPanel);
-  }
+  stationPanelSetHTML(inner, true);
   stationPanel.hidden = false;
   // Kein Fußweg-Routing, solange der Fahrtverlauf offen ist: Luftlinie reicht
   // (spart Abfragen); im reinen Stations-Panel bleibt das exakte Routing aktiv.
@@ -7176,14 +7260,21 @@ stationPanel.addEventListener("click", e => {
   if (earlier) { earlierDeps(earlier.dataset.earlier); return; }
   const dg = e.target.closest("[data-depgps]");
   if (dg) { depGpsToggle(); return; }
+  const atnow = e.target.closest("[data-atnow]");   // v1.6.36: Zeit-Anker zurücksetzen
+  if (atnow) { setDepAt(atnow.dataset.atnow, ""); return; }
   const ref = e.target.closest("[data-ref]");
   if (ref) {   // ↻ sitzt jetzt in der Kopfzeile
-    if (refetchGateOk("ref:" + ref.dataset.ref)) refetchStop(ref.dataset.ref, true);
+    if (refetchGateOk("ref:" + ref.dataset.ref)) {
+      refetchStop(ref.dataset.ref, true);
+      const av = viewOf(ref.dataset.ref);
+      if (av && av.atHm) fetchAtDeps(ref.dataset.ref);   // v1.6.36: verankerte Liste mit auffrischen
+    }
     else setLocNote("↻ zuletzt vor wenigen Sekunden gedrückt – frühestens in 5 Sekunden wieder.");
     return;
   }
   const ssec = e.target.closest("[data-ssec]");
   if (ssec) {
+    if (e.target.closest("input.depat") || e.target.closest(".atnow")) return;   // v1.6.36: Zeit-Auswahl klappt nichts zu
     stationPanelOpen = !stationPanelOpen;   // zugeklappt = eingefroren
     renderStationPanel();
     return;
@@ -7200,6 +7291,10 @@ stationPanel.addEventListener("click", e => {
     const [sn, tripId] = bus.dataset.bus.split("~");
     selectBus(sn, tripId);
   }
+});
+stationPanel.addEventListener("change", e => {   // v1.6.36: Zeit-Auswahl der Abfahrten
+  const inp = e.target.closest("input.depat");
+  if (inp) setDepAt(inp.dataset.at, inp.value);
 });
 busPanel.addEventListener("click", e => {
   const btx = e.target.closest("[data-btx]");
@@ -14709,6 +14804,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>CitySurfers LIVE - Mehr Treffer, Blättern an der Liste, ▶ statt Auto-Suche (v1.6.21):</b> Timos Wünsche vom 25.11.2026 abends: (1) Die Verbindungssuche zeigt normalerweise wieder <b>fünf bis sechs Routen</b>: Reicht die erste Suchausbeute dafür nicht (wenige erreichbare Verbindungen im JETZT-Modus), blättert die Suche automatisch weiter (bis zu vier zusätzliche Runden), bis mindestens sechs erreichbare Verbindungen stehen. (2) Über und unter der Ergebnisliste stehen die Blätter-Knöpfe <b>◀ Frühere</b> und <b>＋ Weitere</b>: Sie laden frühere bzw. spätere Verbindungen NACH und fügen sie sofort einsortiert in die bestehende Liste ein, ohne die bisherigen Ergebnisse neu zu laden; frisch nachgeladene Karten sind leicht bläulich hinterlegt. Während des Nachladens bleibt die Liste stehen und an der Knopf-Stelle erscheint kurz der Hinweis „Suche Verbindungen (… Router …)“. (3) Die Kontrollen oben lösen <b>keine Suche mehr von selbst</b> aus: Zubringer-Schalter (🚲/🛴 mit 🅛), Fahrrad-Tempo, Spar-Schwelle und ☂ Regenschirm ändern nur die Einstellung (☂ bewertet die fertige Liste sofort neu), gestartet wird grundsätzlich über den <b>▶-Knopf</b>. Der ▶-Knopf steht im Route-Reiter jetzt klar rechts am Ende der Kontroll-Reihe, im Routen-Dialog groß rechts unten, und der ☂-Haken ist im Dialog in die Zeit-Zeile gewandert (mit dem ▶ getauscht).");
   h += P("<b>CitySurfers LIVE - Router Alle (parallel) und kurze Verpasst-Hinweise (v1.6.22):</b> Timos Wünsche vom 25.11.2026 spät: (1) Der Router <b>Alle</b> (bisher 🤖 Auto) fragt jetzt <b>alle passenden Router gleichzeitig</b> ab - NAH.SH und VBB mit Echtzeit, delfirouting (Soll-Fahrplan, bundesweit) und die Zug-Verbindungen zwischen den nächstgelegenen Bahnhöfen. Dubletten (dieselbe Fahrt über zwei Router) fliegen raus, die gemeinsame Sortierung (⏱/🚀/🔁/⭐) bewertet alle Treffer gleich, und die Vielfalt-Auswahl zieht aus dem ganzen Pool die 10 Karten. Ein gescheiterter Router blockiert die anderen nicht mehr, und unter der Liste steht kurz, wie viele Treffer jeder Router beigesteuert hat. (2) Die Warnhinweise der gewählten Verbindung sind jetzt kurz und nicht mehr definitiv: Der rote Kasten sagt nur noch <b>Aufbruch ggf. verpasst!</b>, der grüne <b>Schon aufgebrochen: Der Zubringer ist erledigt, du wartet bereits an der Haltestelle</b>. Kam der grüne Hinweis, erscheint die Meldung „wird nicht mehr angeboten“ nicht mehr; erst wenn laut Uhr eine Abfahrt im Routenverlauf bereits abgefahren ist und das GPS noch davor steht, heißt es <b>Anschluss ggf. verpasst</b>.");
   h += P("<b>CitySurfers LIVE - Fern-Stationen um eine entfernte Adresse (v1.6.34):</b> Eine aktive Adresse im Haltestellensuchfeld sortiert die Liste ja nach Entfernung zur Adresse - lag die Adresse ausserhalb des Kieler Raums, standen darin trotzdem nur die heimischen Haltestellen (bei einer Hamburger Adresse also Kieler Stops ab 100 km), weil Fern-Stationen bislang nur bei Suchtext ab drei Buchstaben ueber die Haltestellensuche auftauchten. Jetzt laedt die App bei einer Adresse weiter als 15 km vom naechsten heimischen Haltestellenumfeld automatisch die Fern-Stationen im 30-km-Radius um die Adresse nach (Suche mit dem Ort aus dem Adresslabel beim Nah.sh-Ortsverzeichnis, gecacht fuer 10 Minuten) und mischt sie in die Liste ein: Sie sortieren mit nach Entfernung zur Adresse, der Hamburger Hauptbahnhof steht bei einer Hamburger Adresse also ganz oben, mit Luftlinien-Fussweg wie bei jeder Fern-Station. GPS-Positionen und Adressen im Kiel-Umfeld bleiben unveraendert, Fehler des Ortsverzeichnisses bleiben still (dann zeigt sich die gewohnte Liste)."); 
+  h += P("<b>CitySurfers LIVE - Zeit-Auswahl der Abfahrten im Stationsreiter (v1.6.36):</b> In der Kopfzeile des Stationsreiters („Abfahrten: <Name>“, zwischen GPS-Knopf und ↻) steht eine kleine Uhrzeit-Auswahl plus - bei gesetzter Zeit - ein „Jetzt“-Knopf. Standard ist leer = jetzt: Die Abfahrtenliste zeigt wie immer die Live-Abfahrten ab jetzt. Waehlt man eine Uhrzeit (z.B. 17:30), laedt die App den nah.sh-Fahrplan ab genau dieser Zeit und zeigt die Abfahrten ab 17:30 Uhr als Liste (mit Echtzeit, wo nah.sh sie schon kennt; angezeigt werden die ab der gewaehlten Zeit noch nicht abgefahrenen Fahrten). Eine gewaehlte Zeit mehr als 6 Stunden in der Vergangenheit gilt als Folgetag (gleiche Regel wie bei den Folgefahrten). Der „Jetzt“-Knopf (oder die Zeit im Feld loeschen) stellt die normale Live-Ansicht ab jetzt wieder her. Die Zeit gilt je Haltestelle (jeder Reiter behaelt seine Auswahl), ↻ frischt auch die verankerte Liste auf, waehrend man im Feld tippt wird die Anzeige nicht neu aufgebaut (Eingabe behaelt Fokus). Fern-Stationen und DB-Stationen nutzen dieselbe Auswahl mit ihrer bekannten Haltestellen-Kennung und Produktmaske.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen-Fahrplan fuer Fern-Stationen/Zuege + drei eigene Android-Nachrichten (v1.6.35):</b> Der Eichhoernchen-Dialog fand fuer Fern-Stationen (z.B. Hamburg Hbf) und Zuege keine Fahrplanauskunft, weil er die Haltestelle per Namenssuche bei nah.sh neu aufloeste - die gespeicherte Haltestellen-Kennung (Lid) der Fern-Station wird jetzt direkt benutzt (wie seit v1.6.33 in der Fahrplan-Folgeliste), heimische KVG-Haltestellen laufen ueber denselben Pfad wie die Abfahrtsliste. Zweitens poppt das Eichhoernchen-Nachrichtenfenster nicht mehr bei jeder Pruef-Aktualisierung irgendwo auf: Es oeffnet sich nur noch, wenn ein Alarm neu ausloest, sonst laufen die Meldungen still mit - sichtbar ueber das 🐿️-Symbol (Ausklappliste mit der letzten Meldung je Alarm) und als eigene Android-System-Nachricht. Drittens hat jeder der drei Wecker-Typen jetzt seine EIGENE Android-Nachricht (⏰ Wecker gesamt, 🏠 Finde nach Hause, 🐿️ Eichhoernchen), jede regelmessig aktualisiert; Popup nur beim Ausloesen.");
   h += P("<b>CitySurfers LIVE - Eichhoernchen in der Statusleiste + Fern-Stationen haengen nicht mehr (v1.6.33):</b> Das Eichhoernchen 🐿️ steht jetzt als drittes Symbol neben ⏰ und 🏠 in der Statusleiste oben: ohne gestellten Eichhoernchen-Alarm ausgegraut, ab einem Alarm in seiner Eichhoernchen-Farbe (Braunorange) mit Anzahl. Antippen zeigt die Liste aller Eichhoernchen-Alarme (Linie, Richtung, Tage, Station, naechste Abfahrt) - ✎ bearbeitet den Alarm im gewohnten Eichhoernchen-Dialog, ✗ loescht ihn, ein Antippen der Zeile oeffnet ebenfalls den Dialog. Zusaetzlich ein wichtiger Fix: Abfahrtstafeln von Fern-Stationen (z. B. Hamburg Hbf) liessen die App einfrieren - die Folgefahrten-Hinweise unter den Zeilen versuchten fuer Fern-Stationen einen Fahrplan-Abruf ohne gueltige Haltestellen-Kennung, der sofort fehlschlug, und der Fehler-Neuversuch lieferte ueber die Neu-Render-Kette den naechsten sofortigen Fehlversuch: eine Endlosschleife, die den Rechner dauerhaft beschaeftigte. Jetzt nutzen die Folgefahrten die bekannte Kennung der Fern-Station (alle Verkehrsmittel wie ihre Abfahrtstafel) und ein gescheiterter Abruf wird hoechstens einmal pro Minute erneut versucht - die Hinweise erscheinen dann auch fuer Fern-Stationen. Mit Fussweg-Pruefungen oder GPS hatte das Hängen nichts zu tun.");
   h += P("<b>CitySurfers LIVE - Symbolwechsel zum Eichhoernchen (v1.6.32):</b> Timo hat sich nach dem ersten Ausprobieren gegen das Paket entschieden: Der Alarm fuer regelmaessige Verbindungen heisst jetzt Eichhoernchen-Alarm und traegt ueberall das Eichhoernchen-Symbol 🐿️ - an jeder Abfahrtszeile, im Dialog, auf dem Setzen-/Aendern-Knopf, im Nachrichtenfenster (Wachposten) und in den Meldungen. Alles andere ist unveraendert.");
@@ -17575,7 +17671,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.35 · Build: 26.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.36 · Build: 26.11.2026</div>
 </div>
 </body>
 </html>
