@@ -105,7 +105,7 @@ class AlarmLocService : Service() {
     }
 
     private fun stopLoc() {
-        try { client?.removeLocationUpdates(callback) } catch (e: Exception) { }
+        try { callback?.let { c -> client?.removeLocationUpdates(c) } } catch (e: Exception) { }
         client = null
         callback = null
     }
