@@ -1,0 +1,25 @@
+name: index-assemble
+on:
+  push:
+    branches: [main]
+    paths: [".build/**"]
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: index.html aus Teilen zusammensetzen
+        run: |
+          cat $(find .build -maxdepth 1 -name 'p[0-9][0-9]' | sort) > index.html
+          SZ=$(wc -c < index.html)
+          if [ "$SZ" != "1144861" ]; then echo "Falsche Groesse: $SZ (erwartet 1144861)"; exit 1; fi
+          grep -q "Version 1.6.53" index.html || { echo "Version 1.6.53 nicht gefunden"; exit 1; fi
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git rm -rq .build
+          git add index.html
+          git commit -m "index.html v1.6.53 aus .build-Teilen zusammengesetzt [skip ci]" || exit 0
+          git push
