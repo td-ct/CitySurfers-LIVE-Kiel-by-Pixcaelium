@@ -822,6 +822,9 @@
   .pkgmsgrow { border-top: 1px solid #1e3a5f; padding: 4px 0; cursor: pointer; }
   .pkgmsgrow.ring .pkgmsgl { color: #f87171; }
   .pkgref { background: none; border: none; color: #38bdf8; cursor: pointer; font-size: .85rem; padding: 0 2px; }   /* v1.6.42: ↻ Live-Pruefung je Alarm */
+  .pkgmsg .afbtn { cursor: pointer; border: 1px solid #334155; background: #0f172a; color: #94a3b8; padding: 0 6px; margin-left: 6px; font-size: .85rem; }   /* v1.6.57: Pause/✗ je Eintrag im Nachrichtenfenster */
+  .pkgmsg .afbtn:hover { background: #334155; }
+  .afbtn.pzon { color: #e67e00; border-color: #e67e00; }   /* v1.6.57: farbiges (Pause-)Zeichen, wenn der Alarm PAUSIERT ist; aktiv = ausgegraut */
   .pkstat { margin: 1px 0; }   /* v1.6.47: Status-Zeile je Alarm (Fährt/ab/pünktlich/von + ↻ Prüfalter) */
   .pkgpicks { display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; margin-bottom: 6px; }   /* v1.6.48: Verbindungsauswahl der Station im 🐿️-Dialog */
   .pkok { color: #4ade80; font-weight: 700; }
@@ -5578,7 +5581,7 @@ function stopRinging(aKey, keepActive) {
   if (!keepActive && a && a.leadMin == null) { a.paused = true; saveAlarms(); }
 }
 function fireAlarm(aKey, a) {
-  a.lastMsg = "🦉 " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!";   // v1.6.42: Fenster-Meldung; v1.6.52: Eule vorn
+  a.lastMsg = "🦉 Eulen-Alarm: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab!";   // v1.6.42: Fenster-Meldung; v1.6.57: "Eulen-Alarm:" direkt hinter der Eule
   a.lastMsgTs = Date.now();
   clkMsgUpdate(true);   // v1.6.42: eigenes Nachrichtenfenster der Art zeigt sich beim Auslösen sicher
   // v1.6.50: KEINE globale Aus-Taste mehr - die Art-Freigaben (artCfg.clk)
@@ -5592,7 +5595,7 @@ function fireAlarm(aKey, a) {
   nativeCall("cancelAlarm", aKey);   // nativen Wecker mitauslösen (falls in App gestellt)
   firedAlarms.add(aKey);
   startRinging(aKey, a, "clk");   // klingelt/vibriert im 3 s/5 s-Rhythmus bis weggeklickt
-  setLocNote("🦉 Wecker: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab! Zum Beenden 🦉 antippen.");
+  setLocNote("🦉 Eulen-Alarm: " + a.name + " – Bus/Zug ist da bzw. fährt gleich ab! Zum Beenden 🦉 antippen.");
   renderTabs();
   renderAlarmInd();
   if (currentBus) renderBusPanel();
@@ -5683,25 +5686,131 @@ function alarmMsgSync(id, title, rowsHTML, anyWin, forceShow) {
   if (forceShow) { el.hidden = false; delete el.dataset.hide; return; }
   if (!el.dataset.hide) el.hidden = !anyWin;
 }
-function clkMsgUpdate(forceShow) {   // 🦉 Wecker-Fenster: alle gestellten Wecker mit Zustand und letzter Meldung
+// v1.6.57 (Timo-Wunsch 27.11.2026): Typ-Zeile je Wecker mit lebenden Werten -
+// Abstands-Radius plus Reststrecke "(noch x m)" bei laufendem GPS, Zeit-Wecker
+// mit Countdown ("noch M:SS" mit Sekunden unter 3 Minuten).
+function clkMsgCondTxt(a) {
+  const parts = [];
+  if (a.dist) {
+    let s = "Abstand: " + (a.dist >= 1000 ? a.dist / 1000 + " km" : a.dist + " m");
+    const stop = stops.find(x => x.shortName === a.sn) || dbStopOf(a.sn) ||
+      (a.lat != null ? { lat: a.lat, lon: a.lon } : null);
+    const pos = livePos();
+    if (pos && stop && stop.lat != null) {
+      const rem = dist(pos, stop) - a.dist;
+      s += rem > 0 ? " (noch " + formatDist(rem) + ")" : " (Station erreicht)";
+    }
+    parts.push(s);
+  }
+  if (a.leadMin != null) {
+    let s = a.leadMin + " min vor Abfahrt";
+    const ep = alarmRingEpoch(a);
+    if (ep != null) {
+      const remMs = ep - Date.now();
+      if (remMs > 0) {
+        const remS = Math.round(remMs / 1000);
+        s += " · noch " + (remS < 180
+          ? Math.floor(remS / 60) + ":" + String(remS % 60).padStart(2, "0")
+          : Math.round(remS / 60) + " min");
+      } else s += " · jetzt";
+    }
+    parts.push(s);
+  }
+  if (!parts.length) parts.push("gestellt");
+  return parts.join(a.dist && a.leadMin != null ? " oder " : "");
+}
+function clkMsgBind() {   // v1.6.57: ⏸/▶ und ✗ direkt je Eintrag im 🦉-Fenster
+  const el = document.getElementById("clkMsgWin");
+  if (!el || el.dataset.bound) return;
+  el.dataset.bound = "1";
+  el.addEventListener("click", e => {
+    const pb = e.target.closest("[data-cpause]");
+    if (pb) {
+      const k = pb.dataset.cpause, a = alarms.get(k);
+      if (a) {
+        a.paused = !a.paused;
+        saveAlarms();
+        try { nativeClockResync(); } catch (err) {}   // pausierte Zeit-Wecker nativ abmelden, Zaune neu planen
+        setLocNote(a.paused ? "⏸ Eulen-Alarm pausiert: " + (a.name || k) + " (läutet nicht, bleibt gestellt)."
+                            : "▶ Eulen-Alarm aktiv: " + (a.name || k) + ".");
+        renderAlarmInd(); renderTabs();
+      }
+      return;
+    }
+    const db = e.target.closest("[data-cdel]");
+    if (db) {
+      const k = db.dataset.cdel, a = alarms.get(k);
+      alarms.delete(k); saveAlarms();
+      stopRinging(k, true); firedAlarms.delete(k);
+      nativeCall("cancelAlarm", k);
+      setLocNote("🔕 Eulen-Alarm gelöscht: " + (a ? a.name : k) + ".");
+      renderAlarmInd(); renderTabs();
+      if (currentBus) renderBusPanel();
+    }
+  });
+}
+function clkMsgUpdate(forceShow) {   // 🦉 Eulen-Alarm-Fenster: alle Wecker mit Typ, Countdown und Schaltflächen
   const rows = [];
   for (const [k, a] of alarms) {
-    const cond = (a.dist ? "ab " + formatDist(a.dist) + " zur Station" : "") +
-      (a.dist && a.leadMin ? " oder " : "") + (a.leadMin ? a.leadMin + " min vor Abfahrt" : "") || "gestellt";
+    const cond = clkMsgCondTxt(a);
     const msg = a.lastMsgTs && Date.now() - a.lastMsgTs < 36 * 3600000 ? a.lastMsg : "";
     rows.push('<div class="pkgmsgrow' + (ringing.has(k) ? " ring" : "") + '">' +
-      '<div class="pkgmsgl">🦉 ' + escapeHtml(a.name || k) + (a.paused ? ' <span class="dim">(⏸ pausiert)</span>' : "") + "</div>" +
-      '<div class="dim">' + escapeHtml(cond) + (ringing.has(k) ? " · 🚨 läutet gerade" : "") + "</div>" +
+      '<div class="pkgmsgl">🦉 Eulen-Alarm: ' + escapeHtml(a.name || k) +
+        ' <button class="afbtn' + (a.paused ? " pzon" : "") + '" data-cpause="' + escapeHtml(k) + '" title="' +
+        (a.paused ? "Wecker wieder aktivieren" : "Wecker pausieren (läutet nicht, bleibt gestellt)") + '">' +
+        (a.paused ? "▶" : "⏸") + "</button>" +
+        '<button class="afbtn" data-cdel="' + escapeHtml(k) + '" title="Wecker entfernen">✗</button></div>' +
+      '<div class="dim">' + escapeHtml(cond) + (a.paused ? " · ⏸ pausiert" : "") + (ringing.has(k) ? " · 🚨 läutet gerade" : "") + "</div>" +
       (msg ? '<div class="' + (/^(🦉|🕊️|🐿️|🚨)/.test(String(msg)) ? "pkgwarn" : "dim") + '">' + escapeHtml(msg) + "</div>" : "") +
       "</div>");
   }
   let anyWin = false;
   for (const [, a] of alarms) if (a.msgWin !== false) anyWin = true;
-  alarmMsgSync("clkMsgWin", "🦉 Wecker", rows.join(""), anyWin, forceShow);
+  alarmMsgSync("clkMsgWin", "🦉 Eulen-Alarm:", rows.join(""), anyWin, forceShow);
+  clkMsgBind();
 }
-function fhMsgUpdate(forceShow) {   // 🕊️ Finde-nach-Hause-Fenster: aktive Funde und überwachte Ziele
-  const ts = fhTargets();
-  if (!ts.length) { alarmMsgSync("fhMsgWin", "🕊️ Finde nach Hause", "", false, false); return; }
+function fhMsgBind() {   // v1.6.57: ⏸/▶ je Ziel direkt im 🕊️-Fenster
+  const el = document.getElementById("fhMsgWin");
+  if (!el || el.dataset.bound) return;
+  el.dataset.bound = "1";
+  el.addEventListener("click", e => {
+    const pb = e.target.closest("[data-fhpause]");
+    if (!pb) return;
+    const id = pb.dataset.fhpause;
+    let cfg = null, nm = id;
+    if (id.charAt(0) === "a") {
+      const f = addrFavs[Number(id.slice(1))];
+      if (f && f.fh) { cfg = f.fh; nm = f.label || f.name; }
+    } else {
+      cfg = fhStopCfg[id.slice(1)] || null;
+      const st = cfg && stops.find(x => x.shortName === id.slice(1));
+      if (st) nm = st.name;
+    }
+    if (!cfg) return;
+    cfg.on = !cfg.on;
+    if (id.charAt(0) === "a") saveAddrFavs(); else saveFhStopCfg();
+    setLocNote(cfg.on ? "▶ Tauben-Alarm aktiv: " + nm + "." : "⏸ Tauben-Alarm pausiert: " + nm + " (keine Hinweise mehr, Ziel bleibt eingerichtet).");
+    renderFhInd();
+    try { fhMsgUpdate(false); } catch (err) {}
+    try { updateFhNotification(); } catch (err) {}
+  });
+}
+function fhMsgUpdate(forceShow) {   // 🕊️ Tauben-Alarm-Fenster: aktive Funde und alle überwachten Ziele
+  const ts = [];
+  // v1.6.57: PAUSIERTE Ziele bleiben sichtbar (ausgegraut mit ▶), nur der
+  // Suchlauf überspringt sie (fhTargets filtert cfg.on).
+  addrFavs.forEach((f, i) => {
+    if (f.fh && f.lat != null) { fhDefaults(f.fh);
+      ts.push({ id: "a" + i, name: f.label || f.name, lat: f.lat, lon: f.lon, cfg: f.fh }); }
+  });
+  for (const sn in fhStopCfg) {
+    const c = fhStopCfg[sn];
+    if (!c) continue;
+    fhDefaults(c);
+    const s = stops.find(x => x.shortName === sn);
+    if (s) ts.push({ id: "s" + sn, name: s.name, lat: s.lat, lon: s.lon, cfg: c });
+  }
+  if (!ts.length) { alarmMsgSync("fhMsgWin", "🕊️ Tauben-Alarm", "", false, false); return; }
   const now = Date.now();
   const cands = [...fhCandidates.values()].map(c =>
     '<div class="pkgmsgrow ring"><div class="pkgmsgl"><b>' + escapeHtml(c.line) + "</b> → " + escapeHtml(c.dir) +
@@ -5709,10 +5818,14 @@ function fhMsgUpdate(forceShow) {   // 🕊️ Finde-nach-Hause-Fenster: aktive 
     '<div class="dim">' + (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen!") + "</div></div>").join("");
   const h = ts.map(t => {
     const msg = t.cfg.lastMsgTs && now - t.cfg.lastMsgTs < 36 * 3600000 ? t.cfg.lastMsg : "";
-    return '<div class="pkgmsgrow"><div class="pkgmsgl">🎯 ' + escapeHtml(t.name) + "</div>" +
-      '<div class="dim">' + (msg ? escapeHtml(msg) : "überwacht bei laufendem GPS") + "</div></div>";
+    return '<div class="pkgmsgrow"><div class="pkgmsgl">🕊️ Tauben-Alarm: ' + escapeHtml(t.name) +
+      ' <button class="afbtn' + (t.cfg.on ? "" : " pzon") + '" data-fhpause="' + escapeHtml(t.id) + '" title="' +
+      (t.cfg.on ? "Ziel pausieren (keine Hinweise mehr)" : "Ziel wieder aktivieren") + '">' +
+      (t.cfg.on ? "⏸" : "▶") + "</button></div>" +
+      '<div class="dim">' + (t.cfg.on ? (msg ? escapeHtml(msg) : "überwacht bei laufendem GPS") : "⏸ pausiert (läutet nicht, Ziel bleibt eingerichtet)") + "</div></div>";
   }).join("");
-  alarmMsgSync("fhMsgWin", "🕊️ Finde nach Hause", cands + h, ts.some(t => t.cfg.msgWin !== false), forceShow);
+  alarmMsgSync("fhMsgWin", "🕊️ Tauben-Alarm", cands + h, ts.some(t => t.cfg.msgWin !== false), forceShow);
+  fhMsgBind();
 }
 
 // ---------- 🐿️ Paket-Alarm: regelmäßige Verbindung (Murmeltier-Alarm, v1.6.31) ----------
@@ -5997,7 +6110,7 @@ function pkgMsgEnsure() {
     el.id = "pkgMsgWin";
     el.className = "pkgmsg";
     el.hidden = true;
-    el.innerHTML = '<div class="pkgmsghead"><span>🐿️ Verbindungs-Wachposten</span>' +
+    el.innerHTML = '<div class="pkgmsghead"><span>🐿️ Eichhörnchen-Alarm</span>' +   // v1.6.57: Name direkt hinter dem Tier
       '<button class="pkgmsgx" title="Fenster schließen (Alarme bleiben gestellt; auch Klick daneben oder Wischen)">✕</button></div>' +
       '<div class="pkgmsgbody"></div>';
     el.addEventListener("click", e => {
@@ -6050,6 +6163,31 @@ function pkgMsgEnsure() {
         }
         return;
       }
+      // v1.6.57: ⏸/▶ und ✗ je Alarm direkt im 🐿️-Fenster
+      const ppz = e.target.closest("[data-ppause]");
+      if (ppz) {
+        const a5 = packAlarms.find(x => x.id === ppz.dataset.ppause);
+        if (a5) {
+          a5.paused = !a5.paused;
+          savePackAlarms();
+          setLocNote(a5.paused ? "⏸ Eichhörnchen-Alarm pausiert: Linie " + a5.line + " (läutet nicht, Prüfung läuft weiter)."
+                              : "▶ Eichhörnchen-Alarm aktiv: Linie " + a5.line + ".");
+          renderPkgInd(); renderAlarmInd();
+        }
+        return;
+      }
+      const pdel = e.target.closest("[data-pkdel2]");
+      if (pdel) {
+        const a6 = packAlarms.find(x => x.id === pdel.dataset.pkdel2);
+        if (a6) {
+          packAlarms = packAlarms.filter(x => x.id !== a6.id);
+          stopRinging(a6.id, true); firedAlarms.delete(a6.id);
+          savePackAlarms();
+          setLocNote("🔕 Eichhörnchen-Alarm gelöscht: Linie " + a6.line + " an " + (a6.name || a6.sn) + ".");
+          renderPkgInd(); renderAlarmInd();
+        }
+        return;
+      }
       const stp = e.target.closest("[data-pkgo]");
       if (stp) { openPackDlg(null, packAlarms.find(x => x.id === stp.dataset.pkgo)); }
     });
@@ -6070,8 +6208,12 @@ function pkgMsgUpdate() {
     return '<div class="pkgmsgrow' + (ringing.has(a.id) ? " ring" : "") + '" data-pkgo="' + escapeHtml(a.id) + '">' +
       '<div class="pkgmsgl" data-pkgt="' + escapeHtml(a.id) + '" title="Station öffnen – Fahrtverlauf dieser Linie unten im Untereiter"><b>' + escapeHtml(a.line) + '</b> -> ' + escapeHtml(a.dir || "?") +
       ' · <span class="dim">' + escapeHtml(a.name || a.sn) + "</span>" +
-      ' <button class="pkgref pkgrt" data-pkgrt="' + escapeHtml(a.id) + '" title="Route planen: von dieser Station zur Endhaltestelle dieser Linie">🧭</button></div>' +
-      '<div class="dim">' + escapeHtml(days) + " · " + escapeHtml(next) + "</div>" +
+      ' <button class="pkgref pkgrt" data-pkgrt="' + escapeHtml(a.id) + '" title="Route planen: von dieser Station zur Endhaltestelle dieser Linie">🧭</button>' +
+      ' <button class="afbtn' + (a.paused ? " pzon" : "") + '" data-ppause="' + escapeHtml(a.id) + '" title="' +
+      (a.paused ? "Alarm wieder aktivieren" : "Alarm pausieren (läutet nicht, Prüfung läuft weiter)") + '">' +
+      (a.paused ? "▶" : "⏸") + "</button>" +
+      ' <button class="afbtn" data-pkdel2="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm entfernen">✗</button></div>' +
+      '<div class="dim">' + escapeHtml(days) + " · " + escapeHtml(next) + (a.paused ? " · ⏸ pausiert" : "") + "</div>" +
       pkgStatHtml(a, now) +
       // v1.6.49 (Timo-Wunsch 27.11.2026): Immer eine erklärende Zeile je Alarm:
       // die letzte Meldung, sonst "alles planmäßig" (nach der ersten Prüfung).
@@ -6102,6 +6244,10 @@ function firePack(a, txt) {
   const aKey = a.id;
   packMsgSet(a, "🐿️ " + txt);   // v1.6.52: Eichhörnchen vorn
   const fw = pkgMsgEnsure(); fw.hidden = false; delete fw.dataset.hide;   // Popup NUR beim neu ausgeloeesten Alarm; Haken-Regel (v1.6.42) tritt dahinter zurueck
+  if (a.paused) {   // v1.6.57: pausierte Alarme zeigen, läuten aber nicht
+    setLocNote("🐿️ Eichhörnchen-Alarm pausiert (läutet nicht): Linie " + a.line + " an " + (a.name || a.sn) + " – " + txt);
+    return;
+  }
   // v1.6.50: KEINE globale Aus-Taste mehr - die Art-Freigaben (artCfg.pkg)
   // entscheiden im startRinging, ob Ton/Vibration kommen. Fenster bleibt immer.
   if (ringing.has(aKey)) return;
@@ -6412,6 +6558,7 @@ function openPackDlg(ctx, edit) {
     snd: a ? (a.snd || cfg.snd) : cfg.snd,
     vol: a ? (a.vol != null ? a.vol : cfg.vol) : cfg.vol,
     msgWin: a ? a.msgWin !== false : true,   // v1.6.42: eigenes Nachrichtenfenster dieser Alarm-Art offen halten
+    paused: a ? !!a.paused : false,   // v1.6.57: Pausiert-Zustand des Alarms im Dialog bearbeitbar
     msgAnd: a ? a.msgAnd !== false : true,   // v1.6.44: Update im Android-Benachrichtigungszentrum (nur Anzeige, Alarm läuft weiter)
     notify: Object.assign({ gone: true, time: true, plat: true, stn: true }, (a && a.notify) || {}),   // v1.6.46: „Alarm bei:“ Zugausfall / Abfahrtszeit / Bahnsteig / Bahnhof
     src: a ? (a.src || "auto") : "auto",   // v1.6.38: Fahrplan-Katalog
@@ -6457,6 +6604,8 @@ function openPackDlg(ctx, edit) {
       '<label class="dstage"><input type="checkbox" class="avib"' + (cur.vib ? " checked" : "") + (hasVib ? "" : " disabled") +
         "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
       '<label class="dstage"><input type="checkbox" class="atone"' + (cur.tone ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage" title="Pausierter Alarm läutet nicht, die Prüfung läuft weiter; Haken rausnehmen (oder ▶ in Liste/Fenster) aktiviert ihn wieder">' +
+        '<input type="checkbox" class="appaused"' + (cur.paused ? " checked" : "") + "> Pausiert</label>" +
       '<label class="dstage" title=" Nachrichtenfenster der 🐿️-Alarme offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + (cur.msgWin ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
       '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der 🐿️-Alarme aus; der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
@@ -6629,6 +6778,7 @@ function openPackDlg(ctx, edit) {
         win: cur.win, vib: !!(vib && vib.checked), tone: !!(tone && tone.checked),
         snd: snd ? snd.value : cfg.snd, vol: vol ? Number(vol.value) : cfg.vol,
         msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes Nachrichtenfenster
+        paused: !!(wrap.querySelector(".appaused") && wrap.querySelector(".appaused").checked),   // v1.6.57: pausiert = läutet nicht, Prüfung läuft weiter
         msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked),   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
         notify: {   // v1.6.45: welche Abweichungs-Arten läuten
           gone: !!(wrap.querySelector(".angone") && wrap.querySelector(".angone").checked),
@@ -6739,7 +6889,8 @@ window.kvgAlarmAction = function (akey, mode) {
     } else if (a) {
       a.paused = mode === "pause";
       saveAlarms();
-      setLocNote(mode === "pause" ? "⏸ Wecker deaktiviert: " + nm : "▶ Wecker aktiviert: " + nm);
+      try { nativeClockResync(); } catch (e2) {}   // v1.6.57: nativen Zeit-Wecker ab-/anmelden, Zaune neu planen
+      setLocNote(mode === "pause" ? "⏸ Eulen-Alarm pausiert: " + nm + " (läutet nicht, bleibt gestellt)." : "▶ Eulen-Alarm aktiv: " + nm + ".");
     }
     renderAlarmInd();
     renderTabs();
@@ -6774,7 +6925,7 @@ window.kvgGeofenceEvents = function (json) {
       firedAlarms.add(aKey);   // Distanz-Wecker bleiben gestellt (stopRinging deaktiviert)
       syncNativeRinging();    // laufende native Kette ins 🦉-Symbol übernehmen
       startRinging(aKey, a, "clk");   // nur falls noch nicht nativ am Läuten
-      setLocNote("🦉 Wecker: " + a.name + " – Haltestelle erreicht (Geofence, im Hintergrund ausgelöst). Zum Beenden 🦉 antippen.");
+      setLocNote("🦉 Eulen-Alarm: " + a.name + " – Haltestelle erreicht (Hintergrund-Ortung ausgelöst). Zum Beenden 🦉 antippen.");
       n++;
     }
     if (n) { renderTabs(); renderAlarmInd(); if (currentBus) renderBusPanel(); }
@@ -6794,6 +6945,28 @@ function pollGeofenceEvents() {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) { pollGeofenceEvents(); updateGpsBtns(); }   // GPS-Knöpfe neu bewerten (gelb, wenn weggewandert)
 });
+
+// ---------- v1.6.57: Positionen aus dem Alarm-Ortungsdienst der App ----------
+// Solange Distanz-Wecker gestellt sind, läuft in der App ein Ortungsdienst mit
+// aktivem GPS (auch bei ausgeschaltetem Display). Er schiebt jede Position
+// direkt in die Seite: Die Distanz-Wecker prüfen sofort mit dem frischen Stand,
+// die Tauben-Suche und alle GPS-Algorithmen rechnen weiter, auch wenn das
+// Seite-eigene GPS (◎) aus ist. Im Browser bleibt alles wirkungslos.
+let nativeGpsTs = 0;
+function nativeGpsActive() { return nativeGpsTs && Date.now() - nativeGpsTs < 120000; }
+window.kvgNativePos = function (lat, lon, acc) {
+  try {
+    const la = Number(lat), lo = Number(lon);
+    if (!isFinite(la) || !isFinite(lo)) return "err";
+    myPos = { lat: la, lon: lo, accuracy: acc != null ? Number(acc) : null };
+    nativeGpsTs = Date.now();
+    try { localStorage.setItem("kvg-pos", JSON.stringify({ lat: la, lon: lo, accuracy: myPos.accuracy, ts: Date.now() })); } catch (e) {}
+    try { vehTrailPush(myPos, Date.now()); } catch (e) {}
+    try { updateTripDot(); updateRouteDots(); } catch (e) {}
+    try { alarmTick(); } catch (e) {}   // Distanz-Wecker sofort mit der frischen Position prüfen
+    return "ok";
+  } catch (e) { return "err"; }
+};
 
 // ---------- Finde nach Hause: direkte Fahrten zu Favoriten-Zielen finden ----------
 // Sucht bei laufendem GPS im Takt FH_SCAN_INTERVAL_MS, ob eine Station im
@@ -6873,9 +7046,9 @@ async function fhScan() {
   if (fhScanning) return;
   // v1.6.50: KEINE globale Aus-Taste mehr - die Suche läuft immer, die Art-
   // Freigaben (artCfg.fh) dämpfen nur Ton/Vibration (fhSignal) und Android.
-  const pos = (gpsState === "on" && myPos) ? myPos : null;   // nur echte Live-Ortung
+  const pos = ((gpsState === "on" || nativeGpsActive()) && myPos) ? myPos : null;   // echte Live-Ortung (auch Feed des App-Ortungsdienstes, v1.6.57)
 
-  if (!pos || gpsState !== "on" || (pos.accuracy != null && pos.accuracy > GPS_ACC_COARSE_M)) return;
+  if (!pos || (gpsState !== "on" && !nativeGpsActive()) || (pos.accuracy != null && pos.accuracy > GPS_ACC_COARSE_M)) return;
   const targets = fhTargets();
   if (!targets.length) return;
   fhScanning = true;
@@ -6952,7 +7125,7 @@ function updateFhNotification() {
     return !t || t.cfg.msgAnd !== false;
   });
   if (!arr.length) { nativeCall("cancelNotify", "fh-scan"); return; }
-  const title = "🕊️ Finde nach Hause: " + arr.length +
+  const title = "🕊️ Tauben-Alarm: " + arr.length +
     (arr.length === 1 ? " mögliche Fahrt" : " mögliche Fahrten");
   const text = arr.map(c => "Linie " + c.line + " → " + c.dir + ", " + c.station +
     " " + c.clock + " Uhr (" + (c.los > 0 ? "in " + c.los + " min losgehen" : "jetzt losgehen") + ")").join("\n");
@@ -7013,12 +7186,15 @@ async function fhNotify(tgt, st, dep, aMin, bestS) {
   // sonst verzögert sich das Signal um die Netzlaufzeit (OSRM) oder bleibt aus.
   fhSignal(tgt.cfg);
   const now = new Date();
-  // v1.6.42: eigene 🕊️-Fenstermeldung + Fenster zeigen (Haken-Regel tritt dahinter zurück)
-  tgt.cfg.lastMsg = "🕊️ Linie " + dep.line + " → " + dep.direction + " ab " + st.name + " " + depClock + " Uhr Richtung " + tgt.name + ".";   // v1.6.52: Taube vorn
-  tgt.cfg.lastMsgTs = Date.now();
-  try { fhMsgUpdate(true); } catch (e) {}
+  // v1.6.57: depClock VOR der ersten Benutzung berechnen (früher stand die
+  // const-Zeile unterhalb -> Temporal Dead Zone -> jede Tauben-Meldung brach
+  // mit ReferenceError ab, Fenster/Dialog/Android blieben aus).
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const depClock = String(Math.floor(aMin / 60)).padStart(2, "0") + ":" + String(aMin % 60).padStart(2, "0");
+  // v1.6.42: eigene 🕊️-Fenstermeldung + Fenster zeigen (Haken-Regel tritt dahinter zurück)
+  tgt.cfg.lastMsg = "🕊️ Tauben-Alarm: Linie " + dep.line + " → " + dep.direction + " ab " + st.name + " " + depClock + " Uhr Richtung " + tgt.name + ".";   // v1.6.57: "Tauben-Alarm:" direkt hinter der Taube
+  tgt.cfg.lastMsgTs = Date.now();
+  try { fhMsgUpdate(true); } catch (e) {}
   // Abstände: eigene Position -> Abfahrtsstation und Zielstation -> Ziel.
   // Luftlinie sofort, zusätzlich echtes Wegerouting (OSRM); die Gehzeit zur
   // Station wird von der Wartezeit abgezogen ("los in x Minuten" = losgehen).
@@ -7031,7 +7207,7 @@ async function fhNotify(tgt, st, dep, aMin, bestS) {
   const m2 = r2 ? r2.m : (air2 != null ? air2 * 1.3 : null);
   const w1 = footMin(m1), w2 = footMin(m2);
   const losMin = (aMin - nowMin) - (w1 || 0);
-  const title = "🕊️ Mögliche Fahrt nach " + tgt.name;
+  const title = "🕊️ Tauben-Alarm: mögliche Fahrt nach " + tgt.name;
   const lines = '<div class="bl"><span class="dl blink">' + escapeHtml(dep.line) + "</span>" +
     '<span class="mqwrap"><span class="mqi">' + escapeHtml(dep.direction) + "</span></span></div>" +
     '<div class="rowinfo">' + escapeHtml(st.name) + " <b>" + depClock + "</b> – " +
@@ -7274,10 +7450,10 @@ function alarmTick() {
   // v1.6.50: keine globale Aus-Taste mehr - fireAlarm/startRinging werten die
   // Art-Freigaben aus, das Nachrichtenfenster zeigt jede Auslösung trotzdem.
   if (!alarms.size) return;
-  // Distanz-Wecker: NUR echte Live-Ortung (GPS an). Ohne GPS wuerde die
-  // gespeicherte/letzte Position (eine eingefrorene Konstante!) falsch
-  // messen: Der Abstand stimmt nie, der Wecker bleibt dauerhaft stumm.
-  const pos = (gpsState === "on" && myPos) ? myPos : null;
+  // Distanz-Wecker: NUR echte Live-Ortung (GPS an ODER v1.6.57: Positions-Feed
+  // des App-Ortungsdienstes). Ohne GPS wuerde die gespeicherte/letzte Position
+  // (eine eingefrorene Konstante!) falsch messen: Der Abstand stimmt nie.
+  const pos = ((gpsState === "on" || nativeGpsActive()) && myPos) ? myPos : null;
   const nowD = new Date();
   const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
   for (const [aKey, a] of [...alarms]) {
@@ -7370,6 +7546,8 @@ function openAlarmDialog(tripId, preSn) {
       '<label class="dstage"><input type="checkbox" class="avib"' + ((old.vib !== false) ? " checked" : "") + (hasVib ? "" : " disabled") +
         "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
       '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage" title="Pausierter Wecker läutet nicht, bleibt gestellt; native Wecker werden abgemeldet und beim Aktivieren neu geplant">' +
+        '<input type="checkbox" class="apause"' + (old.paused ? " checked" : "") + "> Pausiert</label>" +
       '<label class="dstage" title="Nachrichtenfenster der 🦉-Wecker offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + ((old.msgWin !== false) ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
       '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der 🦉-Wecker aus; der Wecker selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
@@ -7409,6 +7587,8 @@ function openAlarmDialog(tripId, preSn) {
     if (mwEl) mwEl.checked = old.msgWin !== false;
     const maEl = wrap.querySelector(".amand");   // v1.6.44: Android-Haken ebenfalls nach Station-Wechsel vorbelegen
     if (maEl) maEl.checked = old.msgAnd !== false;
+    const apEl = wrap.querySelector(".apause");   // v1.6.57: Pause-Haken ebenfalls nach Station-Wechsel vorbelegen
+    if (apEl) apEl.checked = !!old.paused;
     selDist = old.dist || null;
     selLead = old.leadMin || null;
     if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
@@ -7467,11 +7647,13 @@ function openAlarmDialog(tripId, preSn) {
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0,
         msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes 🦉-Nachrichtenfenster
-        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked) });   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
+        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked),   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
+        paused: !!(wrap.querySelector(".apause") && wrap.querySelector(".apause").checked) });   // v1.6.57: pausiert = läutet nicht, bleibt gestellt
       saveAlarms();
       // Zeit-Wecker an die App übergeben: AlarmManager klingelt auch bei
       // ausgeschaltetem Display / im Hintergrund (Distanz-Wecker nur offen)
-      if (selLead && artState("clk") !== "off") {   // v1.6.50: Art gesperrt = kein nativer Wecker (sonst klingelt er im Hintergrund unbeirrt)
+      const usePause = !!(wrap.querySelector(".apause") && wrap.querySelector(".apause").checked);
+      if (selLead && !usePause && artState("clk") !== "off") {   // v1.6.50: Art gesperrt / v1.6.57: pausiert = kein nativer Wecker
         const ms = nativeAlarmEpoch(aKey, selLead);
         if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
           JSON.stringify({ lead: selLead, vib: useVib && artOn("clk", "vib"), tone: useTone && artOn("clk", "snd"), snd: snd, vol: vol }));
@@ -7593,6 +7775,8 @@ function openRouteAlarmDialog() {
       '<label class="dstage"><input type="checkbox" class="avib"' + ((old.vib !== false) ? " checked" : "") + (hasVib ? "" : " disabled") +
         "> Vibration" + (hasVib ? "" : " (Gerät unterstützt es nicht)") + "</label>" +
       '<label class="dstage"><input type="checkbox" class="atone"' + ((old.tone !== false) ? " checked" : "") + "> Weckton</label>" +
+      '<label class="dstage" title="Pausierter Wecker läutet nicht, bleibt gestellt; native Wecker werden abgemeldet und beim Aktivieren neu geplant">' +
+        '<input type="checkbox" class="apause"' + (old.paused ? " checked" : "") + "> Pausiert</label>" +
       '<label class="dstage" title="Nachrichtenfenster der 🦉-Wecker offen halten, bis der Haken rausgenommen wird; beim Auslösen erscheint es sowieso">' +
         '<input type="checkbox" class="amwin"' + ((old.msgWin !== false) ? " checked" : "") + "> Eigenes Nachrichtenfenster</label>" +
       '<label class="dstage" title="Haken weg blendet nur die Android-Benachrichtigung der 🦉-Wecker aus; der Wecker selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben)">' +
@@ -7629,6 +7813,8 @@ function openRouteAlarmDialog() {
     if (mwEl) mwEl.checked = old.msgWin !== false;
     const maEl = wrap.querySelector(".amand");   // v1.6.44: Android-Haken ebenfalls nach Station-Wechsel vorbelegen
     if (maEl) maEl.checked = old.msgAnd !== false;
+    const apEl = wrap.querySelector(".apause");   // v1.6.57: Pause-Haken ebenfalls nach Station-Wechsel vorbelegen
+    if (apEl) apEl.checked = !!old.paused;
     selDist = old.dist || null;
     selLead = old.leadMin || null;
     if (titleEl) titleEl.textContent = aKey ? "Wecker: " + a.name : "Wecker: Station wählen";
@@ -7688,9 +7874,11 @@ function openRouteAlarmDialog() {
         dist: selDist, leadMin: selLead,
         vib: useVib, tone: useTone, snd: snd, vol: vol, lastPoll: 0,
         msgWin: !!(wrap.querySelector(".amwin") && wrap.querySelector(".amwin").checked),   // v1.6.42: eigenes 🦉-Nachrichtenfenster
-        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked) });   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
+        msgAnd: !!(wrap.querySelector(".amand") && wrap.querySelector(".amand").checked),   // v1.6.44: Android-Benachrichtigung (nur Anzeige)
+        paused: !!(wrap.querySelector(".apause") && wrap.querySelector(".apause").checked) });   // v1.6.57: pausiert = läutet nicht, bleibt gestellt
       saveAlarms();
-      if (selLead && artState("clk") !== "off") {
+      const usePause = !!(wrap.querySelector(".apause") && wrap.querySelector(".apause").checked);
+      if (selLead && !usePause && artState("clk") !== "off") {   // v1.6.57: pausiert = kein nativer Wecker
         const ms = nativeAlarmEpoch(aKey, selLead);
         if (ms != null) nativeCall("setAlarm", aKey, String(ms), a.name,
           JSON.stringify({ lead: selLead, vib: useVib && artOn("clk", "vib"), tone: useTone && artOn("clk", "snd"), snd: snd, vol: vol }));
@@ -7715,7 +7903,11 @@ function openRouteAlarmDialog() {
 // (Haltestellen-/Adressfavoriten, aktive Startadresse, letzter Standort,
 // Einstellungen) wird deshalb als kompakter Code exportiert und in der App
 // (Menü "Zustand importieren") oder auf einer anderen Installation importiert.
-const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-vehcfg"];
+// v1.6.57: Eichhörnchen-Alarme (kvg-packalarms) und die Art-Freigaben
+// (kvg-artcfg, Läuten/Vibration/Android je Art) reisen im Zustand-Export mit,
+// ebenso wie Wecker (kvg-alarms), Wecker-Klang (kvg-alarmcfg) und die
+// 🕊️-Zieleinstellungen (kvg-fhstop, inklusive der Pausiert-Zustände).
+const STATE_KEYS = ["kvg-favs", "kvg-addrfavs", "kvg-addr", "kvg-pos", "kvg-font", "kvg-alarmcfg", "kvg-view", "kvg-fhstop", "kvg-sortgps", "kvg-alarms", "kvg-alarms-off", "kvg-vehcfg", "kvg-packalarms", "kvg-artcfg"];
 // Offene Reiter in kvg-view sichern: Stationen (Kette Haltestelle -> Buslinie
 // -> Fahrtverlauf, plus eigener Reiter-Name und UID für die Reihenfolge),
 // alle parallelen Route-Reiter (Name, Start/Ziel, Zeit) und seit v1.5.6 auch
@@ -7790,7 +7982,7 @@ window.kvgGotoTab = function (sn) {
     if (sn === "eichhoernchen") {
       const fw = pkgMsgEnsure();
       fw.hidden = false; delete fw.dataset.hide; fw.dataset.force = "1";
-      setLocNote("🐿️ Verbindungs-Wachposten geöffnet (aus der Android-Benachrichtigung).");
+      setLocNote("🐿️ Eichhörnchen-Alarm-Fenster geöffnet (aus der Android-Benachrichtigung).");
       return "ok";
     }
     const i = tabs.findIndex(t => t.sn === sn);
@@ -8502,6 +8694,7 @@ function packNativeEntry() {
     const occ = packNextOcc(a);
     lines.push(a.line + " -> " + (a.dir || "?") + " · " +
       ((a.on || []).map((b, i) => b ? PACK_DAYS[i] : null).filter(Boolean).join(", ") || "kein Tag") +
+      (a.paused ? " · ⏸ pausiert" : "") +
       (occ ? " · nächste " + PACK_DAYS[occ.wd] + " " + occ.t + " Uhr" : ""));
     // v1.6.49 (Timo-Wunsch 27.11.2026): Die Status-Zeile des 🐿️-Fensters steht
     // jetzt auch in der Android-Nachricht (Fährt/ab Station/pünktlich/von
@@ -8582,10 +8775,9 @@ function renderAlarmInd() {
       for (const en of sorted.slice(0, 3)) {
         const a = en.a;
         if (en.ring || ringing.has(en.aKey)) acts.push({ akey: en.aKey, mode: "stop", label: "Stopp: " + (a.name || "Wecker") });
-        else if (a.leadMin == null) acts.push(a.paused
+        else acts.push(a.paused   // v1.6.57: pausieren/aktivieren für ALLE Wecker (auch Zeit-Wecker), nicht mehr löschen
           ? { akey: en.aKey, mode: "resume", label: "An: " + (a.name || "Wecker") }
           : { akey: en.aKey, mode: "pause", label: "Aus: " + (a.name || "Wecker") });
-        else acts.push({ akey: en.aKey, mode: "delete", label: "Löschen: " + (a.name || "Wecker") });
       }
       arr.push({
         key: "wecker-gesamt",
@@ -8613,14 +8805,14 @@ function renderAlarmInd() {
     return;
   }
   alarmList.innerHTML = artHeadHtml("clk") + artHintHtml("clk") + entries.map(en => {
-    const isDist = en.a.leadMin == null;
     let btns = "";
     if (en.ring)
       btns += '<button class="afbtn" data-amute="' + escapeHtml(en.aKey) + '" title="Läuten sofort beenden">🔕</button>';
-    if (isDist)
-      btns += '<button class="afbtn" data-apause="' + escapeHtml(en.aKey) + '" title="' +
-        (en.a.paused ? "Wecker wieder aktivieren" : "Wecker deaktivieren (läutet nicht mehr)") + '">' +
-        (en.a.paused ? "▶" : "⏸") + "</button>";
+    // v1.6.57: ⏸/▶ für ALLE Wecker (auch Zeit-Wecker); ausgegraut bei aktivem,
+    // farbig bei pausiertem Wecker, vor dem Lösch-✗
+    btns += '<button class="afbtn' + (en.a.paused ? " pzon" : "") + '" data-apause="' + escapeHtml(en.aKey) + '" title="' +
+      (en.a.paused ? "Wecker wieder aktivieren" : "Wecker pausieren (läutet nicht, bleibt gestellt)") + '">' +
+      (en.a.paused ? "▶" : "⏸") + "</button>";
     btns += '<button class="afbtn" data-adele="' + escapeHtml(en.aKey) + '" title="Wecker entfernen">✗</button>';
     return '<div class="alrow" data-akey="' + escapeHtml(en.aKey) + '" title="Zum Reiter wechseln">' +
       '<span class="afsname">🦉 ' + escapeHtml(en.a.name) + " – " + en.cond + en.when + "</span>" +
@@ -8674,6 +8866,9 @@ function renderFhInd() {
       return '<div class="alrow" title="🕊️-Einstellungen für „' + escapeHtml(t.name) + '“">' +
         '<span class="afsname">' + (t.cfg.on ? "🕊️ " : "🕊️ (aus) ") + escapeHtml(t.name) +
         " · bis " + t.cfg.posR + " m · spätestens in " + t.cfg.losWin + " min los · Ziel " + t.cfg.tgtR + " m</span>" +
+        '<button class="afbtn' + (t.cfg.on ? "" : " pzon") + '" data-fhpause="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="' +
+        (t.cfg.on ? "Ziel pausieren (keine Hinweise mehr, Einstellungen bleiben)" : "Ziel wieder aktivieren") + '">' +
+        (t.cfg.on ? "⏸" : "▶") + "</button>" +
         '<button class="afbtn" data-fhedit="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Einstellungen ändern (öffnet den 🕊️-Dialog)">✎</button>' +
         '<button class="afbtn" data-fhdel="' + t.kind + ":" + escapeHtml(String(t.id)) + '" title="Finde nach Hause für dieses Ziel löschen">✗</button></div>';
     }).join("");
@@ -8689,6 +8884,29 @@ document.addEventListener("click", e => {
   if (!fhList.hidden && !e.target.closest("#fhList") && !e.target.closest("#fhInd")) fhList.hidden = true;
 });
 fhList.addEventListener("click", e => {
+  const pz = e.target.closest("[data-fhpause]");   // v1.6.57: Ziel pausieren/aktivieren
+  if (pz) {
+    e.stopPropagation();
+    const p = pz.dataset.fhpause.split(":");
+    let cfg = null, name = "";
+    if (p[0] === "addr") {
+      const f = addrFavs[Number(p[1])];
+      if (f && f.fh) { cfg = f.fh; name = f.label || f.name; }
+    } else {
+      cfg = fhStopCfg[p[1]] || null;
+      const st = cfg && stops.find(x => x.shortName === p[1]);
+      name = st ? st.name : p[1];
+    }
+    if (cfg) {
+      cfg.on = !cfg.on;
+      if (p[0] === "addr") saveAddrFavs(); else saveFhStopCfg();
+      setLocNote(cfg.on ? "▶ Tauben-Alarm aktiv: " + name + "." : "⏸ Tauben-Alarm pausiert: " + name + " (läutet nicht, Ziel bleibt eingerichtet).");
+      renderFhInd();
+      try { fhMsgUpdate(false); } catch (err) {}
+      try { updateFhNotification(); } catch (err) {}
+    }
+    return;
+  }
   const edit = e.target.closest("[data-fhedit]");
   if (edit) {
     e.stopPropagation();
@@ -8743,6 +8961,9 @@ function renderPkgInd() {
       '<span class="afsname">🐿️ ' + escapeHtml(a.line) + " → " + escapeHtml(a.dir || "?") +
       " · <b>" + escapeHtml((a.days || []).filter(Boolean)[0] || "?") + "</b> · " + escapeHtml(days) +
       ' · <span class="dim">' + escapeHtml(a.name || a.sn) + escapeHtml(next) + "</span></span>" +
+      '<button class="afbtn' + (a.paused ? " pzon" : "") + '" data-pkpause="' + escapeHtml(a.id) + '" title="' +
+      (a.paused ? "Alarm wieder aktivieren" : "Alarm pausieren (läutet nicht, Prüfung läuft weiter)") + '">' +
+      (a.paused ? "▶" : "⏸") + "</button>" +
       '<button class="afbtn" data-pkedit="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm bearbeiten (öffnet den 🐿️-Dialog)">✎</button>' +
       '<button class="afbtn" data-pkdel="' + escapeHtml(a.id) + '" title="Eichhörnchen-Alarm löschen">✗</button>' +
       (msg ? '<div class="alrowmsg dim">' + escapeHtml(msg) + "</div>" : "") +
@@ -8760,6 +8981,21 @@ document.addEventListener("click", e => {
     pkgList.hidden = true;
 });
 pkgList.addEventListener("click", e => {
+  const pz = e.target.closest("[data-pkpause]");   // v1.6.57: Alarm pausieren/aktivieren
+  if (pz) {
+    e.stopPropagation();
+    const a = packAlarms.find(x => x.id === pz.dataset.pkpause);
+    if (a) {
+      a.paused = !a.paused;
+      savePackAlarms();
+      setLocNote(a.paused ? "⏸ Eichhörnchen-Alarm pausiert: Linie " + a.line + " an " + (a.name || a.sn) + " (läutet nicht, Prüfung läuft weiter)."
+                          : "▶ Eichhörnchen-Alarm aktiv: Linie " + a.line + " an " + (a.name || a.sn) + ".");
+      pkgMsgUpdate();
+      renderPkgInd();
+      renderAlarmInd();
+    }
+    return;
+  }
   const edit = e.target.closest("[data-pkedit]");
   if (edit) {
     e.stopPropagation();
@@ -8813,7 +9049,8 @@ alarmList.addEventListener("click", e => {
     if (a) {
       a.paused = !a.paused;
       saveAlarms();
-      setLocNote(a.paused ? "⏸ Wecker deaktiviert: " + a.name : "▶ Wecker aktiviert: " + a.name);
+      try { nativeClockResync(); } catch (err) {}   // v1.6.57: pausierte Zeit-Wecker nativ abmelden, Geofences neu planen
+      setLocNote(a.paused ? "⏸ Eulen-Alarm pausiert: " + a.name + " (läutet nicht, bleibt gestellt)." : "▶ Eulen-Alarm aktiv: " + a.name + ".");
     }
     renderAlarmInd();
     renderTabs();
@@ -16011,7 +16248,7 @@ h += sec("🚏 Zweig 1: Stationen – was fährt bei mir?");
   h += P("<b>📱 App-Kompatibilität – wie alt darf die Android-App sein?</b> Die Seite kennt für jede App-Funktion (Vibration, native Wecker, Läut-Übernahme, Wecker-Benachrichtigungen, System-Hinweise, Geofence-Wecker, App-Menü, Update-Suche, App-Versionsanzeige, Wecker-Knöpfe) die App-Version, in der sie eingeführt wurde, prüft beim Start, ob die installierte App alles mitbringt, und warnt einmalig mit „⚠️ App-Update empfohlen“ inklusive der genauen Version, ab der es die fehlende Funktion gibt. Läuft die Seite im Browser, entfällt die Prüfung. Im Über-Abschnitt unten stehen App- und Service-Version direkt nebeneinander („App v1.2.32 (78) / Service v1.3.2“), Service = die geladene HTML-Seite, mit dem ausdrücklichen Test, ob die App zum geladenen Service passt, samt Mindest- und empfohlener Version. Zwei Knöpfe trennen dort die Update-Arten: „🔃 Service Update suchen“ (der obere grüne Knopf) sucht nach einer neueren Web-Version der Seite; „⬇ App Update suchen“ (der grüne Knopf darunter) erscheint nur, wenn der geladene Service eine neuere App-Datei verlangt, und führt zum cslk.apk-Download. Diese Web-Version benötigt mindestens <b>App v1.1.6 (versionCode 30)</b>, empfohlen <b>v1.2.17 (versionCode 63)</b>, weil erst dort Hintergrund-Geofencing zuverlässig freigegeben ist; an der Brücke zwischen App und Seite hat sich seit v1.2.17 nichts mehr geändert – alles von v1.2.18 bis heute ist reine Web-Technik und läuft unverändert auch auf älteren APKs.");
   h += P("<b>🐞 Support / Bugreport:</b> Der Knopf im Fuß zwischen „⇅ Export/Import“ und „Impressum“ bereitet eine E-Mail an support@pixcaelium.de über dein installiertes E-Mail-Programm vor (Betreff „Bugreport CitySurfer v…“). Im Dialog davor beschreibst du das Problem in einem Textfeld, bestätigst bewusst, dass App-Daten mitgesendet werden, und wählst per Checkbox aus, was als Text in die E-Mail wandert: Adresssuche, Stationssuche, die geöffneten Route-, Stations- und MM-Reiter samt Unter-Reitern (mit allen Fahrplänen und Zeiten, MM-Reiter mit Abholstation, Abholrad, Rückgabe, Ziel und geplanter Ankunft je übernommener Route), Adress- und Stations-Favoriten oder alles gemeinsam. Von jeder Reiter-Art werden alle zurzeit offenen Reiter vorausgewählt angehakt mitgeschickt, der Haken ist je Reiter einzeln entfernbar. Die E-Mail öffnet sich ungesendet, im E-Mail-Programm bleibt vor dem Absenden jede Zeile ansehbar, kürzbar und löschbar. Öffnet sich in der Android-App keine E-Mail, ist die installierte App zu alt, um mailto:-Links ans E-Mail-Programm weiterzureichen: dann die App über cslk.apk aktualisieren.");
   h += sec("📜 Versions-Historie: Feature-Liste je Version");
-  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.56). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.56</b>: Der Alarm-Knopf der Hauptleiste ist jetzt kompakt wie die anderen Knöpfe: eine Glocke als große Line-Art mit den drei Tieren 🦉/🕊️/🐿️ im Dreieck darin, der Punkt unter jedem Tier zeigt den individuellen Status der Art (grün = voller Alarm, orange = gedämpft, grau = gesperrt); Reparatur eines Fehlalarms: das Prüf-Board starker Stationen (Bus, U-/S-Bahn und Zug gemischt, z. B. Hamburg Hbf) wurde nur für ~27 Minuten abgefragt, sodass die überwachte Abfahrt gar nicht im Ausschnitt lag und fälschlich als Zugausfall gemeldet wurde, die Prüfung blättert das Board jetzt wie der Fahrplan-Dialog stückweise nach (max. 6 Seiten) und meldet fehlende Abfahrten nur noch bei vollständig abgedecktem Board.<br><b>v1.6.55</b>: Die drei Nachrichtenfenster (🦉/🕊️/🐿️) sind jetzt dreifach zu schließen: ✕ oben rechts wie bisher, Antippen neben das Fenster und horizontales Wischen (links oder rechts heraus); die Alarme bleiben in jedem Fall gestellt, das Fenster kommt beim nächsten Auslösen sicher zurück.<br><b>v1.6.54</b>: Eichhörnchen-Fehlalarm repariert: Ausfall- und Abweichungs-Meldungen auf Basis des Fehlens einer Abfahrt gibt es nur noch, wenn das Board rund um das Vorkommen Echtzeitdaten liefert UND der Reisetag heute ist; für kommende Tage steht im Fenster ein Hinweis (noch ohne Echtzeitdaten, Ausfall-Alarm frühestens am Reisetag) bzw. die Verbindung als Fahrplan-Eintrag, aber kein Alarm; alle Meldungen nennen die Verbindung präzise: am selben Tag „Verbindung um 07:38 Uhr fällt aus …“, an künftigen Tagen „Nächste Verbindung am Montag, 30.11., um 07:38 Uhr …“; die Alarm-Zeilen der drei Listen in der App brechen jetzt um statt mit „…“ abzukürzen, die Android-Nachricht zeigt den ganzen Text umgebrochen (BigText statt zeilenweise gekürzter Inbox-Stil).<br><b>v1.6.53</b>: Über-diese-App-Neuordnung: „Datenquellen im Detail“ und „Karten-Links“ stehen jetzt im Credits-Abschnitt (umbenannt von „Credits & Dank“), die Danke-Zeilen sind je Quelle in die Spezifikationen integriert (Reihenfolge der Datenquellen: DELFI, nah.sh, gtfs.de, OSM/Photon/Nominatim, OSRM, VBB, VVS, MVV, DVB, Donkey, KVG, Karten-Links, OSM-Grundlage); „Bekannt, aber (noch) nicht integriert“ bleibt bei Über diese App und nennt jetzt zuerst die Verkehrsverbünde, wichtiger noch die fehlenden Micromobilitäts-Anbieter Voi, Dott und Bolt bzw. Städte als gebündelte Anbieter, hoffentlich bald mit neuer Gesetzeslage durch die Referate Digitale Mobilität.<br><b>v1.6.52</b>: Die drei Alarm-Arten haben Tiere: 🦉 Eule = Stations-Alarme (wacht und weckt pünktlich), 🕊️ Brieftaube = Nach-Hause-Alarme (fliegt dir den Heimweg voraus), 🐿️ Eichhörnchen = Abfahrts-Alarme (sammelt und prüft Abfahrten); die Tiere stehen ganz vorn in den Listen, Kopfzeilen, dem dreigeteilten Alarm-Knopf, den Freigabe-Dialogen, den Alarm-Dialogen und allen Alarmmeldungen, die Hilfe stellt die drei in einem eigenen Absatz vor.<br><b>v1.6.51</b>: Listen-Blättern überall getrennt: ⬆️ Frühere ⬆️ steht ÜBER der Liste, ⬇️ Spätere ⬇️ DARUNTER (Ergebnisliste der Verbindungssuche und Abfahrtsliste des Stationsreiters, überall, wo die Liste in beide Richtungen wächst); die Fahrrad-/Roller-Schalter (🚲/🛴) zeigen ihren AUS-Zustand jetzt sichtbar als durchgestrichenes, gedimmtes Symbol.<br><b>v1.6.50</b>: Harmonisierte Kopfzeilen der drei Alarm-Listen („Stations-Alarme:“ / „Nach-Hause-Alarme:“ / „Abfahrts-Alarme:“) mit je drei Freigabe-Knöpfen 🔔 📳 📱 (Läuten, Vibration, Android-Benachrichtigung) für die ganze Art; der Alarm-Knopf der Hauptknopfleiste ist jetzt dreigeteilt (grün = voller Alarm, orange = gedämpft, grau = gesperrt), kurzer Druck beendet nur das laufende Läuten des ausgelösten Alarms, langer Druck öffnet den Freigabe-Dialog je Art; das Nachrichtenfenster im Programm bleibt von allen Freigaben unberührt und zeigt jede Auslösung immer; native Wecker, Geofence-Zäune und die 🕊️-Signale tragen die Freigaben mit (auch im Hintergrund); der Ziel-Hinweis der 🕊️-Liste ist ausgeschrieben und bricht um.<br><b>v1.6.49</b>: Eichhörnchen in Android komplett: Die 🐿️-Android-Nachricht zeigt je Alarm die Status-Zeile des Nachrichtenfensters (Fährt ✓/✗ · ab Station ✓/✗ · pünktlich ✓/✗ · von Bahn-/Bussteig ✓/✗, dahinter das Prüfalter in Minuten) und den erklärenden Text (letzte Meldung bzw. „alles planmäßig“); ein „Aktualisieren“-Knopf je Alarm prüft genau diesen sofort live (max. 3, wie die Wecker-Aktionen); das Antippen der Nachricht öffnet das 🐿️-Nachrichtenfenster in der App, auch wenn es per ✕ zugemacht war; im Fenster steht je Alarm jetzt immer eine erklärende Zeile (Meldung oder „alles planmäßig“, nach der ersten Prüfung).<br><b>v1.6.48</b>: Eichhörnchen wie die Alarmglocke: Ein 🐿️-Knopf je Station in der Kopfzeile des Stationsreiters statt einem Knopf an jeder Abfahrtszeile; der Dialog bietet direkt die Auswahl der dort gelisteten Verbindungen, zeitlich geordnet mit ihrer Abfahrtszeit, und das Antippen übernimmt Linie, Richtung und Abfahrtszeit der gewählten Verbindung.<br><b>v1.6.47</b>: Eichhörnchen-Fenster: Status-Zeile je Alarm (Fährt ✓/✗ · ab Station ✓/✗ · pünktlich ✓/✗ · von Bahn-/Bussteig ✓/✗, dahinter ↻ mit Prüfalter in Minuten für eine sofortige Prüfung genau dieses Alarms), Warntext rot; Titel des Alarms öffnet die Station mit direkt geöffnetem Fahrtverlauf dieser Linie; 🧭 am Ende der Überschrift öffnet den Routen-Dialog mit der Station als Start und der Endhaltestelle als Ziel; Eichhörnchen-Klassifikation repariert: ein gestrichener Plan-Eintrag mit daneben laufender Abfahrt (Bahnsteig-Abschnitts-Wechsel, Beispiel RE7 Hamburg Hbf Gleis 6D-F) ist keine Ausfall-Meldung mehr, sondern Bahnsteig-/Zeit-Abweichung.<br><b>v1.6.46</b>: Eichhörnchen-Dialog: Die Checkbox-Gruppe heißt jetzt „Alarm bei:“ und steuert NUR das Läuten (Zugausfall, Geänderte Abfahrtszeit, Anderer Bus-/Bahnsteig, Anderer Bahnhof); überwacht und im 🐿️-Nachrichtenfenster angezeigt wird trotzdem jede Abweichung, sobald der Alarm gestellt ist: nicht angehakte Abweichungen stehen als ℹ-zeile im Fenster, mehrere Abweichungen gleichzeitig werden gemeinsam gemeldet, die höchste angehakte Art läutet.<br><b>v1.6.45</b>: Eichhörnchen-Alarm unterscheidet jetzt die ART der Abweichung (DB-Daten: Echtzeit-Streichungs-Kennzeichen, geplanter vs. Echtzeit-Steig, DB-Störungstexte): Zugausfall, anderer Bahnhof, anderer Bus-/Bahnsteig, geänderte Abfahrtszeit; im 🐿️-Dialog entscheidet unter der Tagesauswahl die neue Checkbox-Gruppe „Melden bei“, welche Arten überhaupt läuten (Haken weg unterdrückt nur diese Meldung, Prüfung und Alarm laufen weiter; Beispiel RE7: nur Gleisänderung, ohne Zeitänderung löst jetzt „Anderer Bus-/Bahnsteig“ aus statt einer pauschalen Verspätungsmeldung); Fern-Stationen zeigen jetzt ihre Gleise/Kanten (HAFAS-Lieferung war bisher nicht normalisiert, Hamburg Hbf zeigte gar keinen Steig; Echtzeit-Steig gewinnt, Gleisänderungen sofort sichtbar); Fern-Stationen bekamen den Einzelfahrt-Verlauf (Fahrtverlauf über nah.sh-JourneyDetails, previously landeten Fern-Fahrten im KVG-Zweig ohne Verlauf, Beispiel RE7 ab Hamburg Hbf).<br><b>v1.6.44</b>: Alle drei Alarm-Arten (🦉, 🕊️, 🐿️) melden sich doppelt: im In-App-Popup UND im Android-Benachrichtigungszentrum, wo jede Art ihren eigenen Platz behält und ihre Updates selbst hineinschreibt (🦉 ein Sammelplatz für alle Wecker, 🕊️ für alle Finde-nach-Hause-Funde, 🐿️ für alle Eichhörnchen-Alarme); je Alarm entscheidet die neue Checkbox „In Android benachrichtigen“ (in allen Alarm-Dialogen, neben „Eigenes Nachrichtenfenster“), ob dessen Meldungen in Android stehen – Haken weg blendet nur die Android-Benachrichtigung aus, der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben); ohne mindestens einen angehakten Alarm einer Art verschwindet deren Platz im Benachrichtigungszentrum.<br><b>v1.6.43</b>: Eichhörnchen-Dialog: Die mitgegebene Verbindungszeit (z. B. die im Stationsreiter gewählte Abfahrtszeit, Beispiel 07:30 Uhr um 0:05 Uhr) ist jetzt die Referenz für ALLE Wochentage, je Tag startet die Auswahl auf der Uhrzeit, die dieser Zeit am nächsten liegt (Gleichstand gewinnt die spätere, z. B. wenn der Zug am Wochenende anders fährt); das ⚠ „Uhrzeit am Vortag“ entfiel, per Definition liegt jede wählbare Uhrzeit immer am angewählten Tag; ◀/▶ bleiben am selben Wochentag und laufen im Kreis (nach der letzten Uhrzeit weiter mit der ersten ab 0 Uhr aufsteigend, vor der ersten weiter mit der letzten absteigend); der Tagesfahrplan wird an starken Haltestellen Stück für Stück nachgeladen (Board liefert max. 120 Abfahrten je Anfrage), bis der ganze Tag in der Auswahl steht.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (🦉, 🕊️, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (🦉, 🕊️, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
+  h += P("Kompakte Feature-Liste je Version, neueste zuerst (Stand v1.6.57). Was die Funktionen bedeuten, steht in den Abschnitten oben.<br><b>v1.6.57</b>: Das 🦉-Nachrichtenfenster nennt hinter der Eule direkt „Eulen-Alarm:“ und listet darunter jeden Wecker mit seinem Typ und lebenden Werten: Abstands-Radius mit Reststrecke („Abstand: 250 m (noch 800 m)“) bei laufendem GPS, Zeit-Wecker mit Countdown, unter 3 Minuten mit Sekunden („noch 2:31“); je Eintrag stehen ein Pause-Zeichen (ausgegraut bei aktivem, farbig bei pausiertem Wecker) und ein Lösch-✗ direkt im Fenster. Alle drei Alarm-Arten lassen sich je Eintrag pausieren und wieder aktivieren, in den Ausklapplisten, den Nachrichtenfenstern und den Dialogen; pausierte Alarme läuten nicht, Prüfungen und Ziele bleiben gestellt (Zeit-Wecker werden nativ abgemeldet und beim Aktivieren neu geplant). Die Fenster der Taube und des Eichhörnchens heißen „🕊️ Tauben-Alarm“ und „🐿️ Eichhörnchen-Alarm“, alle Meldungen nennen den Namen direkt hinter dem Tier; Reparatur der Tauben-Meldung (Abbruch durch eine ungesetzte Uhrzeit-Variable). Eichhörnchen-Alarme und die Art-Freigaben reisen im Zustand-Export mit. Hintergrund-Ortung repariert: In der App läuft bei gestellten Distanz-Weckern ein Ortungsdienst mit aktivem GPS, der die Position in die Seite schiebt und die Annäherung (250 m/500 m) auch bei ausgeschaltetem Display erkennt, auch ohne „Bei allen Zeiten“-Freigabe des Standorts.<br><b>v1.6.56</b>: Der Alarm-Knopf der Hauptleiste ist jetzt kompakt wie die anderen Knöpfe: eine Glocke als große Line-Art mit den drei Tieren 🦉/🕊️/🐿️ im Dreieck darin, der Punkt unter jedem Tier zeigt den individuellen Status der Art (grün = voller Alarm, orange = gedämpft, grau = gesperrt); Reparatur eines Fehlalarms: das Prüf-Board starker Stationen (Bus, U-/S-Bahn und Zug gemischt, z. B. Hamburg Hbf) wurde nur für ~27 Minuten abgefragt, sodass die überwachte Abfahrt gar nicht im Ausschnitt lag und fälschlich als Zugausfall gemeldet wurde, die Prüfung blättert das Board jetzt wie der Fahrplan-Dialog stückweise nach (max. 6 Seiten) und meldet fehlende Abfahrten nur noch bei vollständig abgedecktem Board.<br><b>v1.6.55</b>: Die drei Nachrichtenfenster (🦉/🕊️/🐿️) sind jetzt dreifach zu schließen: ✕ oben rechts wie bisher, Antippen neben das Fenster und horizontales Wischen (links oder rechts heraus); die Alarme bleiben in jedem Fall gestellt, das Fenster kommt beim nächsten Auslösen sicher zurück.<br><b>v1.6.54</b>: Eichhörnchen-Fehlalarm repariert: Ausfall- und Abweichungs-Meldungen auf Basis des Fehlens einer Abfahrt gibt es nur noch, wenn das Board rund um das Vorkommen Echtzeitdaten liefert UND der Reisetag heute ist; für kommende Tage steht im Fenster ein Hinweis (noch ohne Echtzeitdaten, Ausfall-Alarm frühestens am Reisetag) bzw. die Verbindung als Fahrplan-Eintrag, aber kein Alarm; alle Meldungen nennen die Verbindung präzise: am selben Tag „Verbindung um 07:38 Uhr fällt aus …“, an künftigen Tagen „Nächste Verbindung am Montag, 30.11., um 07:38 Uhr …“; die Alarm-Zeilen der drei Listen in der App brechen jetzt um statt mit „…“ abzukürzen, die Android-Nachricht zeigt den ganzen Text umgebrochen (BigText statt zeilenweise gekürzter Inbox-Stil).<br><b>v1.6.53</b>: Über-diese-App-Neuordnung: „Datenquellen im Detail“ und „Karten-Links“ stehen jetzt im Credits-Abschnitt (umbenannt von „Credits & Dank“), die Danke-Zeilen sind je Quelle in die Spezifikationen integriert (Reihenfolge der Datenquellen: DELFI, nah.sh, gtfs.de, OSM/Photon/Nominatim, OSRM, VBB, VVS, MVV, DVB, Donkey, KVG, Karten-Links, OSM-Grundlage); „Bekannt, aber (noch) nicht integriert“ bleibt bei Über diese App und nennt jetzt zuerst die Verkehrsverbünde, wichtiger noch die fehlenden Micromobilitäts-Anbieter Voi, Dott und Bolt bzw. Städte als gebündelte Anbieter, hoffentlich bald mit neuer Gesetzeslage durch die Referate Digitale Mobilität.<br><b>v1.6.52</b>: Die drei Alarm-Arten haben Tiere: 🦉 Eule = Stations-Alarme (wacht und weckt pünktlich), 🕊️ Brieftaube = Nach-Hause-Alarme (fliegt dir den Heimweg voraus), 🐿️ Eichhörnchen = Abfahrts-Alarme (sammelt und prüft Abfahrten); die Tiere stehen ganz vorn in den Listen, Kopfzeilen, dem dreigeteilten Alarm-Knopf, den Freigabe-Dialogen, den Alarm-Dialogen und allen Alarmmeldungen, die Hilfe stellt die drei in einem eigenen Absatz vor.<br><b>v1.6.51</b>: Listen-Blättern überall getrennt: ⬆️ Frühere ⬆️ steht ÜBER der Liste, ⬇️ Spätere ⬇️ DARUNTER (Ergebnisliste der Verbindungssuche und Abfahrtsliste des Stationsreiters, überall, wo die Liste in beide Richtungen wächst); die Fahrrad-/Roller-Schalter (🚲/🛴) zeigen ihren AUS-Zustand jetzt sichtbar als durchgestrichenes, gedimmtes Symbol.<br><b>v1.6.50</b>: Harmonisierte Kopfzeilen der drei Alarm-Listen („Stations-Alarme:“ / „Nach-Hause-Alarme:“ / „Abfahrts-Alarme:“) mit je drei Freigabe-Knöpfen 🔔 📳 📱 (Läuten, Vibration, Android-Benachrichtigung) für die ganze Art; der Alarm-Knopf der Hauptknopfleiste ist jetzt dreigeteilt (grün = voller Alarm, orange = gedämpft, grau = gesperrt), kurzer Druck beendet nur das laufende Läuten des ausgelösten Alarms, langer Druck öffnet den Freigabe-Dialog je Art; das Nachrichtenfenster im Programm bleibt von allen Freigaben unberührt und zeigt jede Auslösung immer; native Wecker, Geofence-Zäune und die 🕊️-Signale tragen die Freigaben mit (auch im Hintergrund); der Ziel-Hinweis der 🕊️-Liste ist ausgeschrieben und bricht um.<br><b>v1.6.49</b>: Eichhörnchen in Android komplett: Die 🐿️-Android-Nachricht zeigt je Alarm die Status-Zeile des Nachrichtenfensters (Fährt ✓/✗ · ab Station ✓/✗ · pünktlich ✓/✗ · von Bahn-/Bussteig ✓/✗, dahinter das Prüfalter in Minuten) und den erklärenden Text (letzte Meldung bzw. „alles planmäßig“); ein „Aktualisieren“-Knopf je Alarm prüft genau diesen sofort live (max. 3, wie die Wecker-Aktionen); das Antippen der Nachricht öffnet das 🐿️-Nachrichtenfenster in der App, auch wenn es per ✕ zugemacht war; im Fenster steht je Alarm jetzt immer eine erklärende Zeile (Meldung oder „alles planmäßig“, nach der ersten Prüfung).<br><b>v1.6.48</b>: Eichhörnchen wie die Alarmglocke: Ein 🐿️-Knopf je Station in der Kopfzeile des Stationsreiters statt einem Knopf an jeder Abfahrtszeile; der Dialog bietet direkt die Auswahl der dort gelisteten Verbindungen, zeitlich geordnet mit ihrer Abfahrtszeit, und das Antippen übernimmt Linie, Richtung und Abfahrtszeit der gewählten Verbindung.<br><b>v1.6.47</b>: Eichhörnchen-Fenster: Status-Zeile je Alarm (Fährt ✓/✗ · ab Station ✓/✗ · pünktlich ✓/✗ · von Bahn-/Bussteig ✓/✗, dahinter ↻ mit Prüfalter in Minuten für eine sofortige Prüfung genau dieses Alarms), Warntext rot; Titel des Alarms öffnet die Station mit direkt geöffnetem Fahrtverlauf dieser Linie; 🧭 am Ende der Überschrift öffnet den Routen-Dialog mit der Station als Start und der Endhaltestelle als Ziel; Eichhörnchen-Klassifikation repariert: ein gestrichener Plan-Eintrag mit daneben laufender Abfahrt (Bahnsteig-Abschnitts-Wechsel, Beispiel RE7 Hamburg Hbf Gleis 6D-F) ist keine Ausfall-Meldung mehr, sondern Bahnsteig-/Zeit-Abweichung.<br><b>v1.6.46</b>: Eichhörnchen-Dialog: Die Checkbox-Gruppe heißt jetzt „Alarm bei:“ und steuert NUR das Läuten (Zugausfall, Geänderte Abfahrtszeit, Anderer Bus-/Bahnsteig, Anderer Bahnhof); überwacht und im 🐿️-Nachrichtenfenster angezeigt wird trotzdem jede Abweichung, sobald der Alarm gestellt ist: nicht angehakte Abweichungen stehen als ℹ-zeile im Fenster, mehrere Abweichungen gleichzeitig werden gemeinsam gemeldet, die höchste angehakte Art läutet.<br><b>v1.6.45</b>: Eichhörnchen-Alarm unterscheidet jetzt die ART der Abweichung (DB-Daten: Echtzeit-Streichungs-Kennzeichen, geplanter vs. Echtzeit-Steig, DB-Störungstexte): Zugausfall, anderer Bahnhof, anderer Bus-/Bahnsteig, geänderte Abfahrtszeit; im 🐿️-Dialog entscheidet unter der Tagesauswahl die neue Checkbox-Gruppe „Melden bei“, welche Arten überhaupt läuten (Haken weg unterdrückt nur diese Meldung, Prüfung und Alarm laufen weiter; Beispiel RE7: nur Gleisänderung, ohne Zeitänderung löst jetzt „Anderer Bus-/Bahnsteig“ aus statt einer pauschalen Verspätungsmeldung); Fern-Stationen zeigen jetzt ihre Gleise/Kanten (HAFAS-Lieferung war bisher nicht normalisiert, Hamburg Hbf zeigte gar keinen Steig; Echtzeit-Steig gewinnt, Gleisänderungen sofort sichtbar); Fern-Stationen bekamen den Einzelfahrt-Verlauf (Fahrtverlauf über nah.sh-JourneyDetails, previously landeten Fern-Fahrten im KVG-Zweig ohne Verlauf, Beispiel RE7 ab Hamburg Hbf).<br><b>v1.6.44</b>: Alle drei Alarm-Arten (🦉, 🕊️, 🐿️) melden sich doppelt: im In-App-Popup UND im Android-Benachrichtigungszentrum, wo jede Art ihren eigenen Platz behält und ihre Updates selbst hineinschreibt (🦉 ein Sammelplatz für alle Wecker, 🕊️ für alle Finde-nach-Hause-Funde, 🐿️ für alle Eichhörnchen-Alarme); je Alarm entscheidet die neue Checkbox „In Android benachrichtigen“ (in allen Alarm-Dialogen, neben „Eigenes Nachrichtenfenster“), ob dessen Meldungen in Android stehen – Haken weg blendet nur die Android-Benachrichtigung aus, der Alarm selbst läuft weiter (Läuten, Vibration und In-App-Fenster bleiben); ohne mindestens einen angehakten Alarm einer Art verschwindet deren Platz im Benachrichtigungszentrum.<br><b>v1.6.43</b>: Eichhörnchen-Dialog: Die mitgegebene Verbindungszeit (z. B. die im Stationsreiter gewählte Abfahrtszeit, Beispiel 07:30 Uhr um 0:05 Uhr) ist jetzt die Referenz für ALLE Wochentage, je Tag startet die Auswahl auf der Uhrzeit, die dieser Zeit am nächsten liegt (Gleichstand gewinnt die spätere, z. B. wenn der Zug am Wochenende anders fährt); das ⚠ „Uhrzeit am Vortag“ entfiel, per Definition liegt jede wählbare Uhrzeit immer am angewählten Tag; ◀/▶ bleiben am selben Wochentag und laufen im Kreis (nach der letzten Uhrzeit weiter mit der ersten ab 0 Uhr aufsteigend, vor der ersten weiter mit der letzten absteigend); der Tagesfahrplan wird an starken Haltestellen Stück für Stück nachgeladen (Board liefert max. 120 Abfahrten je Anfrage), bis der ganze Tag in der Auswahl steht.<br><b>v1.6.42</b>: Routing-Ziel wird jetzt immer erreicht: Endet eine Verbindung nach dem letzten Fahrbein neben dem echten Ziel (Bahnhöfe-Router, Beispiel UKSH: Endstation war der Busstop Hbf/Kaistraße, 2,4 km vor dem Ziel), baut die App die Ziel-Anbindung selbst an (Fußweg, eigenes Fahrrad oder im Leih-Modus eine Donkey-Kette: Fußweg zur nächsten Ausleih-Station mit freiem Rad, Radfahrt zur zielnächsten Rückgabe-Station, Fußweg ans Ziel, mit Minuten und verschobener Ankunft); NAH.SH-Fahrrad-Beine zur Adresse sind für Donkey-Räder Fantasie und werden im Leih-Modus durch echte Stationen ersetzt; Reparatur: delfirouting 0.2.17 kennt die Abfahrtszeit als „time=“ (die App sendete noch „dep=“, der Router fiel damit in jeder Suche aus); alle drei Alarm-Arten (🦉, 🕊️, 🐿️) haben je ein eigenes Nachrichtenfenster und je Alarm eine Checkbox „Eigenes Nachrichtenfenster“ (Haken weg = Fenster weg bis zum nächsten Auslösen, dann steht es wieder sicher da); im 🐿️-Fenster prüft ↻ je Alarm die Verbindung sofort live über alle Kataloge.<br><b>v1.6.41</b>: Reparatur: packDfrEntries baute die delfirouting-URL ohne „?“ (delfirouting.phpdep=… statt ?dep=…), damit scheiterte JEDE delfirouting-Abfrage der Eichhörnchen-Kataloge und der Stationsreiter-Fallbacks seit v1.6.40 still mit „Antwort nicht lesbar“; ein Zeichen Fix, alle Katalog-Fallbacks funktionieren jetzt (Live-Test Hamburg Hbf: +10 min 22 Abfahrten, Folgetag 07:30 40 Abfahrten bei gestörtem nah.sh).<br><b>v1.6.40</b>: Stationsreiter: Fahrplan-Katalog-Chips (🌐 Alle / nah.sh / delfirouting) in der Datum-/Zeit-Zeile; Fern-Stationen nutzten die Auswahl bisher gar nicht (toter Pfad), der delfirouting-Fallback greift jetzt auch, wenn nah.sh nur Jetzt-Abfahrten lieferte; Eichhörnchen-Prüfung fragt alle Kataloge parallel ab und feuert bei Abweichung sofort (Widerspruch der anderen Quelle steht in der Meldung).<br><b>v1.6.39</b>: Ausmisten: Hilfe gestrafft und in thematische Bedienungs-Absätze plus diese Feature-Liste gegliedert; Titel „CitySurfers LIVE“ ohne Zusatz „Kiel“, Android-Release-Titel angepasst.<br><b>v1.6.38</b>: Fahrplan-Kataloge des Eichhörnchen-Alarms (Chips 🌐 Alle / nah.sh / delfirouting im 🐿️-Dialog, Echtzeitprüfung als Kette mit Fallback); Datum-/Zeit-Auswahl der Stationsreiter fällt bei Störung ebenfalls auf delfirouting zurück.<br><b>v1.6.37</b>: Datum- und Zeit-Auswahl der Abfahrten in eigener Zeile im Stationsreiter (Datum, Zeit, „Jetzt“, ↻), je Haltestelle.<br><b>v1.6.36</b>: Zeit-Auswahl der Abfahrten im Stationsreiter (Uhrzeit-Anker, Folgetag-Regel ab 6 h).<br><b>v1.6.35</b>: Eichhörnchen-Fahrplan für Fern-Stationen und Züge (gespeicherte Haltestellen-Kennung statt Namenssuche); Nachrichtenfenster öffnet nur noch beim Auslösen; drei eigene Android-Nachrichten (🦉, 🕊️, 🐿️).<br><b>v1.6.34</b>: Fern-Stationen im 30-km-Radius um eine entfernte Adresse automatisch nachladen und in die Suche mischen.<br><b>v1.6.33</b>: Eichhörnchen 🐿️ als drittes Symbol in der Statusleiste (Liste aller Alarme, ✎, ✗); Fix: Fern-Stationen-Tafeln ließen die App nicht mehr einfrieren (Folgefahrten-Retry-Schleife, 60-s-Cooldown).<br><b>v1.6.32</b>: Symbolwechsel vom Paket 📦 zum Eichhörnchen 🐿️ (Eichhörnchen-Alarm), Funktion unverändert.<br><b>v1.6.31</b>: Eichhörnchen-Alarm für regelmäßige Verbindungen: 🐿️-Knopf an jeder Abfahrtszeile, je Wochentag eine Abfahrt (◀/▶), Checkboxen, Überwachungsfenster, unbeschränkte Gültigkeit, eigenes Nachrichtenfenster.<br><b>v1.6.30</b>: Reiter unabhängig von Auswahlen: Suchfeld und Felder beeinflussen keine offenen Reiter mehr, Unter-Reiter schließen nur über ihr eigenes ✕.<br><b>v1.6.29</b>: Lange Namen umbrechen statt abschneiden; eigene Start- und Ziel-Zeile im Gesamtrouten-Verlauf.<br><b>v1.6.28</b>: Raum-Zeit-Prognose wechselt überall im Sekundenwechsel mit Live; live korrigierte Ziel-Ankunft; Anschluss-Alternativen bei gefährdetem Anschluss.<br><b>v1.6.27</b>: Verspätung der ersten Fahrt schiebt den Aufbruch nach hinten (⚠-Chip, Countdown und Warnkasten bewerten verspätungsbereinigt).<br><b>v1.6.26</b>: Prognose-Strahl im Einzellinien-Verlauf schreitet immer mit der Uhr fort, GPS schiebt die Spitze nur nach vorn.<br><b>v1.6.25</b>: Strecken bis 7 Gehminuten wieder als Fußweg (Ausnahmen am Umstieg und Start aus Zeitdruck; Ziel-Zubringer immer Fußweg).<br><b>v1.6.24</b>: Externes Routing je Weg-Abschnitt (Karten-Symbol im Verlauf), Pfeil statt Richtungs-Wort, keine Umwege vom Ziel weg.<br><b>v1.6.23</b>: Verlaufs-Strahl auch im Stations-Reiter, Reiter überleben den Neustart, jede Station als eigener Reiter.<br><b>v1.6.22</b>: Router Alle fragt alle passenden Router parallel ab (Dubletten raus, gemeinsame Sortierung); kurze Verpasst-Hinweise.<br><b>v1.6.21</b>: 5 bis 6 Routen durch automatisches Weitersuchen; ◀ Frühere / ＋ Weitere an der Liste; Kontrollen lösen keine Suche mehr aus (▶).<br><b>v1.6.20</b>: JETZT-Modus (Zeit läuft mit), nicht erreichbare Verbindungen ein- und ausblendbar.<br><b>v1.6.19</b>: Fahrrad- und Roller-Beine auf allen Routern selbst gerechnet; Scooter-Links öffnen per intent direkt die Anbieter-App.<br><b>v1.6.18</b>: Vielfältige Verbindungssuche (mindestens 10 Treffer, 3 verschiedene Einstiege, Suche von bis zu drei nächsten Haltestellen), Sortier-Block.<br><b>v1.6.17</b>: Strahl-Spitze zeigt exakt die GPS-Projektion (Zeit nur bei unsicherer Geometrie); Regenschirm-Reparatur.<br><b>v1.6.16</b>: GPS-ehrlicher Aufbruch-Hinweis („Schon aufgebrochen“), Strahl im Fahrtverlauf, VBB-Wunschzeit via departure.<br><b>v1.6.15</b>: delfirouting-Aufbruch- und Ankunftszeiten selbst gerechnet, echte Bahnhöfe per Umkreissuche, zwei getrennte Zubringer-Schalter.<br><b>v1.6.14</b>: Zusatz-Verbindungen ab der Haltestelle neben dir (bis 300 m, zweite Suchrunde).<br><b>v1.6.13</b>: Leih-Modus-Direktweg mit Ausleih- und Rückgabestation; schnellerer Direktweg verdrängt die Liste nicht mehr.<br><b>v1.6.12</b>: On-Demand-Suche (▶ statt Auto), alle Kontrollen oben im Route-Reiter, Direktweg-Karte, ☂ Regenschirm.<br><b>v1.6.11</b>: Raum-Zeit-Strahl in beiden Verläufen, automatische Aktualisierung (15 s sichtbar, 60 s Hintergrund), M:SS-Countdowns.<br><b>v1.6.10</b>: delfirouting plant die Zubringer im Modus der Verbindungssuche.<br><b>v1.6.9</b>: MM-Dialog und MM-Fahrtverlauf im Verlaufs-Design.<br><b>v1.6.8</b>: Punkt 2 und Punkt 3 des MM-Routings als Suchlisten.<br><b>v1.6.7</b>: GPS-Vorhersage an der Einstiegsstation aus; Fortschrittsstrahl läuft immer kontinuierlich mit.<br><b>v1.6.6</b>: Strahl ohne Lücken, Quer-Striche mittig.<br><b>v1.6.5</b>: Gesamtfahrtverlauf im Zeilen-Layout der Einzelfahrten (Gep., Aktuell, Abweichung, Countdown).<br><b>v1.6.4</b>: Echte Aufbruchzeit, Countdown-Chips, Gep./Aktuell auch zugeklappt, Verpasstes ausgeblendet.<br><b>v1.6.3</b>: delfirouting-Fahrten mit Linie und Richtung, ⤢-Knopf für den ganzen Lauf, Umstiegs-Fußwege.<br><b>v1.6.1</b>: Sortier-Knöpfe ⭐ / ⏱ / 🚀 / 🔁 sortieren sofort ohne neue Suche.<br><b>v1.6.0</b>: Router-Wahl im Routing-Dialog (Chips, Auto-Kette mit delfirouting, Klartext statt stiller Ersatzsuche).<br><b>v1.5.5</b>: Regionale Router der Verbindungssuche (VBB für Berlin/Brandenburg, H9220-Heilung über Bahnhöfe, angenäherte Ankunftssuche).<br><b>v1.5.3</b>: delfiproxy.php (serverseitiger DELFI-Pool im nah.sh-Gebiet) und Fehler-Markierung der Datenquellen-LEDs.<br><b>v1.5.2</b>: Verspätungs-Overlay gtfs.de bundesweit für Fern-Stationen.<br><b>v1.5.1</b>: MVV München als Regiondienst.<br><b>v1.5.0</b>: Bundesweite Fern-Stationen ab 3 Buchstaben, Datenquellen-LEDs, Kurzzeichen der Regiondienste.<br><b>v1.4.18</b>: Quellen-Filter und zweizeilige Trefferzeilen.<br><b>v1.4.17</b>: Fixierter Punkt 2 und Rad-Überblick im Routing-Dialog.<br><b>v1.4.16</b>: Donkey-App-Link (🫏), Rad-Namen, Knopf-Breite.<br><b>v1.4.15</b>: Farbige Reiter und Knopf-Umbruch.<br><b>v1.4.14</b>: MM-Reiter und Leihstationen in der Stationssuche; 🚲 MM als fester fünfter Knopf.<br><b>v1.4.12</b>: Leihfahrrad-Routing heißt Micromobility-Routing; GPS-Knöpfe mit voller Feld-Mechanik.<br><b>v1.4.11</b>: Drei Wege zur Karte (uMap-Chips, 🧭-Menü, geo:-Übergabe) und Akku-Farben auf den Karten.");
   h += '<div class="rowinfo dim">' + escapeHtml((document.querySelector(".verline") || {}).textContent || "CitySurfers LIVE") + "</div>";
   return h;
 }
@@ -18846,7 +19083,7 @@ updateGpsBtns(true);
   dauerhaft erreichbar unter
   <a href="https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk" rel="noopener">https://pixcaelium.timo-damm.de/apps/citysurfers/cslk.apk</a>
   (im selben Verzeichnis wie diese Seite).
-  <div class="verline">CitySurfers LIVE · Version 1.6.56 · Build: 27.11.2026</div>
+  <div class="verline">CitySurfers LIVE · Version 1.6.57 · Build: 27.11.2026</div>
 </div>
 </body>
 </html>
