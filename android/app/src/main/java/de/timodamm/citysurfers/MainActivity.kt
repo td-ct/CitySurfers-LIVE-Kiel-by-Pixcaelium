@@ -669,14 +669,10 @@ class NativeBridge(private val act: Activity) {
                     setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                     setContentTitle(a.optString("title"))
                     setContentText(a.optString("text"))
-                    // mehrzeiliger Text = Liste: als Inbox-Liste rendern (je Zeile ein Eintrag)
-                    val ntxt = a.optString("text")
-                    val nlines = ntxt.split("\n").filter { it.isNotEmpty() }
-                    if (nlines.size > 1) {
-                        val nst = android.app.Notification.InboxStyle()
-                        for (nl in nlines) nst.addLine(nl)
-                        setStyle(nst)
-                    } else setStyle(android.app.Notification.BigTextStyle().bigText(ntxt))
+                    // v1.6.54 (Timo-Wunsch 27.11.2026): BigText statt Inbox-Liste -
+                    // der Inbox-Stil kuerzt JEDE Zeile einzeln mit "..." ab,
+                    // BigText bricht lange Zeilen in die naechste Zeile um.
+                    setStyle(android.app.Notification.BigTextStyle().bigText(a.optString("text")))
                     setContentIntent(open)
                     setAutoCancel(false)         // nur per Wecker-Loeschen/App-Ende weg
                     setOngoing(true)
@@ -753,13 +749,8 @@ class NativeBridge(private val act: Activity) {
                 setSmallIcon(android.R.drawable.ic_dialog_map)
                 setContentTitle(title)
                 setContentText(text)
-                // mehrzeiliger Text = Liste: als Inbox-Liste rendern (je Zeile ein Eintrag)
-                val nlines = text.split("\n").filter { it.isNotEmpty() }
-                if (nlines.size > 1) {
-                    val nst = android.app.Notification.InboxStyle()
-                    for (nl in nlines) nst.addLine(nl)
-                    setStyle(nst)
-                } else setStyle(android.app.Notification.BigTextStyle().bigText(text))
+                // v1.6.54: BigText statt Inbox-Liste - Zeilen brechen um statt mit "..." gekuerzt zu werden
+                setStyle(android.app.Notification.BigTextStyle().bigText(text))
                 setContentIntent(open)
                 setAutoCancel(true)       // mit Antippen weg, oeffnet die App
                 if (Build.VERSION.SDK_INT < 26) {
