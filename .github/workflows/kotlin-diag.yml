@@ -1,0 +1,40 @@
+name: kotlin-diag
+on:
+  push:
+    branches: [ main ]
+    paths: [ ".diag-trigger" ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: SDK-Lizenzen akzeptieren
+        run: yes | sdkmanager --licenses > /dev/null || true
+      - name: index.html als Asset einbetten
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp index.html android/app/src/main/assets/index.html
+      - name: Build mit Log
+        run: |
+          set +e
+          gradle -p android assembleDebug --no-daemon > /tmp/build.log 2>&1
+          echo "exit=$?" >> /tmp/build.log
+      - name: Log committen
+        run: |
+          git config user.name "CSLK-Bot"
+          git config user.email "noreply@timo-damm.de"
+          mkdir -p .diag
+          tail -c 30000 /tmp/build.log > .diag/build.log
+          git add .diag/build.log
+          git commit -m "Kotlin-Diagnose-Log [skip ci]" || echo "nichts zu committen"
+          git push || echo "nichts zu pushen"
