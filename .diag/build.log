@@ -17,28 +17,27 @@ Daemon will be stopped at the end of the build
 > Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug
 > Task :app:mergeDebugShaders
+> Task :app:processDebugManifestForPackage
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
 > Task :app:mergeDebugAssets
-> Task :app:processDebugManifestForPackage
-> Task :app:compressDebugAssets
 > Task :app:desugarDebugFileDependencies
+> Task :app:compressDebugAssets
 > Task :app:mergeDebugStartupProfile
 > Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
 > Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:processDebugResources
 > Task :app:stripDebugDebugSymbols NO-SOURCE
 > Task :app:mergeLibDexDebug
-> Task :app:processDebugResources
 > Task :app:validateSigningDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
 > Task :app:mergeExtDexDebug
 
 > Task :app:compileDebugKotlin FAILED
-e: file:///home/runner/work/CitySurfers-LIVE-Kiel-by-Pixcaelium/CitySurfers-LIVE-Kiel-by-Pixcaelium/android/app/src/main/java/de/timodamm/citysurfers/AlarmLocService.kt:96:49 Smart cast to '`<no name provided>`' is impossible, because 'callback' is a mutable property that could have been changed by this time
-e: file:///home/runner/work/CitySurfers-LIVE-Kiel-by-Pixcaelium/CitySurfers-LIVE-Kiel-by-Pixcaelium/android/app/src/main/java/de/timodamm/citysurfers/AlarmLocService.kt:107:45 Type mismatch: inferred type is LocationCallback? but LocationCallback was expected
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1795776794421.json
+e: file:///home/runner/work/CitySurfers-LIVE-Kiel-by-Pixcaelium/CitySurfers-LIVE-Kiel-by-Pixcaelium/android/app/src/main/java/de/timodamm/citysurfers/AlarmLocService.kt:108:45 Type mismatch: inferred type is LocationCallback? but LocationCallback was expected
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1795777511374.json
 
 FAILURE: Build failed with an exception.
 
@@ -53,6 +52,6 @@ Execution failed for task ':app:compileDebugKotlin'.
 > Run with --scan to get full insights.
 > Get more help at https://help.gradle.org.
 
-BUILD FAILED in 23s
+BUILD FAILED in 25s
 28 actionable tasks: 28 executed
 exit=1
