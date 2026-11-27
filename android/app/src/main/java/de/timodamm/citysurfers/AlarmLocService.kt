@@ -87,13 +87,14 @@ class AlarmLocService : Service() {
             8000L)   // alle 8 s eine Position (Annäherung rechtzeitig erkennen)
             .setMinUpdateDistanceMeters(10f)
             .build()
-        callback = object : com.google.android.gms.location.LocationCallback() {
+        val cb = object : com.google.android.gms.location.LocationCallback() {
             override fun onLocationResult(res: com.google.android.gms.location.LocationResult) {
                 for (l in res.locations) onPos(l)
             }
         }
+        callback = cb
         try {
-            client?.requestLocationUpdates(req, callback, Looper.getMainLooper())
+            client?.requestLocationUpdates(req, cb, Looper.getMainLooper())
         } catch (e: SecurityException) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
