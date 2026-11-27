@@ -32,6 +32,11 @@ class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_URL = "file:///android_asset/index.html"
+
+        // v1.6.57: Instanz-Referenz fuer den Alarm-Ortungsdienst (AlarmLocService):
+        // Er schiebt Positions-Updates direkt in die laufende WebView.
+        @Volatile
+        var instance: MainActivity? = null
         // App-Funktionen (Brücken-Methoden) DIESER APK-Version. Die Seite trägt
         // denselben Katalog im <!-- CSLK-BRIDGE: ... -->-Marker; beim "Web-Version
         // übernehmen" wird verglichen und vor fehlenden Funktionen gewarnt.
@@ -59,6 +64,7 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this   // v1.6.57: fuer AlarmLocService (Positionen in die WebView)
         web = WebView(this)
         setContentView(web)
 
@@ -183,6 +189,14 @@ class MainActivity : Activity() {
         }
     }
 
+    /** v1.6.57: JS in die laufende Seite einspeisen (vom Alarm-Ortungsdienst:
+     *  Positions-Updates auch im Hintergrund). Sicher gegen zerstoerte WebView. */
+    fun pushJs(js: String) {
+        try {
+            web.post { try { web.evaluateJavascript(js, null) } catch (e: Exception) { } }
+        } catch (e: Exception) { }
+    }
+
     /** Wecker-Aktion (Benachrichtigungs-Button) an die Seite weiterreichen
      *  und aus der Nachhol-Liste nehmen (sie wurde ja gerade ausgeführt). */
     private fun handleAlarmAction(akey: String, mode: String) {
@@ -232,6 +246,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        instance = null   // v1.6.57: Instanz-Referenz fuer AlarmLocService aufraeumen
         // Wecker-Aktions-Receiver abmelden
         try { alarmActionReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) { }
         alarmActionReceiver = null
@@ -821,12 +836,35 @@ class NativeBridge(private val act: Activity) {
                 .build())
             GeofenceStore.put(ctx, id, f)
         }
+        // v1.6.57 (Timo-Wunsch 27.11.2026): Bei gestellten Distanz-Weckern laeuft
+        // ein eigener Ortungsdienst mit aktivem GPS (Foreground-Service, Typ
+        // location). Er traegt die Annäherung selbst (Radius-Check je Position)
+        // UND schiebt die Position in die Seite - die 250/500-m-Erinnerung kommt
+        // damit auch bei ausgeschaltetem Display und ohne "Bei allen Zeiten"-
+        // Freigabe (der Dienst braucht nur die normale Standort-Freigabe).
+        val fine = try {
+            act.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) { false }
+        val svc = android.content.Intent(ctx, AlarmLocService::class.java)
+        if (fences.isNotEmpty() && fine) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(svc)
+                else ctx.startService(svc)
+            } catch (e: Exception) {
+                GeofenceStore.recordEvent(ctx, "__geofence_error:locsvc",
+                    "Ortungsdienst konnte nicht gestartet werden")
+            }
+        } else {
+            try { ctx.startService(android.content.Intent(ctx, AlarmLocService::class.java)
+                .setAction(AlarmLocService.ACTION_STOP)) } catch (e: Exception) { }
+        }
         if (fences.isEmpty()) return
-        // Hintergrund-Standort ist Voraussetzung fuer Geofence-Wecker: Ohne die
-        // separate Freigabe "Bei allen Zeiten" (Android 11+) feuern die Zaune im
-        // Hintergrund nie – die Wecker klingeln dann nur noch ueber den JS-Ticker
-        // bei geoeffneter App. Frueher wurde das still verschluckt; jetzt bekommt
-        // die Seite ein System-Ereignis (setLocNote mit Anleitung).
+        // Hintergrund-Standort ist Voraussetzung fuer die System-Geofencing-API:
+        // Ohne die separate Freigabe "Bei allen Zeiten" (Android 11+) feuern die
+        // Zaune im Hintergrund nie. Frueher wurde das still verschluckt; jetzt
+        // bekommt die Seite ein System-Ereignis (setLocNote mit Anleitung). Der
+        // Ortungsdienst oben faengt diesen Fall ab (deshalb kein return-Spiel).
         try {
             if (act.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED) {

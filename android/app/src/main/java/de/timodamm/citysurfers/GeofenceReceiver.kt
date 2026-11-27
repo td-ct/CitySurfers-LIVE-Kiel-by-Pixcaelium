@@ -33,6 +33,24 @@ object GeofenceStore {
         JSONObject(prefs(ctx).getString("f$id", "") ?: "")
     } catch (e: Exception) { null }
 
+    /** v1.6.57: Alle registrierten Zaune (id -> Konfiguration) fuer den
+     *  Alarm-Ortungsdienst (AlarmLocService), der dieselben Radius-Checks
+     *  selbst rechnet und sich die einmal-feuern-Flags mit der Geofencing-API
+     *  teilt (kein Doppel-Läuten). */
+    fun all(ctx: Context): List<Pair<Int, JSONObject>> {
+        val out = ArrayList<Pair<Int, JSONObject>>()
+        try {
+            val p = prefs(ctx)
+            for (k in p.all.keys) {
+                if (!k.startsWith("f") || k.startsWith("fired")) continue
+                val id = k.substring(1).toIntOrNull() ?: continue
+                val f = get(ctx, id) ?: continue
+                out.add(Pair(id, f))
+            }
+        } catch (e: Exception) { }
+        return out
+    }
+
     /** Jeder Zaun löst höchstens einmal aus (bis die Seite neu synchronisiert). */
     fun consumeFired(ctx: Context, id: Int): Boolean {
         val p = prefs(ctx)
